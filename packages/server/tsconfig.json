@@ -9,5 +9,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "tdlib-types.d.ts"]
 }
