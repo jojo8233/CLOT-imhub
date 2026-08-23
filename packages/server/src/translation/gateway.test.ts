@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TranslationGateway, resolveProvider } from './gateway.js'
+import { EmptyInputError, TranslationGateway, resolveProvider } from './gateway.js'
 import { ProviderFailedError, type ProviderName, type TranslationProvider } from './types.js'
 
 describe('resolveProvider', () => {
@@ -110,6 +110,8 @@ describe('TranslationGateway', () => {
     const gw = new TranslationGateway([stubProvider('deepl')], cache as never, ['deepl'])
     await gw.translate({ text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' } })
     expect(cache.set).toHaveBeenCalledOnce()
+    const { cacheKey } = await import('./cache.js')
+    expect(cache.set).toHaveBeenCalledWith(cacheKey('deepl', 'auto', 'en', '你好'), expect.anything())
   })
 
   it('降级后的结果不写缓存，避免把兜底结果固化成首选引擎的答案', async () => {
@@ -130,5 +132,43 @@ describe('TranslationGateway', () => {
     // 会话级选了 deepl，所以查的 key 必须基于 deepl 而不是 global 的 claude
     const { cacheKey } = await import('./cache.js')
     expect(cache.get).toHaveBeenCalledWith(cacheKey('deepl', 'auto', 'en', '你好'))
+  })
+
+  it('空白输入直接抛 EmptyInputError，不调用任何 provider', async () => {
+    const provider = stubProvider('deepl')
+    const gw = new TranslationGateway([provider], noCache as never, ['deepl'])
+    await expect(gw.translate({ text: '   ', from: 'auto', to: 'en', config: { global: 'deepl' } }))
+      .rejects.toBeInstanceOf(EmptyInputError)
+    expect(provider.translate).not.toHaveBeenCalled()
+  })
+
+  it('provider 抛出非 ProviderFailedError 时仍然降级', async () => {
+    const gw = new TranslationGateway(
+      [stubProvider('deepl', () => Promise.reject(new TypeError('provider bug'))), stubProvider('openai')],
+      noCache as never,
+      ['deepl', 'openai'],
+    )
+    const r = await gw.translate({ text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' } })
+    expect(r.provider).toBe('openai')
+  })
+
+  it('首选引擎未注册时走降级链而不是崩溃', async () => {
+    const gw = new TranslationGateway([stubProvider('openai')], noCache as never, ['deepl', 'openai'])
+    const r = await gw.translate({ text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' } })
+    expect(r.provider).toBe('openai')
+    expect(r.downgradedFrom).toEqual([])
+  })
+
+  it('全部失败时错误信息带上每个引擎的根因', async () => {
+    const gw = new TranslationGateway(
+      [
+        stubProvider('deepl', () => Promise.reject(new ProviderFailedError('deepl', new Error('http 429')))),
+        stubProvider('openai', () => Promise.reject(new ProviderFailedError('openai', new Error('bad key')))),
+      ],
+      noCache as never,
+      ['deepl', 'openai'],
+    )
+    await expect(gw.translate({ text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' } }))
+      .rejects.toThrow(/deepl \(.*429.*\).*openai \(.*bad key.*\)/s)
   })
 })
