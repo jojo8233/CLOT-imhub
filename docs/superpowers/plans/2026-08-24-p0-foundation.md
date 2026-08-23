@@ -2327,7 +2327,8 @@ import type { Direction, MediaRef, NormalizedMessage, Platform } from '@im-hub/s
 export interface UpsertConversationInput {
   accountId: string
   platformConversationId: string
-  contactExternalId: string
+  /** 只有入向消息能确定对方是谁；出向消息传 null，由仓储层保持原值不动 */
+  contactExternalId: string | null
   contactDisplayName: string | null
 }
 
@@ -2344,10 +2345,20 @@ export interface InsertMessageInput {
   raw: unknown
 }
 
+export interface InsertMessageResult {
+  id: string
+  /** false 表示这条消息此前已入库（平台重复推送 / 调用方重试） */
+  isNew: boolean
+}
+
 export interface MessageRepo {
-  upsertConversation(input: UpsertConversationInput): Promise<string>
-  /** 已存在（account_id + platform_message_id 冲突）时返回 null */
-  insertMessage(input: InsertMessageInput): Promise<string | null>
+  /**
+   * 必须是数据库层面的原子 upsert（ON CONFLICT ... RETURNING），
+   * 不能是"先查再插"——TDLib 的 update 是并发的，同一会话的两条消息
+   * 同时到达时，先查后写会产生两个 conversation 行，消息历史从此一分为二。
+   */
+  upsertConversation(input: UpsertConversationInput): Promise<{ id: string }>
+  insertMessage(input: InsertMessageInput): Promise<InsertMessageResult>
   touchConversation(conversationId: string, at: Date): Promise<void>
 }
 
@@ -2360,14 +2371,18 @@ export class MessageIngestor {
 
   /** 返回新消息 id；重复消息返回 null。 */
   async ingest(msg: NormalizedMessage): Promise<string | null> {
-    const conversationId = await this.repo.upsertConversation({
+    // 出向消息的 sender 是我方账号，不是客户。拿它更新联系人会把会话的对方身份
+    // 覆盖成我们自己——员工主动发起的会话更是从第一条起就错。
+    const isInbound = msg.direction === 'in'
+
+    const { id: conversationId } = await this.repo.upsertConversation({
       accountId: msg.accountId,
       platformConversationId: msg.platformConversationId,
-      contactExternalId: msg.senderExternalId,
-      contactDisplayName: msg.senderDisplayName,
+      contactExternalId: isInbound ? msg.senderExternalId : null,
+      contactDisplayName: isInbound ? msg.senderDisplayName : null,
     })
 
-    const messageId = await this.repo.insertMessage({
+    const { id: messageId, isNew } = await this.repo.insertMessage({
       conversationId,
       accountId: msg.accountId,
       platform: msg.platform,
@@ -2414,28 +2429,72 @@ git add packages/server/src/ingest && git commit -m "feat(server): message inges
 
 `packages/server/src/ingest/repo.ts`:
 ```ts
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { Database } from '../db/types.js'
-import type { InsertMessageInput, MessageRepo, UpsertConversationInput } from './ingestor.js'
+import type {
+  InsertMessageInput,
+  InsertMessageResult,
+  MessageRepo,
+  UpsertConversationInput,
+} from './ingestor.js'
 
 export class KyselyMessageRepo implements MessageRepo {
   constructor(private readonly db: Kysely<Database>) {}
 
-  async upsertConversation(input: UpsertConversationInput): Promise<string> {
+  async upsertConversation(input: UpsertConversationInput): Promise<{ id: string }> {
     const row = await this.db
       .insertInto('conversations')
       .values({
         account_id: input.accountId,
         platform_conversation_id: input.platformConversationId,
-        contact_external_id: input.contactExternalId,
+        // 首次插入时若来自出向消息（联系人未知），用会话 id 兜底满足 NOT NULL；
+        // 之后第一条入向消息会把它修正成真实的对方标识。
+        contact_external_id: input.contactExternalId ?? input.platformConversationId,
         contact_display_name: input.contactDisplayName,
       })
       .onConflict(oc => oc
         .columns(['account_id', 'platform_conversation_id'])
-        .doUpdateSet({ contact_display_name: input.contactDisplayName }))
+        // COALESCE 保证出向消息传来的 null 不会抹掉已知的联系人身份
+        .doUpdateSet({
+          contact_external_id: (eb) =>
+            eb.fn.coalesce(eb.ref('excluded.contact_external_id'), eb.ref('conversations.contact_external_id')),
+          contact_display_name: (eb) =>
+            eb.fn.coalesce(eb.ref('excluded.contact_display_name'), eb.ref('conversations.contact_display_name')),
+        }))
       .returning('id')
       .executeTakeFirstOrThrow()
-    return row.id
+    return row
+  }
+
+  async insertMessage(input: InsertMessageInput): Promise<InsertMessageResult> {
+    // DO UPDATE（而非 DO NOTHING）才能在冲突时也 RETURNING 出行，
+    // 让调用方拿到既有消息的 id 去补偿可能丢失的翻译任务。
+    const row = await this.db
+      .insertInto('messages')
+      .values({
+        conversation_id: input.conversationId,
+        account_id: input.accountId,
+        platform: input.platform,
+        platform_message_id: input.platformMessageId,
+        direction: input.direction,
+        sender_external_id: input.senderExternalId,
+        body: input.body,
+        body_lang: null,
+        media_refs: JSON.stringify(input.mediaRefs) as never,
+        sent_at: input.sentAt,
+        raw: JSON.stringify(input.raw) as never,
+      })
+      // DO UPDATE 必须是无副作用的自赋值：目的只是让冲突时也能 RETURNING 出行，
+      // 拿到既有消息的 id 去补偿可能丢失的翻译任务。DO NOTHING 不返回任何行。
+      .onConflict(oc => oc
+        .columns(['account_id', 'platform_message_id'])
+        .doUpdateSet({ platform_message_id: (eb) => eb.ref('excluded.platform_message_id') }))
+      // xmax = 0 是 Postgres 里区分"本次插入"与"走了 DO UPDATE 分支"的标准判据：
+      // 新插入的行没有被任何事务标记删除，xmax 为 0；被 UPSERT 更新的行则非 0。
+      .returning(['id', sql<boolean>`(xmax = 0)`.as('is_new')])
+      .executeTakeFirstOrThrow()
+
+    return { id: row.id, isNew: row.is_new }
   }
 
   async insertMessage(input: InsertMessageInput): Promise<string | null> {
