@@ -19,4 +19,8 @@ describe('password', () => {
   it('哈希串损坏时返回 false 而不是抛错', async () => {
     expect(await verifyPassword('not-a-hash', 'anything')).toBe(false)
   })
+
+  it('哈希使用 argon2id 而非库默认算法', async () => {
+    expect(await hashPassword('x')).toMatch(/^\$argon2id\$/)
+  })
 })
