@@ -23,11 +23,12 @@ export class DeeplProvider implements TranslationProvider {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: params,
+        signal: AbortSignal.timeout(10_000),
       })
       if (!res.ok) throw new Error(`deepl http ${res.status}`)
       const json = (await res.json()) as DeeplResponse
       const first = json.translations[0]
-      if (!first || first.text.length === 0) throw new Error('deepl returned no translations')
+      if (!first || first.text.trim().length === 0) throw new Error('deepl returned no translations')
       return { text: first.text, detectedLang: first.detected_source_language }
     } catch (reason) {
       throw new ProviderFailedError('deepl', reason)

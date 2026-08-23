@@ -12,7 +12,10 @@ export interface TranslationProvider {
 }
 
 export class ProviderFailedError extends Error {
-  constructor(readonly provider: ProviderName, readonly reason: unknown) {
-    super(`translation provider ${provider} failed`)
+  constructor(readonly provider: ProviderName, reason: unknown) {
+    super(
+      `translation provider ${provider} failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+      { cause: reason },
+    )
   }
 }

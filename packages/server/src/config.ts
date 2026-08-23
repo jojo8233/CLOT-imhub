@@ -9,6 +9,7 @@ const schema = z.object({
       message: 'JWT_SECRET 仍是 .env.example 里的占位值，必须换成随机密钥：openssl rand -base64 32',
     }),
   DEEPL_API_KEY: z.string().default(''),
+  DEEPL_ENDPOINT: z.string().url().default('https://api-free.deepl.com/v2/translate'),
   OPENAI_API_KEY: z.string().default(''),
   ANTHROPIC_API_KEY: z.string().default(''),
   DEFAULT_TRANSLATION_PROVIDER: z.enum(['deepl', 'openai', 'claude']).default('deepl'),

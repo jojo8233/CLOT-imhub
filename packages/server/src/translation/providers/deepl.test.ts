@@ -41,4 +41,18 @@ describe('DeeplProvider', () => {
     await expect(new DeeplProvider('fake-key').translate('你好', 'auto', 'EN'))
       .rejects.toBeInstanceOf(ProviderFailedError)
   })
+
+  it('译文为空字符串时抛 ProviderFailedError', async () => {
+    mockFetch(200, { translations: [{ detected_source_language: 'ZH', text: '' }] })
+    await expect(new DeeplProvider('fake-key').translate('你好', 'auto', 'EN'))
+      .rejects.toBeInstanceOf(ProviderFailedError)
+  })
+
+  it('请求超时时抛 ProviderFailedError 而不是永远挂起', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }),
+    )
+    await expect(new DeeplProvider('fake-key').translate('你好', 'auto', 'EN'))
+      .rejects.toBeInstanceOf(ProviderFailedError)
+  })
 })
