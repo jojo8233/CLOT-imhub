@@ -13,8 +13,11 @@ interface TdMessage {
   content: { _: string; text?: { text: string } }
 }
 
-function senderId(sender: TdSender): string {
-  return sender._ === 'messageSenderUser' ? String(sender.user_id) : String(sender.chat_id)
+function senderId(sender: TdSender): string | null {
+  if (sender._ === 'messageSenderUser') return String(sender.user_id)
+  if (sender._ === 'messageSenderChat') return String(sender.chat_id)
+  // TDLib 加了新的 sender 类型。宁可丢这条消息，也不要把 'undefined' 当成发送者写进库。
+  return null
 }
 
 /**
@@ -33,13 +36,16 @@ export function normalizeTelegramMessage(update: unknown, accountId: string): No
   if (m.content?._ !== 'messageText' || !m.content.text) return null
   if (!m.sender_id) return null
 
+  const sender = senderId(m.sender_id)
+  if (sender === null) return null
+
   return {
     platform: 'telegram',
     accountId,
     platformConversationId: String(m.chat_id),
     platformMessageId: String(m.id),
     direction: m.is_outgoing ? 'out' : 'in',
-    senderExternalId: senderId(m.sender_id),
+    senderExternalId: sender,
     senderDisplayName: null,
     body: m.content.text.text,
     mediaRefs: [],

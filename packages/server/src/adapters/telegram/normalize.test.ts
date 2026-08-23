@@ -63,4 +63,12 @@ describe('normalizeTelegramMessage', () => {
     expect(typeof m.platformMessageId).toBe('string')
     expect(typeof m.platformConversationId).toBe('string')
   })
+
+  it('未知的发送者类型返回 null，不产生 undefined 字符串', () => {
+    const weird = {
+      ...fixture,
+      message: { ...fixture.message, sender_id: { _: 'messageSenderSomethingNew', foo: 1 } },
+    }
+    expect(normalizeTelegramMessage(weird, 'acc-1')).toBeNull()
+  })
 })
