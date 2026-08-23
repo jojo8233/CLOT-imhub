@@ -111,3 +111,47 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     })()
   })
 }
+
+/**
+ * 启动后连接数据库里已登记的平台账号。
+ *
+ * 不 await：TelegramAdapter 的 login() 会阻塞在 stdin 等手机号和验证码，
+ * awaiting 会让 HTTP 端口一直起不来。连接失败也不能让进程退出——
+ * 一个账号连不上不该拖垮整个服务端。
+ */
+async function connectRegisteredAccounts(): Promise<void> {
+  if (!config.TELEGRAM_API_ID || !config.TELEGRAM_API_HASH) {
+    console.warn(
+      '[server] TELEGRAM_API_ID / TELEGRAM_API_HASH 未配置，跳过 Telegram 账号连接。\n' +
+        '         去 https://my.telegram.org 申请后填进 .env 即可启用。',
+    )
+    return
+  }
+
+  const accounts = await db
+    .selectFrom('accounts')
+    .select(['id', 'platform', 'display_name', 'credentials_ref'])
+    .where('platform', '=', 'telegram')
+    .execute()
+
+  if (accounts.length === 0) {
+    console.log('[server] 数据库里没有 Telegram 账号，先跑 pnpm --filter @im-hub/server seed')
+    return
+  }
+
+  for (const account of accounts) {
+    try {
+      console.log(`[server] 正在连接「${account.display_name}」，按提示输入手机号与验证码…`)
+      await adapters.connect(account.platform, {
+        id: account.id,
+        displayName: account.display_name,
+        credentialsRef: account.credentials_ref,
+      })
+      console.log(`[server] 「${account.display_name}」已连接`)
+    } catch (err) {
+      console.error(`[server] 「${account.display_name}」连接失败:`, err)
+    }
+  }
+}
+
+void connectRegisteredAccounts()

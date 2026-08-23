@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/db/migrate.ts",
-    "seed": "tsx src/db/seed.ts"
+    "seed": "tsx src/db/seed.ts",
+    "preflight": "tsx src/db/preflight.ts"
   },
   "dependencies": {
     "@im-hub/shared": "workspace:*",
