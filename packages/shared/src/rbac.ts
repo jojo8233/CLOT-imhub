@@ -4,10 +4,11 @@ export type Role = (typeof ROLES)[number]
 export interface Actor {
   userId: string
   role: Role
-  /** manager 作为组长带的 team id 列表；其他角色为空数组 */
+  /**
+   * manager 作为组长带的 team id 列表；其他角色恒为空数组。
+   * 这是 manager 可见范围的唯一依据，见 resolveScope。
+   */
   leadTeamIds: string[]
-  /** agent 所属的 team；其他角色可为 null */
-  teamId: string | null
 }
 
 export type ScopeFilter =

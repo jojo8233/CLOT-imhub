@@ -1,4 +1,4 @@
-import type { AccountStatus, Platform } from './platform.js'
+import type { AccountStatus, Direction, Platform } from './platform.js'
 
 export interface WsMessageEvent {
   type: 'message'
@@ -6,7 +6,7 @@ export interface WsMessageEvent {
   conversationId: string
   accountId: string
   platform: Platform
-  direction: 'in' | 'out'
+  direction: Direction
   body: string
   translatedBody: string | null
   sentAt: string
