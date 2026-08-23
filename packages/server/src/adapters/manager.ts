@@ -9,6 +9,23 @@ import type {
 } from './types.js'
 
 /**
+ * 逐个调用订阅者，单个失败不影响其余，也绝不向上冒泡。
+ *
+ * 冒泡的后果不只是丢事件：TDLib 会把 update 回调里的异常转成 client 的
+ * error 事件，适配器据此把账号标成 reconnecting——于是一个下游的入库 bug
+ * 会表现成"Telegram 账号一直在重连"，极难排查。
+ */
+function fanOut<A extends unknown[]>(handlers: ((...args: A) => void)[], ...args: A): void {
+  for (const h of handlers) {
+    try {
+      h(...args)
+    } catch (err) {
+      console.error('[adapter-manager] 事件处理器抛出异常，已隔离:', err)
+    }
+  }
+}
+
+/**
  * 按平台路由的适配器池。上层（ingest / api）只跟它打交道，
  * 加平台时只需在构造时多传一个 adapter，不改任何调用方。
  */
@@ -23,10 +40,10 @@ export class AdapterManager {
   constructor(adapters: PlatformAdapter[]) {
     for (const a of adapters) {
       this.byPlatform.set(a.platform, a)
-      a.onMessage(msg => { for (const h of this.messageHandlers) h(msg) })
-      a.onStatusChange((id, status) => { for (const h of this.statusHandlers) h(id, status) })
-      a.onAuthChallenge((id, c) => { for (const h of this.authChallengeHandlers) h(id, c) })
-      a.onCredentialsUpdated((id, ref) => { for (const h of this.credentialsHandlers) h(id, ref) })
+      a.onMessage(msg => fanOut(this.messageHandlers, msg))
+      a.onStatusChange((id, status) => fanOut(this.statusHandlers, id, status))
+      a.onAuthChallenge((id, c) => fanOut(this.authChallengeHandlers, id, c))
+      a.onCredentialsUpdated((id, ref) => fanOut(this.credentialsHandlers, id, ref))
     }
   }
 

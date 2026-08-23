@@ -118,4 +118,47 @@ describe('AdapterManager', () => {
     const mgr = new AdapterManager([fakeAdapter('telegram')])
     await expect(mgr.disconnect('never-connected')).resolves.toBeUndefined()
   })
+
+  it('一个消息处理器抛异常不影响其他处理器', () => {
+    const tg = fakeAdapter('telegram')
+    const handlers: ((m: NormalizedMessage) => void)[] = []
+    tg.onMessage = vi.fn((h) => { handlers.push(h) })
+
+    const mgr = new AdapterManager([tg])
+    const reached: string[] = []
+    mgr.onMessage(() => { throw new Error('入库炸了') })
+    mgr.onMessage(() => { reached.push('second') })
+
+    const sample = { platform: 'telegram', accountId: 'a1' } as NormalizedMessage
+    expect(() => handlers[0]!(sample)).not.toThrow()
+    expect(reached).toEqual(['second'])
+  })
+
+  it('一个状态处理器抛异常不影响其他处理器', () => {
+    const tg = fakeAdapter('telegram')
+    const handlers: ((id: string, s: string) => void)[] = []
+    tg.onStatusChange = vi.fn((h) => { handlers.push(h as never) })
+
+    const mgr = new AdapterManager([tg])
+    const reached: string[] = []
+    mgr.onStatusChange(() => { throw new Error('写库炸了') })
+    mgr.onStatusChange(() => { reached.push('second') })
+
+    expect(() => handlers[0]!('a1', 'connected')).not.toThrow()
+    expect(reached).toEqual(['second'])
+  })
+
+  it('处理器异常不会向上冒泡到适配器，避免污染连接状态', () => {
+    const tg = fakeAdapter('telegram')
+    const msgHandlers: ((m: NormalizedMessage) => void)[] = []
+    tg.onMessage = vi.fn((h) => { msgHandlers.push(h) })
+
+    const mgr = new AdapterManager([tg])
+    mgr.onMessage(() => { throw new Error('boom') })
+
+    // 适配器调用 fan-out 时绝不能收到异常——TDLib 会把它转成 error 事件，
+    // 导致一个健康的账号被误标成 reconnecting
+    const sample = { platform: 'telegram', accountId: 'a1' } as NormalizedMessage
+    expect(() => msgHandlers[0]!(sample)).not.toThrow()
+  })
 })
