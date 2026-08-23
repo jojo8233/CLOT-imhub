@@ -26,9 +26,10 @@ describe('cacheKey', () => {
     expect(cacheKey('deepl', 'zh', 'en', '你好')).toMatch(/^tr:[0-9a-f]{64}$/)
   })
 
-  it('分隔符不可被文本内容伪造出碰撞', () => {
-    // 若拼接方式是简单的空格连接，下面两组的拼接串会相同，产生错误的缓存命中
+  it('字段边界不可被内容伪造出碰撞', () => {
+    // 简单拼接时这两组的拼接串相同，会撞进同一个 key
     expect(cacheKey('deepl', 'zh', 'en', 'a b')).not.toBe(cacheKey('deepl', 'zh', 'en a', 'b'))
+    expect(cacheKey('deepl', 'auto', 'en\x00X', 'Y')).not.toBe(cacheKey('deepl', 'auto', 'en', 'X\x00Y'))
   })
 })
 
