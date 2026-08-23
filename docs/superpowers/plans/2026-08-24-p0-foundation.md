@@ -1759,8 +1759,21 @@ export interface AdapterAccount {
   credentialsRef: string | null
 }
 
+/**
+ * 需要人工干预才能完成的鉴权挑战。
+ * qr: 内容直接渲染成二维码给人扫（Signal 的 sgnl://linkdevice、WhatsApp Web 的配对串）
+ * code: 需要人工输入或回填的验证码（Telegram 的短信码）
+ */
+export interface AuthChallenge {
+  kind: 'qr' | 'code'
+  payload: string
+  expiresAt?: Date
+}
+
 export type MessageHandler = (msg: NormalizedMessage) => void
 export type StatusHandler = (accountId: string, status: AccountStatus) => void
+export type AuthChallengeHandler = (accountId: string, challenge: AuthChallenge) => void
+export type CredentialsHandler = (accountId: string, credentialsRef: string) => void
 
 export interface PlatformAdapter {
   readonly platform: Platform
@@ -1769,6 +1782,19 @@ export interface PlatformAdapter {
   sendMessage(accountId: string, conversationId: string, content: OutboundContent): Promise<string>
   onMessage(handler: MessageHandler): void
   onStatusChange(handler: StatusHandler): void
+
+  /**
+   * 平台要求人工完成关联时推出挑战。Signal 扫码关联和 WhatsApp Web 都靠它——
+   * 否则二维码在适配器内部生成后没有任何通道能到达前端。
+   * 不需要人工介入的平台注册了也永远不触发，这是可以的。
+   */
+  onAuthChallenge(handler: AuthChallengeHandler): void
+
+  /**
+   * 关联成功后平台产生的新凭据，供上层写回 accounts.credentials_ref。
+   * 没有这个通道的话，扫码得到的设备凭据只活在适配器内存里，进程重启就丢。
+   */
+  onCredentialsUpdated(handler: CredentialsHandler): void
 }
 ```
 
@@ -1871,8 +1897,12 @@ interface TdMessage {
   content: { _: string; text?: { text: string } }
 }
 
-function senderId(sender: TdSender): string {
-  return sender._ === 'messageSenderUser' ? String(sender.user_id) : String(sender.chat_id)
+function senderId(sender: TdSender): string | null {
+  if (sender._ === 'messageSenderUser') return String(sender.user_id)
+  if (sender._ === 'messageSenderChat') return String(sender.chat_id)
+  // TDLib 加了新的 sender 类型。宁可丢这条消息，也不要把 'undefined'
+  // 当成发送者 ID 写进库——那会让去重和会话归属静默错乱。
+  return null
 }
 
 /**
@@ -1930,7 +1960,14 @@ import * as path from 'node:path'
 import * as tdl from 'tdl'
 import { getTdjson } from 'prebuilt-tdlib'
 import type { AccountStatus, OutboundContent } from '@im-hub/shared'
-import type { AdapterAccount, MessageHandler, PlatformAdapter, StatusHandler } from '../types.js'
+import type {
+  AdapterAccount,
+  AuthChallengeHandler,
+  CredentialsHandler,
+  MessageHandler,
+  PlatformAdapter,
+  StatusHandler,
+} from '../types.js'
 import { normalizeTelegramMessage } from './normalize.js'
 
 tdl.configure({ tdjson: getTdjson() })
@@ -1947,11 +1984,18 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly clients = new Map<string, tdl.Client>()
   private readonly messageHandlers: MessageHandler[] = []
   private readonly statusHandlers: StatusHandler[] = []
+  private readonly authChallengeHandlers: AuthChallengeHandler[] = []
+  private readonly credentialsHandlers: CredentialsHandler[] = []
 
   constructor(private readonly opts: TelegramAdapterOptions) {}
 
   onMessage(handler: MessageHandler): void { this.messageHandlers.push(handler) }
   onStatusChange(handler: StatusHandler): void { this.statusHandlers.push(handler) }
+
+  // P0 的 Telegram 登录在终端交互完成（见 Task 15），这两个通道登记但不触发。
+  // Signal 的扫码关联（P1）会真正用到它们。
+  onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
+  onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) h(accountId, status)
@@ -3726,6 +3770,11 @@ Expected:
 3. 点开会话，消息下方先显示「翻译中…」，随后被 WS 推送替换成中文译文
 4. 在输入框打中文点发送，对方 Telegram 收到英文
 5. 把同一条英文消息再发一次（同一 message id 的重复 update），数据库 `messages` 表不产生第二条记录
+6. 确认 tdl 交付的 `chat_id` 与 `message.id` 是安全整数（未因超过 2^53 而丢精度）：
+   `select platform_conversation_id, platform_message_id from messages limit 5;`
+   拿其中一条去 Telegram 客户端核对，位数与值必须完全一致——精度丢失会让去重约束失效
+7. UI 上发送者显示名为空时回落到 `senderExternalId`（P0 的 `senderDisplayName` 恒为 null，
+   补充联系人资料是 P1 项）
 
 - [ ] **Step 5: 写运行手册**
 
