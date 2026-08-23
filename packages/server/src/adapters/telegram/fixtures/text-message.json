@@ -1,0 +1,15 @@
+{
+  "_": "updateNewMessage",
+  "message": {
+    "_": "message",
+    "id": 1048576,
+    "sender_id": { "_": "messageSenderUser", "user_id": 777000 },
+    "chat_id": -1001234567890,
+    "is_outgoing": false,
+    "date": 1756000000,
+    "content": {
+      "_": "messageText",
+      "text": { "_": "formattedText", "text": "Hello, is this still available?", "entities": [] }
+    }
+  }
+}
