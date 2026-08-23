@@ -2452,15 +2452,21 @@ export class KyselyMessageRepo implements MessageRepo {
         contact_external_id: input.contactExternalId ?? input.platformConversationId,
         contact_display_name: input.contactDisplayName,
       })
-      .onConflict(oc => oc
-        .columns(['account_id', 'platform_conversation_id'])
-        // COALESCE 保证出向消息传来的 null 不会抹掉已知的联系人身份
-        .doUpdateSet({
-          contact_external_id: (eb) =>
-            eb.fn.coalesce(eb.ref('excluded.contact_external_id'), eb.ref('conversations.contact_external_id')),
-          contact_display_name: (eb) =>
-            eb.fn.coalesce(eb.ref('excluded.contact_display_name'), eb.ref('conversations.contact_display_name')),
-        }))
+      .onConflict((oc) =>
+        oc.columns(['account_id', 'platform_conversation_id']).doUpdateSet((eb) => ({
+          // 注意：不能用 eb.ref('excluded.contact_external_id') —— values() 里为了满足
+          // NOT NULL 约束已经把 null 替换成了 platformConversationId 兜底值，
+          // excluded 表里看到的永远不是真正的 null，COALESCE 就会失效、照样覆盖真实联系人。
+          // 这里直接把原始（可能为 null）的输入值当参数绑进 SQL，绕开 excluded。
+          contact_external_id: eb.fn.coalesce(
+            sql<string | null>`${input.contactExternalId}`,
+            eb.ref('conversations.contact_external_id'),
+          ),
+          contact_display_name: eb.fn.coalesce(
+            sql<string | null>`${input.contactDisplayName}`,
+            eb.ref('conversations.contact_display_name'),
+          ),
+        })))
       .returning('id')
       .executeTakeFirstOrThrow()
     return row
