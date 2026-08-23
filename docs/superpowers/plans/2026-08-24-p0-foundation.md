@@ -6,7 +6,9 @@
 
 **Architecture:** pnpm workspace 三包结构（shared / server / desktop）。服务端 Fastify 提供 REST + WebSocket，TDLib 实例池负责 Telegram 收发，消息归一化后入 Postgres，BullMQ 异步跑翻译。客户端 Electron 只是 UI，不碰任何 IM 协议。所有平台相关代码都藏在 `PlatformAdapter` 接口之后，P1/P2/P3 加平台时不改上层。
 
-**Tech Stack:** Node 24, TypeScript 5.7, pnpm 10, Fastify 5, PostgreSQL 16 + Kysely, Redis 7 + BullMQ 5, tdl + prebuilt-tdlib, Electron 33 + electron-vite + React 19, Vitest 2
+**Tech Stack:** Node 22 LTS, TypeScript 5.7, pnpm 10, Fastify 5, PostgreSQL 16 + Kysely, Redis 7 + BullMQ 5, tdl + prebuilt-tdlib, Electron 33 + electron-vite + React 19, Vitest 2
+
+**本机环境：** 不用 Docker。PostgreSQL 16 与 Redis 由 Homebrew 起后台服务，数据库 `imhub` / 角色 `imhub`（密码 `imhub_dev`）已建好。psql 全路径为 `/opt/homebrew/opt/postgresql@16/bin/psql`。`docker-compose.yml` 仅作部署用途保留。
 
 **Spec:** `docs/superpowers/specs/2026-08-24-im-hub-design.md`
 
