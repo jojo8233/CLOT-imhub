@@ -21,8 +21,8 @@ function sample(overrides: Partial<NormalizedMessage> = {}): NormalizedMessage {
 
 function fakeRepo() {
   return {
-    upsertConversation: vi.fn().mockResolvedValue('conv-1'),
-    insertMessage: vi.fn().mockResolvedValue('msg-1'),
+    upsertConversation: vi.fn().mockResolvedValue({ id: 'conv-1' }),
+    insertMessage: vi.fn().mockResolvedValue({ id: 'msg-1', isNew: true }),
     touchConversation: vi.fn().mockResolvedValue(undefined),
   }
 }
@@ -53,18 +53,18 @@ describe('MessageIngestor', () => {
     expect(queue.enqueueTranslate).toHaveBeenCalledWith({ messageId: 'msg-1', conversationId: 'conv-1' })
   })
 
-  it('重复消息被去重时返回 null 且不推队列', async () => {
+  it('重复消息返回 null，但仍派发翻译任务以补偿此前可能丢失的派发', async () => {
     const repo = fakeRepo()
-    repo.insertMessage.mockResolvedValue(null)
+    repo.insertMessage.mockResolvedValue({ id: 'msg-1', isNew: false })
     const queue = fakeQueue()
     const id = await new MessageIngestor(repo as never, queue as never).ingest(sample())
     expect(id).toBeNull()
-    expect(queue.enqueueTranslate).not.toHaveBeenCalled()
+    expect(queue.enqueueTranslate).toHaveBeenCalledWith({ messageId: 'msg-1', conversationId: 'conv-1' })
   })
 
   it('重复消息也不更新会话时间，避免旧消息重放把会话顶到列表最前', async () => {
     const repo = fakeRepo()
-    repo.insertMessage.mockResolvedValue(null)
+    repo.insertMessage.mockResolvedValue({ id: 'msg-1', isNew: false })
     await new MessageIngestor(repo as never, fakeQueue() as never).ingest(sample())
     expect(repo.touchConversation).not.toHaveBeenCalled()
   })
@@ -107,5 +107,27 @@ describe('MessageIngestor', () => {
       .rejects.toThrow('redis down')
     // 消息本身已经入库，不应因为队列故障而丢失
     expect(repo.insertMessage).toHaveBeenCalledOnce()
+  })
+
+  it('出向消息不传联系人字段，避免把会话对方覆盖成我方账号', async () => {
+    const repo = fakeRepo()
+    await new MessageIngestor(repo as never, fakeQueue() as never).ingest(sample({ direction: 'out' }))
+    expect(repo.upsertConversation).toHaveBeenCalledWith({
+      accountId: 'acc-1',
+      platformConversationId: '-100123',
+      contactExternalId: null,
+      contactDisplayName: null,
+    })
+  })
+
+  it('入向消息用发送者填充联系人字段', async () => {
+    const repo = fakeRepo()
+    await new MessageIngestor(repo as never, fakeQueue() as never).ingest(sample({ direction: 'in' }))
+    expect(repo.upsertConversation).toHaveBeenCalledWith({
+      accountId: 'acc-1',
+      platformConversationId: '-100123',
+      contactExternalId: '777000',
+      contactDisplayName: 'Jane',
+    })
   })
 })
