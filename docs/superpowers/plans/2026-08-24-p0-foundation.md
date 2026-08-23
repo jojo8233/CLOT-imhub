@@ -2487,6 +2487,8 @@ git commit -m "feat(server): kysely message repo and bullmq translate pipeline"
 ## Task 13: REST API 与 WebSocket 网关
 
 **Files:**
+- Create: `packages/server/src/rbac/scoped-db.ts`
+- Create: `packages/server/src/rbac/scoped-db.test.ts`
 - Create: `packages/server/src/api/actor.ts`
 - Create: `packages/server/src/api/actor.test.ts`
 - Create: `packages/server/src/api/ws.ts`
@@ -2496,6 +2498,97 @@ git commit -m "feat(server): kysely message repo and bullmq translate pipeline"
 - Create: `packages/server/src/api/routes/messages.ts`
 - Create: `packages/server/src/api/server.ts`
 - Create: `packages/server/src/index.ts`
+
+- [ ] **Step 0: 先建 ScopedDb，让路由拿不到未过滤的 query builder**
+
+> **为什么加这一步：** Task 4 的对抗性评审指出——`applyAccountScope` 在 `kind: 'all'` 时原样返回
+> query builder，因此"路由作者忘了调用它"和"owner 正常请求"生成的 SQL 完全一样。漏调一次就是
+> 静默全量泄露，且任何测试都抓不到。解法是让路由层根本接触不到裸 `db`：每请求构造一个已把
+> scope 闭包进去的仓储对象，路由只能从它取查询。
+
+`packages/server/src/rbac/scoped-db.test.ts`:
+```ts
+import { describe, expect, it } from 'vitest'
+import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely'
+import type { Database } from '../db/types.js'
+import { ScopedDb } from './scoped-db.js'
+
+const db = new Kysely<Database>({
+  dialect: {
+    createAdapter: () => new PostgresAdapter(),
+    createDriver: () => new DummyDriver(),
+    createIntrospector: (d) => new PostgresIntrospector(d),
+    createQueryCompiler: () => new PostgresQueryCompiler(),
+  },
+})
+
+describe('ScopedDb', () => {
+  it('accounts() 已经带上 agent 的过滤条件', () => {
+    const scoped = new ScopedDb(db, { kind: 'self', userId: 'u9', requiresAudit: false })
+    const q = scoped.accounts().selectAll().compile()
+    expect(q.sql).toContain('"owner_user_id" = $1')
+    expect(q.parameters).toEqual(['u9'])
+  })
+
+  it('accountsJoinedWithConversations() 也带上过滤条件', () => {
+    const scoped = new ScopedDb(db, { kind: 'self', userId: 'u9', requiresAudit: false })
+    const q = scoped.accountsJoinedWithConversations().selectAll().compile()
+    expect(q.sql).toContain('inner join "conversations"')
+    expect(q.sql).toContain('"owner_user_id" = $1')
+  })
+
+  it('没带组的 manager 从任何入口拿到的都是 where false', () => {
+    const scoped = new ScopedDb(db, { kind: 'teams', teamIds: [], requiresAudit: false })
+    expect(scoped.accounts().selectAll().compile().sql).toContain('where false')
+    expect(scoped.accountsJoinedWithConversations().selectAll().compile().sql).toContain('where false')
+  })
+
+  it('owner 不加过滤条件', () => {
+    const scoped = new ScopedDb(db, { kind: 'all', requiresAudit: false })
+    expect(scoped.accounts().selectAll().compile().sql).not.toContain('where')
+  })
+})
+```
+
+跑到失败，然后实现：
+
+`packages/server/src/rbac/scoped-db.ts`:
+```ts
+import type { Kysely } from 'kysely'
+import type { ScopeFilter } from '@im-hub/shared'
+import type { Database } from '../db/types.js'
+import { applyAccountScope } from './apply.js'
+
+/**
+ * 每请求构造一次，把当前 actor 的可见范围闭包进去。
+ *
+ * 路由层只允许通过它取查询，不允许直接 import db —— 因为 applyAccountScope 在
+ * owner/auditor 下是恒等变换，"忘记调用"和"正常调用"产生的 SQL 无法区分，
+ * 漏调一次就是静默的全量数据泄露。把过滤前置到这里，忘记就变成不可能。
+ */
+export class ScopedDb {
+  constructor(
+    private readonly db: Kysely<Database>,
+    private readonly scope: ScopeFilter,
+  ) {}
+
+  /** 当前 actor 可见的账号。 */
+  accounts() {
+    return applyAccountScope(this.db.selectFrom('accounts'), this.scope)
+  }
+
+  /**
+   * 会话必须先经 accounts 收敛可见范围，所以从 accounts 起手 join，
+   * 而不是直接 selectFrom('conversations') —— 后者没有 accounts 表可供过滤。
+   */
+  accountsJoinedWithConversations() {
+    return applyAccountScope(
+      this.db.selectFrom('accounts').innerJoin('conversations', 'conversations.account_id', 'accounts.id'),
+      this.scope,
+    )
+  }
+}
+```
 
 - [ ] **Step 1: 写 actor 加载的失败测试**
 
@@ -2663,20 +2756,15 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 `packages/server/src/api/routes/accounts.ts`:
 ```ts
 import type { FastifyInstance } from 'fastify'
-import { resolveScope } from '../../rbac/scope.js'
-import { applyAccountScope } from '../../rbac/apply.js'
-import { db } from '../../db/client.js'
 
 export async function accountRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/accounts', async (req) => {
-    const scope = resolveScope(req.actor)
-    const accounts = await applyAccountScope(
-      db.selectFrom('accounts').select([
-        'id', 'platform', 'display_name', 'status',
-        'owner_user_id', 'team_id', 'history_available_from',
-      ]),
-      scope,
-    ).execute()
+    // 注意：这里没有 import db，也没有调 applyAccountScope。
+    // req.scoped 已经把当前 actor 的可见范围闭包进去了，漏过滤在结构上不可能发生。
+    const accounts = await req.scoped.accounts().select([
+      'id', 'platform', 'display_name', 'status',
+      'owner_user_id', 'team_id', 'history_available_from',
+    ]).execute()
     return { accounts }
   })
 }
@@ -2685,21 +2773,20 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
 `packages/server/src/api/routes/conversations.ts`:
 ```ts
 import type { FastifyInstance } from 'fastify'
-import { resolveScope } from '../../rbac/scope.js'
-import { applyAccountScope } from '../../rbac/apply.js'
-import { db } from '../../db/client.js'
 
 export async function conversationRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/conversations', async (req) => {
-    const scope = resolveScope(req.actor)
-    const visible = await applyAccountScope(db.selectFrom('accounts').select('accounts.id'), scope).execute()
-    const accountIds = visible.map(a => a.id)
-    if (accountIds.length === 0) return { conversations: [] }
-
-    const conversations = await db.selectFrom('conversations')
-      .select(['id', 'account_id', 'contact_display_name', 'contact_external_id', 'last_message_at'])
-      .where('account_id', 'in', accountIds)
-      .orderBy('last_message_at', 'desc')
+    // 一条 join 查询直接拿会话，不再先查可见账号 id 再二次查询：
+    // 少一次往返，也少一处可能忘记过滤的地方。
+    const conversations = await req.scoped.accountsJoinedWithConversations()
+      .select([
+        'conversations.id as id',
+        'conversations.account_id as account_id',
+        'conversations.contact_display_name as contact_display_name',
+        'conversations.contact_external_id as contact_external_id',
+        'conversations.last_message_at as last_message_at',
+      ])
+      .orderBy('conversations.last_message_at', 'desc')
       .limit(200)
       .execute()
     return { conversations }
@@ -2711,10 +2798,9 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
 ```ts
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { resolveScope } from '../../rbac/scope.js'
-import { applyAccountScope } from '../../rbac/apply.js'
 import { db } from '../../db/client.js'
 import { config } from '../../config.js'
+import type { ScopedDb } from '../../rbac/scoped-db.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
 
@@ -2730,24 +2816,21 @@ export interface MessageRouteDeps {
 }
 
 /** 在 scope 内查一个会话，查不到就是无权访问。所有会话相关操作都先过它。 */
-async function findVisibleConversation(actorScope: ReturnType<typeof resolveScope>, conversationId: string) {
-  return applyAccountScope(
-    db.selectFrom('accounts')
-      .innerJoin('conversations', 'conversations.account_id', 'accounts.id')
-      .select([
-        'conversations.id as conversation_id',
-        'conversations.platform_conversation_id as platform_conversation_id',
-        'accounts.id as account_id',
-      ])
-      .where('conversations.id', '=', conversationId),
-    actorScope,
-  ).executeTakeFirst()
+async function findVisibleConversation(scoped: ScopedDb, conversationId: string) {
+  return scoped.accountsJoinedWithConversations()
+    .select([
+      'conversations.id as conversation_id',
+      'conversations.platform_conversation_id as platform_conversation_id',
+      'accounts.id as account_id',
+    ])
+    .where('conversations.id', '=', conversationId)
+    .executeTakeFirst()
 }
 
 export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps): Promise<void> {
   app.get('/api/conversations/:id/messages', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const conv = await findVisibleConversation(resolveScope(req.actor), id)
+    const conv = await findVisibleConversation(req.scoped, id)
     if (!conv) return reply.code(404).send({ error: 'not found' })
 
     const messages = await db.selectFrom('messages')
@@ -2770,7 +2853,7 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
     const parsed = sendBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 
-    const conv = await findVisibleConversation(resolveScope(req.actor), parsed.data.conversationId)
+    const conv = await findVisibleConversation(req.scoped, parsed.data.conversationId)
     if (!conv) return reply.code(404).send({ error: 'not found' })
 
     const translated = await deps.gateway.translate({
@@ -2802,6 +2885,8 @@ import { config } from '../config.js'
 import { db } from '../db/client.js'
 import { verifySession } from '../auth/session.js'
 import { loadActor, type ActorRepo } from './actor.js'
+import { resolveScope } from '../rbac/scope.js'
+import { ScopedDb } from '../rbac/scoped-db.js'
 import type { WsHub } from './ws.js'
 import { authRoutes } from './routes/auth.js'
 import { accountRoutes } from './routes/accounts.js'
@@ -2809,7 +2894,11 @@ import { conversationRoutes } from './routes/conversations.js'
 import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
 
 declare module 'fastify' {
-  interface FastifyRequest { actor: Actor }
+  interface FastifyRequest {
+    actor: Actor
+    /** 已闭包当前可见范围的仓储。路由只允许经它取数据，不要直接 import db。 */
+    scoped: ScopedDb
+  }
 }
 
 const actorRepo: ActorRepo = {
@@ -2837,6 +2926,7 @@ export async function buildServer(deps: MessageRouteDeps, hub: WsHub): Promise<F
     try {
       const claims = await verifySession(header.slice(7), config.JWT_SECRET)
       req.actor = await loadActor(claims.userId, actorRepo)
+      req.scoped = new ScopedDb(db, resolveScope(req.actor))
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })
     }
