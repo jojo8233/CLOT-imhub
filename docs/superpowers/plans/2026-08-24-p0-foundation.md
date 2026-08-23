@@ -496,6 +496,8 @@ import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 import type { AccountStatus, Direction, Platform, Role } from '@im-hub/shared'
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
+/** 必填且 DB 无默认值的时间列：insert 时不允许省略 */
+type RequiredTimestamp = ColumnType<Date, Date | string, Date | string>
 
 export interface UsersTable {
   id: Generated<string>
@@ -553,7 +555,7 @@ export interface MessagesTable {
   body: string
   body_lang: string | null
   media_refs: JSONColumnType<unknown[]>
-  sent_at: Timestamp
+  sent_at: RequiredTimestamp
   ingested_at: Generated<Timestamp>
   raw: JSONColumnType<unknown>
 }
@@ -594,6 +596,10 @@ export function createDb(connectionString = config.DATABASE_URL): Kysely<Databas
   })
 }
 
+/**
+ * 组合根专用的单例。业务逻辑模块请通过构造函数接收 Kysely<Database>，
+ * 不要直接 import 它——否则单元测试会因为缺 DATABASE_URL 在模块加载期就崩。
+ */
 export const db = createDb()
 ```
 
@@ -614,6 +620,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('password_hash', 'text', c => c.notNull())
     .addColumn('created_at', 'timestamptz', c => c.notNull().defaultTo(sql`now()`))
     .addColumn('disabled_at', 'timestamptz')
+    .addCheckConstraint('users_role_check', sql`role in ('owner','auditor','manager','agent')`)
     .execute()
 
   await db.schema.createTable('teams')
@@ -626,7 +633,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('team_id', 'uuid', c => c.notNull().references('teams.id').onDelete('cascade'))
     .addColumn('user_id', 'uuid', c => c.notNull().references('users.id').onDelete('cascade'))
     .addColumn('is_lead', 'boolean', c => c.notNull().defaultTo(false))
-    .addPrimaryKeyConstraint('team_members_pk', ['team_id', 'user_id'])
+    .addPrimaryKeyConstraint('team_members_pk', ['user_id', 'team_id'])
     .execute()
 
   await db.schema.createTable('accounts')
@@ -651,6 +658,10 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('last_message_at', 'timestamptz')
     .addUniqueConstraint('conversations_account_platform_uq', ['account_id', 'platform_conversation_id'])
     .execute()
+
+  // owner/auditor 的 scope 不加过滤，会话列表退化为全表 ORDER BY last_message_at DESC LIMIT 200
+  await db.schema.createIndex('conversations_last_message_at_idx')
+    .on('conversations').columns(['last_message_at']).execute()
 
   await db.schema.createTable('messages')
     .addColumn('id', 'uuid', c => c.primaryKey().defaultTo(sql`gen_random_uuid()`))
