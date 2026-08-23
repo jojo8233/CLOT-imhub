@@ -1,0 +1,106 @@
+import Fastify, { type FastifyInstance } from 'fastify'
+import websocket from '@fastify/websocket'
+import type { Actor } from '@im-hub/shared'
+import { config } from '../config.js'
+import { db } from '../db/client.js'
+import { verifySession } from '../auth/session.js'
+import { loadActor, type ActorRepo } from './actor.js'
+import { resolveScope } from '../rbac/scope.js'
+import { ScopedDb } from '../rbac/scoped-db.js'
+import type { WsHub } from './ws.js'
+import { authRoutes } from './routes/auth.js'
+import { accountRoutes } from './routes/accounts.js'
+import { conversationRoutes } from './routes/conversations.js'
+import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    actor: Actor
+    /** 已闭包当前可见范围的仓储。路由只允许经它取数据，不要直接 import db。 */
+    scoped: ScopedDb
+  }
+}
+
+const defaultActorRepo: ActorRepo = {
+  findUser: async (userId) => {
+    const row = await db.selectFrom('users')
+      .select(['id', 'role', 'disabled_at'])
+      .where('id', '=', userId)
+      .executeTakeFirst()
+    return row ?? null
+  },
+  findMemberships: (userId) => db.selectFrom('team_members')
+    .select(['team_id', 'is_lead'])
+    .where('user_id', '=', userId)
+    .execute(),
+}
+
+export interface BuildServerOptions {
+  /**
+   * 允许在测试里替换成内存实现，绕开真实数据库。
+   * 生产路径使用组合根里挂的默认实现（走 db 单例）。
+   */
+  actorRepo?: ActorRepo
+}
+
+export async function buildServer(
+  deps: MessageRouteDeps,
+  hub: WsHub,
+  options: BuildServerOptions = {},
+): Promise<FastifyInstance> {
+  const actorRepo = options.actorRepo ?? defaultActorRepo
+  const app = Fastify({ logger: true })
+  await app.register(websocket)
+
+  app.addHook('onRequest', async (req, reply) => {
+    // /api/auth/ 自己校验密码；/ws 自己在首帧里鉴权。两者都不走这个钩子。
+    if (req.url.startsWith('/api/auth/') || req.url.startsWith('/ws')) return
+    const header = req.headers.authorization
+    if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'unauthorized' })
+    try {
+      const claims = await verifySession(header.slice(7), config.JWT_SECRET)
+      req.actor = await loadActor(claims.userId, actorRepo)
+      req.scoped = new ScopedDb(db, resolveScope(req.actor))
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+  })
+
+  await app.register(authRoutes)
+  await app.register(accountRoutes)
+  await app.register(conversationRoutes)
+  await app.register(async (instance) => { await messageRoutes(instance, deps) })
+
+  /**
+   * 鉴权走首帧消息，不走 query string —— URL 里的 token 会落进反向代理和服务端
+   * 访问日志，而它有 12 小时有效期，被日志采集带走就是 12 小时的可用凭证。
+   * 浏览器的 WebSocket 构造函数设不了请求头，所以用首帧握手代替。
+   */
+  app.get('/ws', { websocket: true }, (socket) => {
+    let authed = false
+
+    const deadline = setTimeout(() => {
+      if (!authed) socket.close(1008, 'auth timeout')
+    }, 5000)
+
+    socket.on('message', async (data: Buffer) => {
+      if (authed) return
+      try {
+        const msg = JSON.parse(data.toString()) as { type?: string; token?: string }
+        if (msg.type !== 'auth' || !msg.token) throw new Error('expected auth frame')
+        const claims = await verifySession(msg.token, config.JWT_SECRET)
+        authed = true
+        clearTimeout(deadline)
+        hub.add(claims.userId, socket as never)
+        socket.send(JSON.stringify({ type: 'auth_ok' }))
+      } catch {
+        clearTimeout(deadline)
+        socket.close(1008, 'unauthorized')
+      }
+    })
+
+    socket.on('close', () => clearTimeout(deadline))
+  })
+
+  return app
+}
