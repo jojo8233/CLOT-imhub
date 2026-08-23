@@ -328,10 +328,11 @@ export type Role = (typeof ROLES)[number]
 export interface Actor {
   userId: string
   role: Role
-  /** manager 作为组长带的 team id 列表；其他角色为空数组 */
+  /**
+   * manager 作为组长带的 team id 列表；其他角色恒为空数组。
+   * 这是 manager 可见范围的唯一依据，见 resolveScope。
+   */
   leadTeamIds: string[]
-  /** agent 所属的 team；其他角色可为 null */
-  teamId: string | null
 }
 
 export type ScopeFilter =
@@ -755,7 +756,7 @@ import { describe, expect, it } from 'vitest'
 import type { Actor } from '@im-hub/shared'
 import { resolveScope } from './scope.js'
 
-const base: Omit<Actor, 'role'> = { userId: 'u1', leadTeamIds: [], teamId: null }
+const base: Omit<Actor, 'role'> = { userId: 'u1', leadTeamIds: [] }
 
 describe('resolveScope', () => {
   it('owner 看全局且不写审计', () => {
@@ -2514,12 +2515,12 @@ describe('loadActor', () => {
     expect((await loadActor('u2', repo as never)).leadTeamIds).toEqual([])
   })
 
-  it('没有任何组关系时 teamId 为 null', async () => {
+  it('owner 不因组关系获得 leadTeamIds，可见范围由角色单独决定', async () => {
     const repo = {
       findUser: vi.fn().mockResolvedValue({ id: 'u4', role: 'owner', disabled_at: null }),
-      findMemberships: vi.fn().mockResolvedValue([]),
+      findMemberships: vi.fn().mockResolvedValue([{ team_id: 't1', is_lead: true }]),
     }
-    expect((await loadActor('u4', repo as never)).teamId).toBeNull()
+    expect((await loadActor('u4', repo as never)).leadTeamIds).toEqual([])
   })
 
   it('用户不存在时抛错', async () => {
@@ -2568,12 +2569,7 @@ export async function loadActor(userId: string, repo: ActorRepo): Promise<Actor>
     ? memberships.filter(m => m.is_lead).map(m => m.team_id)
     : []
 
-  return {
-    userId: user.id,
-    role: user.role,
-    leadTeamIds,
-    teamId: memberships[0]?.team_id ?? null,
-  }
+  return { userId: user.id, role: user.role, leadTeamIds }
 }
 ```
 
