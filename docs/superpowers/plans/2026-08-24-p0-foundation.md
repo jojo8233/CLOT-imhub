@@ -2727,10 +2727,17 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { config } from '../../config.js'
 import { db } from '../../db/client.js'
-import { verifyPassword } from '../../auth/password.js'
+import { hashPassword, verifyPassword } from '../../auth/password.js'
 import { signSession } from '../../auth/session.js'
 
 const loginBody = z.object({ email: z.string().email(), password: z.string().min(1) })
+
+/**
+ * 用户不存在时拿它当靶子跑一次 argon2，抹平"账号不存在"与"密码错误"的响应时间差。
+ * argon2 故意很慢（几十到上百毫秒），只在用户存在时才调用的话，
+ * 攻击者能靠响应快慢枚举出哪些邮箱有账号。
+ */
+const DUMMY_HASH = await hashPassword('timing-equalizer-not-a-real-password')
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/auth/login', async (req, reply) => {
@@ -2742,8 +2749,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       .where('email', '=', parsed.data.email)
       .executeTakeFirst()
 
-    if (!user || user.disabled_at) return reply.code(401).send({ error: 'invalid credentials' })
-    if (!await verifyPassword(user.password_hash, parsed.data.password)) {
+    // 无论用户存在与否都跑一次校验，保持两条路径耗时一致
+    const ok = await verifyPassword(user?.password_hash ?? DUMMY_HASH, parsed.data.password)
+    if (!user || user.disabled_at || !ok) {
       return reply.code(401).send({ error: 'invalid credentials' })
     }
 
@@ -2920,6 +2928,7 @@ export async function buildServer(deps: MessageRouteDeps, hub: WsHub): Promise<F
   await app.register(websocket)
 
   app.addHook('onRequest', async (req, reply) => {
+    // /ws 自己在首帧里鉴权，不走这个钩子
     if (req.url.startsWith('/api/auth/') || req.url.startsWith('/ws')) return
     const header = req.headers.authorization
     if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'unauthorized' })
@@ -2937,15 +2946,35 @@ export async function buildServer(deps: MessageRouteDeps, hub: WsHub): Promise<F
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
 
-  app.get('/ws', { websocket: true }, async (socket, req) => {
-    const token = (req.query as { token?: string }).token
-    if (!token) { socket.close(1008, 'unauthorized'); return }
-    try {
-      const claims = await verifySession(token, config.JWT_SECRET)
-      hub.add(claims.userId, socket as never)
-    } catch {
-      socket.close(1008, 'unauthorized')
-    }
+  /**
+   * 鉴权走首帧消息，不走 query string —— URL 里的 token 会落进反向代理和服务端
+   * 访问日志，而它有 12 小时有效期，被日志采集带走就是 12 小时的可用凭证。
+   * 浏览器的 WebSocket 构造函数设不了请求头，所以用首帧握手代替。
+   */
+  app.get('/ws', { websocket: true }, (socket) => {
+    let authed = false
+
+    const deadline = setTimeout(() => {
+      if (!authed) socket.close(1008, 'auth timeout')
+    }, 5000)
+
+    socket.on('message', async (data: Buffer) => {
+      if (authed) return
+      try {
+        const msg = JSON.parse(data.toString()) as { type?: string; token?: string }
+        if (msg.type !== 'auth' || !msg.token) throw new Error('expected auth frame')
+        const claims = await verifySession(msg.token, config.JWT_SECRET)
+        authed = true
+        clearTimeout(deadline)
+        hub.add(claims.userId, socket as never)
+        socket.send(JSON.stringify({ type: 'auth_ok' }))
+      } catch {
+        clearTimeout(deadline)
+        socket.close(1008, 'unauthorized')
+      }
+    })
+
+    socket.on('close', () => clearTimeout(deadline))
   })
 
   return app
@@ -3250,8 +3279,14 @@ export const api = {
       body: JSON.stringify({ conversationId, body, targetLang }),
     }),
   connectWs(onEvent: (e: WsServerEvent) => void): WebSocket {
-    const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws?token=${token}`)
-    ws.onmessage = (e) => onEvent(JSON.parse(e.data as string) as WsServerEvent)
+    // token 走首帧而不是 URL，避免它进入访问日志
+    const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws`)
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }))
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data as string) as WsServerEvent | { type: 'auth_ok' }
+      if (msg.type === 'auth_ok') return
+      onEvent(msg as WsServerEvent)
+    }
     return ws
   },
 }
