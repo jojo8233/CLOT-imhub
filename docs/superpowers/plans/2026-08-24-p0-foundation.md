@@ -1606,7 +1606,7 @@ Expected: FAIL，`Failed to resolve import "./gateway.js"`
 ```ts
 import type { TranslationCache } from './cache.js'
 import { cacheKey } from './cache.js'
-import type { ProviderName, TranslationProvider } from './types.js'
+import { ProviderFailedError, type ProviderName, type TranslationProvider } from './types.js'
 
 /** 四级引擎配置。优先级：会话 > 账号 > 团队 > 全局默认。 */
 export interface EngineConfig {
@@ -1635,9 +1635,22 @@ export interface TranslationResult {
   downgradedFrom: ProviderName[]
 }
 
+export class EmptyInputError extends Error {
+  constructor() {
+    super('nothing to translate: input is empty or whitespace-only')
+  }
+}
+
 export class AllProvidersFailedError extends Error {
-  constructor(readonly attempts: ProviderName[]) {
-    super('all translation providers failed')
+  constructor(readonly failures: { provider: ProviderName; error: unknown }[]) {
+    // 必须带上每个引擎的根因：否则线上只看到"全挂了"，
+    // 不知道是 429、密钥错、还是响应体坏了。
+    super(
+      'all translation providers failed: ' +
+        failures
+          .map((f) => `${f.provider} (${f.error instanceof Error ? f.error.message : String(f.error)})`)
+          .join('; '),
+    )
   }
 }
 
@@ -1659,30 +1672,56 @@ export class TranslationGateway {
   }
 
   async translate(req: TranslateRequest): Promise<TranslationResult> {
+    // 不短路的话，全空白输入会真的打三次付费 API（每个 provider 都拒绝空译文），
+    // 在同步发送路径上换来数秒延迟和一个必然的 500。
+    if (req.text.trim() === '') throw new EmptyInputError()
+
     const preferred = resolveProvider(req.config)
     const key = cacheKey(preferred, req.from, req.to, req.text)
 
     const hit = await this.cache.get(key)
     if (hit) {
+      // downgradedFrom 为空只说明"本次请求没发生降级"，不代表首选引擎此刻健康——
+      // 这份结果可能是 30 天前写进去的。不要拿它当健康信号。
       return { ...hit, provider: preferred, cached: true, downgradedFrom: [] }
     }
 
-    const downgradedFrom: ProviderName[] = []
-    const attempts = this.order(preferred)
+    if (!this.byName.has(preferred)) {
+      console.error(`[translation-gateway] 配置的首选引擎 ${preferred} 未注册，本次请求将直接走降级链`)
+    }
 
-    for (const name of attempts) {
+    const downgradedFrom: ProviderName[] = []
+    const failures: { provider: ProviderName; error: unknown }[] = []
+
+    for (const name of this.order(preferred)) {
       const provider = this.byName.get(name)!
       try {
         const out = await provider.translate(req.text, req.from, req.to)
-        // 只有首选引擎的结果才写缓存，否则一次临时故障会把兜底译文长期钉在首选引擎的 key 上
+        // 只有首选引擎的结果才写缓存，否则一次临时故障会把兜底译文长期钉在首选引擎的 key 上。
+        //
+        // 反面代价：首选引擎持续失败（例如 API key 配错）时这个 key 永远写不进，
+        // 每条消息都要重跑整条降级链。所以下面 preferred 失败必须用 error 级别喊出来。
         if (name === preferred) await this.cache.set(key, out)
         return { ...out, provider: name, cached: false, downgradedFrom }
-      } catch {
+      } catch (err) {
         downgradedFrom.push(name)
+        failures.push({ provider: name, error: err })
+        if (err instanceof ProviderFailedError) {
+          const level = name === preferred ? console.error : console.warn
+          level(
+            `[translation-gateway] ${name} 翻译失败` +
+              (name === preferred ? '（这是首选引擎，检查它的 API key 与配额）' : '，降级到下一个'),
+            err.message,
+          )
+        } else {
+          // 非 ProviderFailedError = provider 自身有 bug。继续降级仍是对的运行时行为，
+          // 但必须喊出来，否则坏掉的 provider 会被永久当成"引擎故障"静默跳过。
+          console.error(`[translation-gateway] ${name} 抛出了非 ProviderFailedError，这是 provider 的 bug:`, err)
+        }
       }
     }
 
-    throw new AllProvidersFailedError(attempts)
+    throw new AllProvidersFailedError(failures)
   }
 }
 ```
@@ -2884,7 +2923,7 @@ import type { TranslationGateway } from '../../translation/gateway.js'
 
 const sendBody = z.object({
   conversationId: z.string().uuid(),
-  body: z.string().min(1),
+  body: z.string().trim().min(1, '消息内容不能为空白'),
   targetLang: z.string().min(2),
 })
 
