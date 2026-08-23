@@ -1,0 +1,83 @@
+import type { ColumnType, Generated, JSONColumnType } from 'kysely'
+import type { AccountStatus, Direction, Platform, Role } from '@im-hub/shared'
+
+type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
+
+export interface UsersTable {
+  id: Generated<string>
+  email: string
+  display_name: string
+  role: Role
+  password_hash: string
+  created_at: Generated<Timestamp>
+  disabled_at: Timestamp | null
+}
+
+export interface TeamsTable {
+  id: Generated<string>
+  name: string
+  created_at: Generated<Timestamp>
+}
+
+export interface TeamMembersTable {
+  team_id: string
+  user_id: string
+  is_lead: boolean
+}
+
+export interface AccountsTable {
+  id: Generated<string>
+  platform: Platform
+  owner_user_id: string
+  team_id: string | null
+  display_name: string
+  status: AccountStatus
+  credentials_ref: string | null
+  linked_at: Timestamp | null
+  /** link 模式接入的平台（Signal）在此标注历史消息起点，null 表示历史完整 */
+  history_available_from: Timestamp | null
+  created_at: Generated<Timestamp>
+}
+
+export interface ConversationsTable {
+  id: Generated<string>
+  account_id: string
+  platform_conversation_id: string
+  contact_external_id: string
+  contact_display_name: string | null
+  last_message_at: Timestamp | null
+}
+
+export interface MessagesTable {
+  id: Generated<string>
+  conversation_id: string
+  account_id: string
+  platform: Platform
+  platform_message_id: string
+  direction: Direction
+  sender_external_id: string
+  body: string
+  body_lang: string | null
+  media_refs: JSONColumnType<unknown[]>
+  sent_at: Timestamp
+  ingested_at: Generated<Timestamp>
+  raw: JSONColumnType<Record<string, unknown>>
+}
+
+export interface MessageTranslationsTable {
+  message_id: string
+  target_lang: string
+  provider: string
+  translated_text: string
+  created_at: Generated<Timestamp>
+}
+
+export interface Database {
+  users: UsersTable
+  teams: TeamsTable
+  team_members: TeamMembersTable
+  accounts: AccountsTable
+  conversations: ConversationsTable
+  messages: MessagesTable
+  message_translations: MessageTranslationsTable
+}

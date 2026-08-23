@@ -1,2 +1,8 @@
 packages:
-  - 'packages/*'
+  - packages/*
+
+onlyBuiltDependencies:
+  - argon2
+  - esbuild
+  - msgpackr-extract
+  - tdl
