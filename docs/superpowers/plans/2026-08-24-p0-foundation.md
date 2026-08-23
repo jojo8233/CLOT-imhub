@@ -1185,7 +1185,8 @@ export class DeeplProvider implements TranslationProvider {
       if (!res.ok) throw new Error(`deepl http ${res.status}`)
       const json = (await res.json()) as DeeplResponse
       const first = json.translations[0]
-      if (!first) throw new Error('deepl returned no translations')
+      // 空串也算失败：放行的话 Task 8 的降级不会触发，用户收到空白翻译
+      if (!first || first.text.length === 0) throw new Error('deepl returned no translations')
       return { text: first.text, detectedLang: first.detected_source_language }
     } catch (reason) {
       throw new ProviderFailedError('deepl', reason)
@@ -1232,7 +1233,9 @@ export class ClaudeProvider implements TranslationProvider {
       const block = res.content.find(b => b.type === 'text')
       if (!block || block.type !== 'text') throw new Error('claude returned no text block')
       const parsed = JSON.parse(block.text) as Partial<TranslationOutput>
-      if (typeof parsed.text !== 'string') throw new Error('claude returned malformed json')
+      if (typeof parsed.text !== 'string' || parsed.text.length === 0) {
+        throw new Error('claude returned malformed json')
+      }
       return { text: parsed.text, detectedLang: parsed.detectedLang ?? from }
     } catch (reason) {
       throw new ProviderFailedError('claude', reason)
@@ -1273,7 +1276,9 @@ export class OpenAiProvider implements TranslationProvider {
       const content = res.choices[0]?.message.content
       if (!content) throw new Error('openai returned no content')
       const parsed = JSON.parse(content) as Partial<TranslationOutput>
-      if (typeof parsed.text !== 'string') throw new Error('openai returned malformed json')
+      if (typeof parsed.text !== 'string' || parsed.text.length === 0) {
+        throw new Error('openai returned malformed json')
+      }
       return { text: parsed.text, detectedLang: parsed.detectedLang ?? from }
     } catch (reason) {
       throw new ProviderFailedError('openai', reason)
