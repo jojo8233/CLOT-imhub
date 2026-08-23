@@ -2,6 +2,8 @@ import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 import type { AccountStatus, Direction, Platform, Role } from '@im-hub/shared'
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
+/** 必填且 DB 无默认值的时间列：insert 时不允许省略 */
+type RequiredTimestamp = ColumnType<Date, Date | string, Date | string>
 
 export interface UsersTable {
   id: Generated<string>
@@ -59,7 +61,7 @@ export interface MessagesTable {
   body: string
   body_lang: string | null
   media_refs: JSONColumnType<unknown[]>
-  sent_at: Timestamp
+  sent_at: RequiredTimestamp
   ingested_at: Generated<Timestamp>
   raw: JSONColumnType<Record<string, unknown>>
 }

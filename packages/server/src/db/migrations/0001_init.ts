@@ -11,6 +11,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('password_hash', 'text', c => c.notNull())
     .addColumn('created_at', 'timestamptz', c => c.notNull().defaultTo(sql`now()`))
     .addColumn('disabled_at', 'timestamptz')
+    .addCheckConstraint('users_role_check', sql`role in ('owner','auditor','manager','agent')`)
     .execute()
 
   await db.schema.createTable('teams')
@@ -23,7 +24,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('team_id', 'uuid', c => c.notNull().references('teams.id').onDelete('cascade'))
     .addColumn('user_id', 'uuid', c => c.notNull().references('users.id').onDelete('cascade'))
     .addColumn('is_lead', 'boolean', c => c.notNull().defaultTo(false))
-    .addPrimaryKeyConstraint('team_members_pk', ['team_id', 'user_id'])
+    .addPrimaryKeyConstraint('team_members_pk', ['user_id', 'team_id'])
     .execute()
 
   await db.schema.createTable('accounts')
@@ -48,6 +49,9 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('last_message_at', 'timestamptz')
     .addUniqueConstraint('conversations_account_platform_uq', ['account_id', 'platform_conversation_id'])
     .execute()
+
+  await db.schema.createIndex('conversations_last_message_at_idx')
+    .on('conversations').columns(['last_message_at']).execute()
 
   await db.schema.createTable('messages')
     .addColumn('id', 'uuid', c => c.primaryKey().defaultTo(sql`gen_random_uuid()`))
