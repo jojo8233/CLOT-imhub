@@ -3,6 +3,7 @@ packages:
 
 onlyBuiltDependencies:
   - argon2
+  - electron
   - esbuild
   - msgpackr-extract
   - tdl
