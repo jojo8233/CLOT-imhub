@@ -2014,10 +2014,22 @@ export class TelegramAdapter implements PlatformAdapter {
     client.on('update', (update: unknown) => {
       const msg = normalizeTelegramMessage(update, account.id)
       if (!msg) return
-      for (const h of this.messageHandlers) h(msg)
+      for (const h of this.messageHandlers) {
+        try {
+          h(msg)
+        } catch (err) {
+          // tdl 会把 update 回调里未捕获的异常转成 client 的 error 事件，
+          // 而下面的 error handler 会把账号标成 reconnecting——于是一个下游
+          // 入库 bug 会表现成"Telegram 账号一直在重连"，极难排查。必须就地隔离。
+          console.error(`[telegram] 账号 ${account.id} 的消息处理器抛出异常，已隔离:`, err)
+        }
+      }
     })
 
-    client.on('error', () => this.emitStatus(account.id, 'reconnecting'))
+    client.on('error', (err) => {
+      console.error(`[telegram] 账号 ${account.id} 出错:`, err)
+      this.emitStatus(account.id, 'reconnecting')
+    })
 
     this.clients.set(account.id, client)
     this.emitStatus(account.id, 'pending_auth')
@@ -2134,6 +2146,23 @@ Expected: FAIL，`Failed to resolve import "./manager.js"`
 ```ts
 import type { OutboundContent, Platform } from '@im-hub/shared'
 import type { AdapterAccount, MessageHandler, PlatformAdapter, StatusHandler } from './types.js'
+
+/**
+ * 逐个调用订阅者，单个失败不影响其余，也绝不向上冒泡。
+ *
+ * 冒泡的后果不只是丢事件：TDLib 会把 update 回调里的异常转成 client 的
+ * error 事件，适配器据此把账号标成 reconnecting——于是一个下游的入库 bug
+ * 会表现成"Telegram 账号一直在重连"。
+ */
+function fanOut<A extends unknown[]>(handlers: ((...args: A) => void)[], ...args: A): void {
+  for (const h of handlers) {
+    try {
+      h(...args)
+    } catch (err) {
+      console.error('[adapter-manager] 事件处理器抛出异常，已隔离:', err)
+    }
+  }
+}
 
 /**
  * 按平台路由的适配器池。上层（ingest / api）只跟它打交道，
@@ -3223,6 +3252,22 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
 
 const app = await buildServer({ adapters, gateway }, hub)
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
+
+// TDLib 被强杀时可能来不及走完 authorizationStateClosed，本地 session 数据库
+// 会留下未完整落盘的状态。退出前逐个断开，给它落盘的机会。
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void (async () => {
+      console.log(`[server] 收到 ${signal}，正在断开所有账号…`)
+      const connected = await db.selectFrom('accounts').select('id').where('status', '=', 'connected').execute()
+      await Promise.allSettled(connected.map(a => adapters.disconnect(a.id)))
+      await app.close()
+      await redis.quit()
+      await db.destroy()
+      process.exit(0)
+    })()
+  })
+}
 ```
 
 - [ ] **Step 9: 类型检查与全量测试通过**
