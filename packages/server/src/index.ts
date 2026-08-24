@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import * as path from 'node:path'
 import { Worker } from 'bullmq'
 import Redis from 'ioredis'
 import { config } from './config.js'
@@ -128,20 +130,53 @@ async function connectRegisteredAccounts(): Promise<void> {
     return
   }
 
-  const accounts = await db
+  const all = await db
     .selectFrom('accounts')
     .select(['id', 'platform', 'display_name', 'credentials_ref'])
     .where('platform', '=', 'telegram')
     .execute()
 
-  if (accounts.length === 0) {
+  if (all.length === 0) {
     console.log('[server] 数据库里没有 Telegram 账号，先跑 pnpm --filter @im-hub/server seed')
+    return
+  }
+
+  // 只自动连接本地已有 TDLib session 的账号。
+  //
+  // 没登录过的账号调 login() 会永久阻塞在 stdin 等手机号——无脑遍历全部账号
+  // 会让服务端一旦重启就再也起不来（卡在第一个没登录过的账号上）。
+  // 首次登录必须显式指定：IM_HUB_LOGIN_ACCOUNT=<账号id 或 名称片段>
+  const wanted = process.env.IM_HUB_LOGIN_ACCOUNT?.trim()
+  const hasSession = (id: string): boolean =>
+    existsSync(path.join(config.TDLIB_DATA_DIR, id, 'db'))
+
+  const accounts = all.filter((a) => {
+    if (hasSession(a.id)) return true
+    if (!wanted) return false
+    return a.id === wanted || a.display_name.includes(wanted)
+  })
+
+  const skipped = all.filter((a) => !accounts.includes(a))
+  if (skipped.length > 0) {
+    console.log(
+      `[server] 跳过 ${skipped.length} 个尚未登录的账号：${skipped.map((a) => a.display_name).join('、')}\n` +
+        `         首次登录请指定：IM_HUB_LOGIN_ACCOUNT="${skipped[0]!.display_name}" pnpm --filter @im-hub/server exec tsx src/index.ts`,
+    )
+  }
+
+  if (accounts.length === 0) {
+    console.log('[server] 没有可自动连接的账号，服务端已就绪但没有平台账号在线')
     return
   }
 
   for (const account of accounts) {
     try {
-      console.log(`[server] 正在连接「${account.display_name}」，按提示输入手机号与验证码…`)
+      const first = !hasSession(account.id)
+      console.log(
+        first
+          ? `[server] 正在首次登录「${account.display_name}」，按提示输入手机号与验证码…`
+          : `[server] 正在恢复「${account.display_name}」的已有会话…`,
+      )
       await adapters.connect(account.platform, {
         id: account.id,
         displayName: account.display_name,

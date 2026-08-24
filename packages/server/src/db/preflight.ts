@@ -91,6 +91,50 @@ check(
       (filled.length > 0 ? `改成 ${filled[0]}，或补上 ${preferred} 的 key` : ''),
 )
 
+// --- 真的调一次 DeepL，不靠猜端点 ---
+if (config.DEEPL_API_KEY !== '') {
+  const probe = async (endpoint: string): Promise<number> => {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `DeepL-Auth-Key ${config.DEEPL_API_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ text: 'ping', target_lang: 'ZH' }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      return res.status
+    } catch {
+      return 0
+    }
+  }
+
+  const FREE = 'https://api-free.deepl.com/v2/translate'
+  const PRO = 'https://api.deepl.com/v2/translate'
+  const current = config.DEEPL_ENDPOINT
+  const status = await probe(current)
+
+  if (status === 200) {
+    check(true, 'DeepL 实测', `${current} 调用成功`)
+  } else if (status === 403 || status === 401) {
+    // 403 常见于「key 是对的，但打错了端点」。换另一个试试再下结论。
+    const other = current === FREE ? PRO : FREE
+    const otherStatus = await probe(other)
+    if (otherStatus === 200) {
+      check(false, 'DeepL 实测', `当前端点返回 ${status}，但 ${other} 可用。把 .env 的 DEEPL_ENDPOINT 改成 ${other}`)
+    } else {
+      check(false, 'DeepL 实测', `两个端点都不通（${status} / ${otherStatus}），八成是 key 复制错了或还没激活`)
+    }
+  } else if (status === 456) {
+    check(false, 'DeepL 实测', 'key 有效但本月额度已用尽（免费版 50 万字符）')
+  } else if (status === 0) {
+    check(false, 'DeepL 实测', '请求发不出去，检查网络或代理')
+  } else {
+    check(false, 'DeepL 实测', `返回了 HTTP ${status}`)
+  }
+}
+
 // --- 输出 ---
 console.log('')
 for (const r of results) {
