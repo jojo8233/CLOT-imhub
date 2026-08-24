@@ -98,3 +98,47 @@ describe('buildServer 鉴权钩子', () => {
     expect(res.json()).toEqual({ error: 'unauthorized' })
   })
 })
+
+describe('buildServer CORS 预检', () => {
+  let app: FastifyInstance
+
+  beforeAll(async () => {
+    ;({ buildServer } = await import('./server.js'))
+    app = await buildServer(
+      {} as MessageRouteDeps,
+      new (await import('./ws.js')).WsHub(),
+      { actorRepo: fakeActorRepo() },
+    )
+  })
+
+  // 这个 describe 不碰数据库：预检在鉴权钩子和路由之前就被 @fastify/cors 短路掉了。
+  afterAll(async () => { await app.close() })
+
+  // 回归钉子：@fastify/cors v11 的 methods 默认值是 'GET,HEAD,POST'。
+  // 一旦有人把 server.ts 里那行显式 methods 删掉，PATCH 会在浏览器预检阶段被拦，
+  // 而 curl 不发 Origin 头、不触发预检，手测根本发现不了——只能靠这条用例兜住。
+  it('对 PATCH 的预检放行，Access-Control-Allow-Methods 里含 PATCH', async () => {
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/conversations/conv-1/target-lang',
+      headers: {
+        origin: 'http://localhost:5174',
+        'access-control-request-method': 'PATCH',
+        'access-control-request-headers': 'content-type,authorization',
+      },
+    })
+    expect(res.statusCode).toBe(204)
+    const allowed = res.headers['access-control-allow-methods']!.toString().split(',').map((s) => s.trim())
+    expect(allowed).toContain('PATCH')
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5174')
+  })
+
+  it('非 localhost 的 origin 不给 allow-origin 头', async () => {
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/conversations/conv-1/target-lang',
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'PATCH' },
+    })
+    expect(res.headers['access-control-allow-origin']).toBeUndefined()
+  })
+})
