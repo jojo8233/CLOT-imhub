@@ -50,11 +50,20 @@ export class SignalAdapter implements PlatformAdapter {
   private readonly pending = new Map<number, RpcPending>()
   private restartAttempts = 0
   private restartTimer: NodeJS.Timeout | null = null
-  private shuttingDown = false
+  /**
+   * 我们主动杀掉的进程。
+   *
+   * kill() 是异步的：exit 事件在我们已经建好新进程之后才到。用一个布尔开关
+   * 挡不住——等 exit 真的触发时开关早关回去了，于是新进程的引用会被旧进程的
+   * exit 回调清掉，并且还会多排一次重启。所以按进程实例记，而不是记状态。
+   */
+  private readonly intentionalKills = new WeakSet<ChildProcessWithoutNullStreams>()
 
   /** signal-cli 用手机号寻址账号；我们用自己的 accounts.id。两边都要能查 */
   private readonly numberByAccount = new Map<string, string>()
   private readonly accountByNumber = new Map<string, string>()
+  /** 已经警告过的陌生号码。同一个号每条消息都刷一行会把日志淹掉 */
+  private readonly warnedUnknownAccounts = new Set<string>()
 
   private readonly messageHandlers: MessageHandler[] = []
   private readonly statusHandlers: StatusHandler[] = []
@@ -122,12 +131,17 @@ export class SignalAdapter implements PlatformAdapter {
     })
 
     proc.on('exit', (code, signal) => {
-      this.proc = null
-      // 所有挂起的请求都不会有回复了，逐个失败掉，否则调用方永远等下去
-      for (const [, p] of this.pending) p.reject(new Error('signal-cli 进程已退出'))
+      // 挂起的请求不会再有回复，逐个失败掉，否则调用方永远等下去。
+      // 这一步无论是不是主动杀的都要做。
+      for (const [, pendingReq] of this.pending) {
+        pendingReq.reject(new Error('signal-cli 进程已退出'))
+      }
       this.pending.clear()
 
-      if (this.shuttingDown) return
+      if (this.intentionalKills.has(proc)) return
+      // 退出的不是当前进程（说明已经换了新的），不要动 this.proc
+      if (this.proc !== proc) return
+      this.proc = null
 
       console.error(`[signal] signal-cli 退出（code=${String(code)} signal=${String(signal)}），准备重启`)
       for (const accountId of this.numberByAccount.keys()) this.emitStatus(accountId, 'reconnecting')
@@ -156,7 +170,7 @@ export class SignalAdapter implements PlatformAdapter {
     this.restartAttempts += 1
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null
-      if (this.shuttingDown || this.numberByAccount.size === 0) return
+      if (this.numberByAccount.size === 0) return
       console.log('[signal] 正在重启 signal-cli…')
       this.ensureProcess()
       for (const accountId of this.numberByAccount.keys()) this.emitStatus(accountId, 'connected')
@@ -188,9 +202,21 @@ export class SignalAdapter implements PlatformAdapter {
     const account = (m.params as { account?: string } | undefined)?.account
     if (!account) return
     const accountId = this.accountByNumber.get(account)
-    // 收到了我们没登记过的账号的消息：signal-cli 的数据目录里可能还留着
-    // 以前关联过、但数据库里已经删掉的账号。丢掉即可，不要凭空造一条记录。
-    if (!accountId) return
+    if (!accountId) {
+      // signal-cli 的数据目录里关联着一个我们这边没登记的号：多半是数据库里
+      // 的账号行被删了，但设备关联还在。不能凭空造记录，但**绝不能静默丢弃**
+      // ——静默丢弃的表现就是「扫码明明成功了却一条消息都没有」，而日志里
+      // 什么都没有，根本无从查起。
+      if (!this.warnedUnknownAccounts.has(account)) {
+        this.warnedUnknownAccounts.add(account)
+        console.warn(
+          `[signal] 收到 ${account} 的消息，但数据库里没有对应的账号，已丢弃。\n` +
+            '         signal-cli 仍关联着这个号。要么在库里补一条 credentials_ref 指向它的\n' +
+            "         signal 账号，要么执行 signal-cli unregister 解除关联。",
+        )
+      }
+      return
+    }
 
     const normalized = normalizeSignalMessage(m.params, accountId)
     if (!normalized) return
@@ -258,13 +284,36 @@ export class SignalAdapter implements PlatformAdapter {
 
       this.numberByAccount.set(account.id, number)
       this.accountByNumber.set(number, account.id)
-      this.emitStatus(account.id, 'connected')
       // 号码就是 signal-cli 的账号寻址方式，存进 credentials_ref 供重启后自动恢复
       this.emitCredentials(account.id, number)
+
+      // signal-cli 的 --receive-mode 默认是 on-start：只为**进程启动时already
+      // 存在**的账号拉起接收线程。刚刚关联的这个账号不在其中，不重启的话它
+      // 会一直收不到任何消息——而界面上一切正常，这是最难查的一种坏法。
+      //
+      // 凭据已经落到磁盘上了，重启后所有账号（包括这个新的）都会自动恢复。
+      this.restartForNewAccount()
+      this.emitStatus(account.id, 'connected')
     } catch (err) {
       console.error(`[signal] 账号 ${account.id} 关联失败:`, err)
       this.emitStatus(account.id, 'pending_auth')
     }
+  }
+
+  /**
+   * 关联完新账号后重启 signal-cli，让它把新账号纳入接收范围。
+   *
+   * 对其他 Signal 账号是一次短暂的重连，可以接受——关联是低频操作，
+   * 而「新账号收不到消息」是致命的。
+   */
+  private restartForNewAccount(): void {
+    const proc = this.proc
+    if (!proc) return
+    this.intentionalKills.add(proc)
+    proc.kill()
+    this.proc = null
+    this.restartAttempts = 0
+    this.ensureProcess()
   }
 
   async disconnect(accountId: string): Promise<void> {
@@ -275,12 +324,11 @@ export class SignalAdapter implements PlatformAdapter {
     }
     this.emitStatus(accountId, 'disconnected')
 
-    // 没有账号在用了就把进程收掉，别让一个空跑的 JVM 常驻
+    // 没有账号在用了就把进程收掉，别让它空跑着常驻
     if (this.numberByAccount.size === 0 && this.proc) {
-      this.shuttingDown = true
+      this.intentionalKills.add(this.proc)
       this.proc.kill()
       this.proc = null
-      this.shuttingDown = false
     }
   }
 
