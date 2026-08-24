@@ -221,107 +221,207 @@ export function Composer() {
   const displayLang = lockedLang ?? resolvedLang
   const hasPreview = preview.trim() !== ''
 
+  const inputStyle = {
+    width: '100%', height: 58, resize: 'none' as const, padding: '9px 11px',
+    fontSize: theme.font.size.md, lineHeight: 1.6, fontFamily: theme.font.sans,
+    border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.md,
+    background: theme.color.bg, color: theme.color.text,
+  }
+
   return (
-    <div style={{ borderTop: `1px solid ${theme.color.border}`, padding: 12, background: theme.color.bg }}>
-      {justSent && <div style={{ fontSize: 12, color: theme.color.status.connected, marginBottom: 6 }}>已发送：{justSent}</div>}
-      {error && <div style={{ fontSize: 12, color: theme.color.danger, marginBottom: 6 }}>{error}</div>}
-
-      <div style={{ fontSize: 12, color: theme.color.textMuted, marginBottom: 4 }}>中文</div>
-      <textarea
-        value={zh}
-        onChange={e => setZh(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            void handleTranslate()
-          }
-        }}
-        placeholder="输入中文，回车或点击「翻译」生成预览"
-        disabled={!conversationId}
-        style={{ width: '100%', height: 64, resize: 'none', padding: 8, fontSize: 14, boxSizing: 'border-box' }}
-      />
-      <button
-        onClick={() => void handleTranslate()}
-        disabled={!conversationId || zh.trim() === '' || translating}
-        style={{ marginTop: 6 }}
-      >
-        {translating ? '翻译中…' : '翻译'}
-      </button>
-
-      {hasPreview && (
-        <div style={{ marginTop: 14, borderTop: `1px dashed ${theme.color.borderStrong}`, paddingTop: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: theme.color.textMuted, marginBottom: 4 }}>
-            <span>译文预览（可编辑，悬停查看原文与回译对照）</span>
-            {manuallyEdited && <span style={{ color: theme.color.status.reconnecting, fontWeight: 600 }}>已手动修改</span>}
+    <div style={{
+      flexShrink: 0, padding: theme.space.md, background: theme.color.surface,
+    }}>
+      <div style={{
+        background: theme.color.bg, borderRadius: theme.radius.xl,
+        border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.sm,
+        padding: theme.space.md,
+      }}>
+        {justSent && (
+          <div style={{
+            fontSize: theme.font.size.xs, color: theme.color.status.connected,
+            background: '#22b5731a', borderRadius: theme.radius.sm,
+            padding: '5px 9px', marginBottom: theme.space.sm,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            已发送：{justSent}
           </div>
+        )}
+        {error && (
+          <div style={{
+            fontSize: theme.font.size.xs, color: theme.color.danger,
+            background: theme.color.dangerSoft, borderRadius: theme.radius.sm,
+            padding: '5px 9px', marginBottom: theme.space.sm,
+          }}>
+            {error}
+          </div>
+        )}
 
-          <div
-            style={{ position: 'relative' }}
-            onMouseEnter={() => setHovering(true)}
-            onMouseLeave={() => setHovering(false)}
-          >
-            {hovering && (
-              <div style={{
-                position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6,
-                background: '#1e293b', color: '#f8fafc', padding: 10, borderRadius: 8,
-                fontSize: 12, lineHeight: 1.6, zIndex: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-              }}>
-                <div><strong>你输入的：</strong>{previewSourceZh}</div>
-                <div style={{ marginTop: 4 }}>
-                  <strong>回译结果：</strong>
-                  {backTranslating ? '更新中…' : (backTranslated ?? '回译不可用')}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5,
+          fontSize: theme.font.size.xs, color: theme.color.textFaint, fontWeight: 600,
+        }}>
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%', background: theme.color.textFaint,
+          }} />
+          中文原文
+        </div>
+        <textarea
+          value={zh}
+          onChange={e => setZh(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              void handleTranslate()
+            }
+          }}
+          placeholder="输入中文，回车翻译（Shift+回车换行）"
+          disabled={!conversationId}
+          style={inputStyle}
+        />
+
+        {hasPreview && (
+          <div className="ih-fade" style={{ marginTop: theme.space.md }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5,
+              fontSize: theme.font.size.xs, color: theme.color.accent, fontWeight: 600,
+            }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: theme.color.accent }} />
+              译文预览
+              <span style={{ color: theme.color.textFaint, fontWeight: 400 }}>
+                可直接改，悬停看原文与回译对照
+              </span>
+              {manuallyEdited && (
+                <span style={{ color: theme.color.status.reconnecting, fontWeight: 600 }}>已手动修改</span>
+              )}
+            </div>
+
+            <div
+              style={{ position: 'relative' }}
+              onMouseEnter={() => setHovering(true)}
+              onMouseLeave={() => setHovering(false)}
+            >
+              {hovering && (
+                <div className="ih-fade" style={{
+                  position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 8,
+                  background: theme.color.navyDeep, color: '#fff',
+                  padding: `${theme.space.md}px ${theme.space.lg}px`, borderRadius: theme.radius.lg,
+                  fontSize: theme.font.size.sm, lineHeight: 1.75, zIndex: 20,
+                  boxShadow: theme.shadow.lg,
+                }}>
+                  <div style={{ display: 'flex', gap: theme.space.sm }}>
+                    <span style={{ color: 'rgba(255,255,255,.55)', flexShrink: 0, width: 56 }}>你输入的</span>
+                    <span style={{ minWidth: 0 }}>{previewSourceZh}</span>
+                  </div>
+                  <div style={{
+                    display: 'flex', gap: theme.space.sm, marginTop: 6, paddingTop: 6,
+                    borderTop: '1px solid rgba(255,255,255,.14)',
+                  }}>
+                    <span style={{ color: 'rgba(255,255,255,.55)', flexShrink: 0, width: 56 }}>回译成中文</span>
+                    <span style={{ minWidth: 0 }}>
+                      {backTranslating ? '更新中…' : (backTranslated ?? '回译不可用')}
+                    </span>
+                  </div>
+                  <div style={{
+                    marginTop: 8, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,.14)',
+                    color: 'rgba(255,255,255,.5)', fontSize: theme.font.size.xs, lineHeight: 1.6,
+                  }}>
+                    回译顺不代表翻对了。要比的是关键信息有没有丢：价格、数量、否定词、时间、人名。
+                  </div>
                 </div>
+              )}
+              <textarea
+                ref={previewRef}
+                value={preview}
+                onChange={e => handlePreviewChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    void handleSend()
+                  }
+                }}
+                disabled={sending}
+                style={{ ...inputStyle, borderColor: theme.color.accent, background: theme.color.accentSoft }}
+              />
+            </div>
+
+            {backTranslating && (
+              <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint, marginTop: 4 }}>
+                回译更新中…
               </div>
             )}
-            <textarea
-              ref={previewRef}
-              value={preview}
-              onChange={e => handlePreviewChange(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  void handleSend()
-                }
-              }}
-              disabled={sending}
-              style={{ width: '100%', height: 64, resize: 'none', padding: 8, fontSize: 14, boxSizing: 'border-box' }}
-            />
+            {!backTranslating && backTranslated === null && (
+              <div style={{ fontSize: theme.font.size.xs, color: theme.color.danger, marginTop: 4 }}>
+                回译不可用（不影响发送）
+              </div>
+            )}
           </div>
+        )}
 
-          {backTranslating && <div style={{ fontSize: 12, color: theme.color.textFaint, marginTop: 4 }}>回译更新中…</div>}
-          {!backTranslating && backTranslated === null && (
-            <div style={{ fontSize: 12, color: theme.color.danger, marginTop: 4 }}>回译不可用（不影响发送）</div>
-          )}
+        {/* 底栏：左边语言设置，右边动作。主按钮永远在右下角，位置不随状态跳 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: theme.space.sm,
+          marginTop: theme.space.md, paddingTop: theme.space.md,
+          borderTop: `1px solid ${theme.color.border}`,
+        }}>
+          <span style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>回复语言</span>
+          <select
+            value={displayLang ?? ''}
+            onChange={e => void handleSelectLang(e.target.value)}
+            disabled={!conversationId}
+            style={{
+              fontSize: theme.font.size.xs, padding: '4px 6px', fontFamily: theme.font.sans,
+              border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.sm,
+              background: theme.color.bg, color: theme.color.text,
+            }}
+          >
+            {!displayLang && <option value="" disabled>自动</option>}
+            {LANG_OPTIONS.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
+          </select>
+          <button
+            onClick={() => void handleToggleLock()}
+            disabled={!conversationId}
+            className="ih-btn"
+            title={lockedLang != null ? '点击解锁，恢复自动跟随客户语言' : '点击锁定当前语言，不再随客户切换'}
+            style={{
+              fontSize: theme.font.size.xs, padding: '4px 10px', borderRadius: theme.radius.pill,
+              border: `1px solid ${lockedLang != null ? 'transparent' : theme.color.border}`,
+              background: lockedLang != null ? theme.color.accentSoft : theme.color.bg,
+              color: lockedLang != null ? theme.color.accent : theme.color.textMuted,
+              fontWeight: 600,
+            }}
+          >
+            {lockedLang != null ? '🔒 已锁定' : '🔓 自动'}
+          </button>
 
+          <div style={{ flex: 1 }} />
+
+          <button
+            onClick={() => void handleTranslate()}
+            disabled={!conversationId || zh.trim() === '' || translating}
+            className="ih-btn"
+            style={{
+              padding: '8px 16px', borderRadius: theme.radius.md,
+              border: `1px solid ${theme.color.border}`, background: theme.color.bg,
+              color: theme.color.text, fontSize: theme.font.size.base, fontWeight: 600,
+            }}
+          >
+            {translating ? '翻译中…' : '翻译'}
+          </button>
           <button
             onClick={() => void handleSend()}
             disabled={!conversationId || !hasPreview || sending || sendLocked}
-            style={{ marginTop: 8 }}
+            className="ih-btn"
+            title={sendLocked ? '刚翻译完，先看一眼译文' : undefined}
+            style={{
+              padding: '8px 20px', borderRadius: theme.radius.md, border: 'none',
+              background: theme.color.navy, color: '#fff',
+              fontSize: theme.font.size.base, fontWeight: 600,
+            }}
           >
-            {sending ? '发送中…' : sendLocked ? '发送（确认译文中…）' : '发送'}
+            {sending ? '发送中…' : sendLocked ? '确认译文中…' : '发送'}
           </button>
         </div>
-      )}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12, color: theme.color.textMuted }}>
-        <span>语言：</span>
-        <select
-          value={displayLang ?? ''}
-          onChange={e => void handleSelectLang(e.target.value)}
-          disabled={!conversationId}
-          style={{ fontSize: 12, padding: '2px 4px' }}
-        >
-          {!displayLang && <option value="" disabled>自动</option>}
-          {LANG_OPTIONS.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
-        </select>
-        <button
-          onClick={() => void handleToggleLock()}
-          disabled={!conversationId}
-          title={lockedLang != null ? '点击解锁，恢复自动跟随客户语言' : '点击锁定当前语言，不再随客户切换'}
-          style={{ fontSize: 12, padding: '2px 8px' }}
-        >
-          {lockedLang != null ? '🔒 已锁定' : '🔓 自动'}
-        </button>
       </div>
     </div>
   )

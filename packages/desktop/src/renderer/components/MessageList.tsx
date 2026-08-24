@@ -1,30 +1,89 @@
+import { useEffect, useRef } from 'react'
 import { useStore } from '../store.js'
 import { theme } from '../theme.js'
+import { EmptyHint, clockTime } from './ui.js'
 
 export function MessageList() {
   const messages = useStore(s => s.messages)
+  const activeId = useStore(s => s.activeConversationId)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // 新消息进来、或切到别的会话时都要贴底。不这么做的话，WS 推来的消息会落在
+  // 视口下方看不见的地方，界面上像是没收到。
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages.length, activeId])
+
+  if (messages.length === 0) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <EmptyHint>{activeId ? '这个会话还没有消息' : '从左边选一个会话开始'}</EmptyHint>
+      </div>
+    )
+  }
+
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: theme.space.lg, background: theme.color.bg }}>
-      {messages.map(m => (
-        <div key={m.id} style={{ marginBottom: 14, textAlign: m.direction === 'out' ? 'right' : 'left' }}>
-          <div style={{
-            display: 'inline-block', maxWidth: '70%', padding: '8px 12px', borderRadius: theme.radius.md,
-            background: m.direction === 'out' ? theme.color.accentSoft : theme.color.surface, textAlign: 'left',
+    <div
+      ref={scrollRef}
+      className="ih-scroll"
+      style={{ flex: 1, padding: `${theme.space.lg}px ${theme.space.xl}px`, background: theme.color.surface }}
+    >
+      {messages.map(m => {
+        const out = m.direction === 'out'
+        return (
+          <div key={m.id} style={{
+            display: 'flex', justifyContent: out ? 'flex-end' : 'flex-start', marginBottom: theme.space.md,
           }}>
-            <div style={{ fontSize: theme.font.size.md, color: theme.color.text }}>{m.body}</div>
-            {/* translated_text 为 null 时显示"翻译中…"。P0 没有超时或重试提示——
-                如果翻译引擎全挂，这条消息会永远停在"翻译中…"，没有办法从 UI 上区分
-                "还在排队"和"已经失败"。留给后续任务：服务端在翻译失败时应该推一个
-                带错误标记的事件（或写入一个哨兵值），客户端才有信息可以区分并提示重试。 */}
-            {m.translated_text
-              ? <div style={{
-                  fontSize: theme.font.size.base, color: theme.color.textMuted, marginTop: theme.space.xs,
-                  borderTop: `1px solid ${theme.color.borderStrong}`, paddingTop: theme.space.xs,
-                }}>{m.translated_text}</div>
-              : <div style={{ fontSize: theme.font.size.sm, color: theme.color.textFaint, marginTop: theme.space.xs }}>翻译中…</div>}
+            <div className="ih-selectable" style={{
+              maxWidth: '76%', minWidth: 0,
+              padding: `${theme.space.sm}px ${theme.space.md}px`,
+              borderRadius: theme.radius.lg,
+              // 自己发的用深靛蓝实心，客户的用白底描边——一眼分清方向，
+              // 不用去读左右对齐（窄窗口里对齐差别会变得不明显）
+              background: out ? theme.color.navy : theme.color.bg,
+              color: out ? '#fff' : theme.color.text,
+              border: out ? 'none' : `1px solid ${theme.color.border}`,
+              boxShadow: theme.shadow.sm,
+            }}>
+              <div style={{ fontSize: theme.font.size.md, lineHeight: 1.6, wordBreak: 'break-word' }}>
+                {m.body}
+              </div>
+
+              {/* translated_text 为 null 时显示"翻译中…"。这里区分不了"还在排队"和
+                  "翻译引擎全挂了"——服务端翻译失败时没有推任何事件，消息会永远停在
+                  这个状态。要修得让服务端在失败时推一个带错误标记的事件。 */}
+              {m.translated_text
+                ? (
+                  <div style={{
+                    marginTop: theme.space.sm, paddingTop: theme.space.sm,
+                    borderTop: `1px solid ${out ? 'rgba(255,255,255,.22)' : theme.color.border}`,
+                    fontSize: theme.font.size.base, lineHeight: 1.6,
+                    color: out ? 'rgba(255,255,255,.78)' : theme.color.textMuted,
+                    wordBreak: 'break-word',
+                  }}>
+                    {m.translated_text}
+                  </div>
+                )
+                : (
+                  <div style={{
+                    marginTop: theme.space.xs, fontSize: theme.font.size.xs,
+                    color: out ? 'rgba(255,255,255,.6)' : theme.color.textFaint,
+                  }}>
+                    翻译中…
+                  </div>
+                )}
+
+              <div style={{
+                marginTop: theme.space.xs, fontSize: theme.font.size.xs, textAlign: 'right',
+                color: out ? 'rgba(255,255,255,.55)' : theme.color.textFaint,
+              }}>
+                {clockTime(m.sent_at)}
+              </div>
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

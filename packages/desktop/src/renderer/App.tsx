@@ -9,9 +9,13 @@ import {
   type SessionUser,
 } from './api/client.js'
 import { useStore } from './store.js'
-import { AccountList } from './components/AccountList.js'
-import { MessageList } from './components/MessageList.js'
-import { Composer } from './components/Composer.js'
+import { AccountTabs } from './components/AccountTabs.js'
+import { AccountsView } from './components/AccountsView.js'
+import { AddAccountDialog } from './components/AddAccountDialog.js'
+import { ChatPanel } from './components/ChatPanel.js'
+import { ConversationList } from './components/ConversationList.js'
+import { CustomerPanel } from './components/CustomerPanel.js'
+import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import { theme } from './theme.js'
 
@@ -21,13 +25,14 @@ export function App() {
   const setAccounts = useStore(s => s.setAccounts)
   const setConversations = useStore(s => s.setConversations)
   const setMessages = useStore(s => s.setMessages)
-  const setActiveConversation = useStore(s => s.setActiveConversation)
   const applyTranslation = useStore(s => s.applyTranslation)
   const appendMessage = useStore(s => s.appendMessage)
   const setAccountStatus = useStore(s => s.setAccountStatus)
   const resetStore = useStore(s => s.reset)
-  const conversations = useStore(s => s.conversations)
   const activeId = useStore(s => s.activeConversationId)
+
+  const [view, setView] = useState<ViewKey>('chat')
+  const [addOpen, setAddOpen] = useState(false)
 
   // 'checking' = 正在等 session:load 返回，还不知道该显示登录页还是主界面——
   // 这段时间故意不渲染登录页，避免 restore 成功时把正在填表的用户顶掉。
@@ -147,44 +152,48 @@ export function App() {
 
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', height: '100vh',
-      fontFamily: theme.font.sans, background: theme.color.bg, color: theme.color.text,
+      height: '100vh', padding: 14, background: theme.color.page,
+      fontFamily: theme.font.sans, color: theme.color.text,
     }}>
-      {bootError && (
-        <div style={{
-          padding: '6px 12px', fontSize: theme.font.size.sm, color: theme.color.danger,
-          background: theme.color.dangerSoft, borderBottom: `1px solid ${theme.color.border}`,
-        }}>
-          {bootError}
-        </div>
-      )}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <AccountList currentUserName={user?.displayName ?? null} onLogout={() => void handleLogout()} />
-        <div style={{
-          width: 260, borderRight: `1px solid ${theme.color.border}`, overflowY: 'auto',
-          background: theme.color.bg,
-        }}>
-          {conversations.map(c => (
-            <div
-              key={c.id}
-              onClick={() => setActiveConversation(c.id)}
-              style={{
-                padding: '10px 12px', cursor: 'pointer', fontSize: theme.font.size.base,
-                background: c.id === activeId ? theme.color.accentSoft : theme.color.bg,
-                color: theme.color.text,
-              }}
-            >
-              {c.contact_display_name ?? c.contact_external_id}
-            </div>
-          ))}
-        </div>
-        <div style={{
-          flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: theme.color.bg,
-        }}>
-          <MessageList />
-          <Composer />
+      {/* 窗口不是白的：白色内容以一张大圆角卡片浮在灰底上，这是整套视觉的基础 */}
+      <div style={{
+        height: '100%', display: 'flex', flexDirection: 'column',
+        background: theme.color.bg, borderRadius: theme.radius.xxl,
+        boxShadow: theme.shadow.app, overflow: 'hidden',
+      }}>
+        <AccountTabs
+          currentUserName={user?.displayName ?? null}
+          onLogout={() => void handleLogout()}
+          onAddAccount={() => setAddOpen(true)}
+        />
+
+        {bootError && (
+          <div style={{
+            flexShrink: 0, padding: '7px 20px', fontSize: theme.font.size.sm,
+            color: theme.color.danger, background: theme.color.dangerSoft,
+            borderBottom: `1px solid ${theme.color.border}`,
+          }}>
+            {bootError}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+          <FunctionCenter view={view} onSelectView={setView} onAddAccount={() => setAddOpen(true)} />
+
+          {view === 'chat' ? (
+            <>
+              <ConversationList />
+              <ChatPanel />
+              {/* 客户信息固定在最右侧，不随会话切换消失——位置稳定才能形成肌肉记忆 */}
+              <CustomerPanel />
+            </>
+          ) : (
+            <AccountsView onOpenChat={() => setView('chat')} onAddAccount={() => setAddOpen(true)} />
+          )}
         </div>
       </div>
+
+      {addOpen && <AddAccountDialog onClose={() => setAddOpen(false)} />}
     </div>
   )
 }

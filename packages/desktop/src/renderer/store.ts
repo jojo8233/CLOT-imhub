@@ -6,10 +6,16 @@ interface State {
   conversations: ConversationRow[]
   messages: MessageRow[]
   activeConversationId: string | null
+  /** null = 不按账号过滤，显示全部会话。顶部账号标签页切换的就是它。 */
+  activeAccountId: string | null
+  /** 左侧功能中心是否展开。窗口窄的时候收起来给聊天区让位。 */
+  panelOpen: boolean
   setAccounts(a: AccountRow[]): void
   setConversations(c: ConversationRow[]): void
   setMessages(m: MessageRow[]): void
   setActiveConversation(id: string): void
+  setActiveAccount(id: string | null): void
+  togglePanel(): void
   applyTranslation(messageId: string, text: string): void
   appendMessage(m: MessageRow): void
   setAccountStatus(accountId: string, status: string): void
@@ -27,10 +33,16 @@ export const useStore = create<State>((set) => ({
   conversations: [],
   messages: [],
   activeConversationId: null,
+  activeAccountId: null,
+  panelOpen: true,
   setAccounts: (accounts) => set({ accounts }),
   setConversations: (conversations) => set({ conversations }),
   setMessages: (messages) => set({ messages }),
   setActiveConversation: (activeConversationId) => set({ activeConversationId }),
+  // 换账号时清掉当前会话：上一个账号的会话不属于新账号，留着会让右侧客户信息
+  // 和聊天区显示一个在新过滤条件下根本看不见的会话。
+  setActiveAccount: (activeAccountId) => set({ activeAccountId, activeConversationId: null, messages: [] }),
+  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   applyTranslation: (messageId, text) => set((s) => ({
     messages: s.messages.map(m => m.id === messageId ? { ...m, translated_text: text } : m),
   })),
@@ -50,5 +62,6 @@ export const useStore = create<State>((set) => ({
     conversations: [],
     messages: [],
     activeConversationId: null,
+    activeAccountId: null,
   }),
 }))
