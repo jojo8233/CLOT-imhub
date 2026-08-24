@@ -14,6 +14,12 @@ interface State {
   appendMessage(m: MessageRow): void
   setAccountStatus(accountId: string, status: string): void
   updateConversationTargetLang(id: string, targetLang: string | null): void
+  /**
+   * 登出 / 401 被踢下线时调用：清空上一个账号的账号列表、会话列表、消息、当前
+   * 选中会话——不然换个人登录，上一个人能看到的客户数据会在界面上闪一下,或者
+   * 干脆一直留在 store 里直到下一次对应的 set* 调用覆盖它。
+   */
+  reset(): void
 }
 
 export const useStore = create<State>((set) => ({
@@ -39,4 +45,10 @@ export const useStore = create<State>((set) => ({
   updateConversationTargetLang: (id, targetLang) => set((s) => ({
     conversations: s.conversations.map((c) => c.id === id ? { ...c, target_lang: targetLang } : c),
   })),
+  reset: () => set({
+    accounts: [],
+    conversations: [],
+    messages: [],
+    activeConversationId: null,
+  }),
 }))

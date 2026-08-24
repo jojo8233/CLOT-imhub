@@ -1,5 +1,43 @@
 import { join } from 'node:path'
-import { BrowserWindow, app } from 'electron'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { BrowserWindow, app, ipcMain, safeStorage } from 'electron'
+
+const tokenFile = (): string => join(app.getPath('userData'), 'session.bin')
+
+interface SessionPayload {
+  token: string
+  user: { id: string; role: string; displayName: string }
+}
+
+/**
+ * token 走 OS 钥匙串加密（safeStorage），不落明文。存的不只是裸 token，而是
+ * { token, user } 这个 JSON——user（id/role/displayName）来自登录响应，不是新的
+ * 敏感信息，一起加密存起来是为了重启后免登录时不用再打一次服务端就能在角落里
+ * 显示"当前登录：XXX"。整体依然只经过 safeStorage.encryptString，没有明文落盘路径。
+ *
+ * safeStorage 在 Linux 上可能没有可用的后端（没装 gnome-keyring/kwallet 等），
+ * isEncryptionAvailable() 会返回 false——这种情况下明确拒绝持久化，退化成
+ * "每次重启都要重新登录"，绝不退回明文存储。
+ */
+ipcMain.handle('session:save', (_e, payload: SessionPayload) => {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  writeFileSync(tokenFile(), safeStorage.encryptString(JSON.stringify(payload)))
+  return true
+})
+
+ipcMain.handle('session:load', (): SessionPayload | null => {
+  try {
+    if (!existsSync(tokenFile()) || !safeStorage.isEncryptionAvailable()) return null
+    const raw = safeStorage.decryptString(readFileSync(tokenFile()))
+    return JSON.parse(raw) as SessionPayload
+  } catch {
+    return null // 钥匙串换了、文件损坏、内容对不上——当成没登录过，不要崩
+  }
+})
+
+ipcMain.handle('session:clear', () => {
+  rmSync(tokenFile(), { force: true })
+})
 
 function createWindow(): void {
   const win = new BrowserWindow({

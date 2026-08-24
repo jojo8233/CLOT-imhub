@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client.js'
 import { useStore } from '../store.js'
+import { theme } from '../theme.js'
 
 const LANG_OPTIONS: { code: string; label: string }[] = [
   { code: 'en', label: 'English' },
@@ -221,11 +222,11 @@ export function Composer() {
   const hasPreview = preview.trim() !== ''
 
   return (
-    <div style={{ borderTop: '1px solid #e2e8f0', padding: 12 }}>
-      {justSent && <div style={{ fontSize: 12, color: '#16a34a', marginBottom: 6 }}>已发送：{justSent}</div>}
-      {error && <div style={{ fontSize: 12, color: '#dc2626', marginBottom: 6 }}>{error}</div>}
+    <div style={{ borderTop: `1px solid ${theme.color.border}`, padding: 12, background: theme.color.bg }}>
+      {justSent && <div style={{ fontSize: 12, color: theme.color.status.connected, marginBottom: 6 }}>已发送：{justSent}</div>}
+      {error && <div style={{ fontSize: 12, color: theme.color.danger, marginBottom: 6 }}>{error}</div>}
 
-      <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>中文</div>
+      <div style={{ fontSize: 12, color: theme.color.textMuted, marginBottom: 4 }}>中文</div>
       <textarea
         value={zh}
         onChange={e => setZh(e.target.value)}
@@ -248,10 +249,10 @@ export function Composer() {
       </button>
 
       {hasPreview && (
-        <div style={{ marginTop: 14, borderTop: '1px dashed #cbd5e1', paddingTop: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#475569', marginBottom: 4 }}>
+        <div style={{ marginTop: 14, borderTop: `1px dashed ${theme.color.borderStrong}`, paddingTop: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: theme.color.textMuted, marginBottom: 4 }}>
             <span>译文预览（可编辑，悬停查看原文与回译对照）</span>
-            {manuallyEdited && <span style={{ color: '#d97706', fontWeight: 600 }}>已手动修改</span>}
+            {manuallyEdited && <span style={{ color: theme.color.status.reconnecting, fontWeight: 600 }}>已手动修改</span>}
           </div>
 
           <div
@@ -287,9 +288,9 @@ export function Composer() {
             />
           </div>
 
-          {backTranslating && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>回译更新中…</div>}
+          {backTranslating && <div style={{ fontSize: 12, color: theme.color.textFaint, marginTop: 4 }}>回译更新中…</div>}
           {!backTranslating && backTranslated === null && (
-            <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>回译不可用（不影响发送）</div>
+            <div style={{ fontSize: 12, color: theme.color.danger, marginTop: 4 }}>回译不可用（不影响发送）</div>
           )}
 
           <button
@@ -302,7 +303,7 @@ export function Composer() {
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12, color: '#475569' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12, color: theme.color.textMuted }}>
         <span>语言：</span>
         <select
           value={displayLang ?? ''}

@@ -1,33 +1,136 @@
 import type { WsServerEvent } from '@im-hub/shared'
 
+interface SessionBridge {
+  save(payload: { token: string; user: SessionUser }): Promise<boolean>
+  load(): Promise<{ token: string; user: SessionUser } | null>
+  clear(): Promise<void>
+}
+
 /**
  * preload 注入的配置。取不到时降级到默认值而不是抛异常——
  * 这一行跑在模块顶层，抛出去会让 React 连挂载都来不及，
  * 结果是一片白屏加零提示，排查起来极其痛苦。
  */
-const injected = (globalThis as { imHub?: { serverUrl?: string } }).imHub
+const injected = (globalThis as { imHub?: { serverUrl?: string; session?: SessionBridge } }).imHub
 if (!injected?.serverUrl) {
   console.error('[client] preload 未注入 window.imHub，降级使用 http://localhost:4000。检查 sandbox 与 preload 路径。')
 }
 const BASE = injected?.serverUrl ?? 'http://localhost:4000'
+// 可能为 undefined（比如以后有非 Electron 的渲染宿主）。所有用法都做了空值兜底：
+// 拿不到就是"这次不持久化"，不是崩溃。
+const sessionBridge = injected?.session
 
-// P0: 模块级变量存 token。connectWs 必须在 login 成功之后调用——
-// App.tsx 里严格按 login -> listAccounts/listConversations -> connectWs 的顺序 await，
-// 保证这一点。如果谁在 login 之前调 connectWs，首帧会发 {type:'auth', token:null}，
-// 服务端 JSON.parse 后 msg.token 是 null，鉴权直接失败，5 秒内连接被 close(1008)。
-// 不会崩溃，但连接建立不起来——P0 没有对这种误用做编译期防护或运行时提示。
+export interface SessionUser {
+  id: string
+  role: string
+  displayName: string
+}
+
+/**
+ * 服务端 401 时触发（登录之外的任何请求）：token 失效或过期。
+ * App.tsx 订阅它，负责把界面切回登录页——client.ts 本身不碰 UI。
+ */
+type UnauthorizedListener = () => void
+let unauthorizedListener: UnauthorizedListener | null = null
+export function onUnauthorized(listener: UnauthorizedListener | null): void {
+  unauthorizedListener = listener
+}
+
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('unauthorized')
+    this.name = 'UnauthorizedError'
+  }
+}
+
+/** fetch 本身失败（服务端没起、断网），跟"服务端返回了错误状态码"要分开处理。 */
+export class NetworkError extends Error {
+  constructor(cause: unknown) {
+    super('network error')
+    this.name = 'NetworkError'
+    this.cause = cause
+  }
+}
+
+// token 只活在这个模块级变量里，绝不落 localStorage/sessionStorage，也不打印到 console。
+// 持久化只走 preload 暴露的 session.save/load/clear（主进程用 safeStorage 加密写盘）。
 let token: string | null = null
+let currentUser: SessionUser | null = null
+
+export function hasToken(): boolean {
+  return token !== null
+}
+
+export function getCurrentUser(): SessionUser | null {
+  return currentUser
+}
+
+/** 应用启动时调用：有加密存档就恢复登录态，没有（或解不出来）就返回 null，交给调用方显示登录页。 */
+export async function restoreSession(): Promise<SessionUser | null> {
+  if (!sessionBridge) return null
+  const saved = await sessionBridge.load()
+  if (!saved) return null
+  token = saved.token
+  currentUser = saved.user
+  return saved.user
+}
+
+/**
+ * 登录成功后调用，把当前 token+user 落盘。safeStorage 不可用时 save() 返回 false——
+ * 这不是错误，是"这台机器/这个平台没法安全持久化"，调用方不需要处理，
+ * 后果只是下次启动要求重新登录。
+ */
+async function persistSession(): Promise<void> {
+  if (!sessionBridge || !token || !currentUser) return
+  await sessionBridge.save({ token, user: currentUser })
+}
+
+async function clearPersistedSession(): Promise<void> {
+  await sessionBridge?.clear()
+}
+
+/** 登出：清内存 token/user，清磁盘存档。调用方（App.tsx）另外负责关 WS、清 store。 */
+export async function logout(): Promise<void> {
+  token = null
+  currentUser = null
+  await clearPersistedSession()
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
-    },
-  })
-  if (!res.ok) throw new Error(`${init.method ?? 'GET'} ${path} failed: ${res.status}`)
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init.headers,
+      },
+    })
+  } catch (e) {
+    throw new NetworkError(e)
+  }
+
+  if (res.status === 401) {
+    // 无论是"密码错误"（登录请求）还是"token 过期/失效"（其它请求），服务端都回 401——
+    // 两种情况都该清掉内存里可能存在的旧 token，登录请求本来就没有 token 可清，无副作用。
+    token = null
+    currentUser = null
+    void clearPersistedSession()
+    unauthorizedListener?.()
+    throw new UnauthorizedError()
+  }
+
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const body = (await res.json()) as { error?: string }
+      if (body?.error) detail = `: ${body.error}`
+    } catch {
+      // 响应体不是 JSON 或读取失败，忽略，用纯状态码报错
+    }
+    throw new Error(`${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`)
+  }
   return res.json() as Promise<T>
 }
 
@@ -62,12 +165,19 @@ export interface MessageRow {
 }
 
 export const api = {
-  async login(email: string, password: string): Promise<void> {
-    const res = await request<{ token: string }>('/api/auth/login', {
+  /**
+   * 登录成功后立即尝试加密持久化（safeStorage 不可用时 persistSession 静默跳过，
+   * 不算失败）。返回服务端给的 user，登录页/App.tsx 用它展示姓名、驱动后续流程。
+   */
+  async login(email: string, password: string): Promise<SessionUser> {
+    const res = await request<{ token: string; user: SessionUser }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     })
     token = res.token
+    currentUser = res.user
+    await persistSession()
+    return res.user
   },
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
