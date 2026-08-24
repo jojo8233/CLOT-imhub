@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { functionCenterCompact } from './layout.js'
 import {
   api,
   logout as apiLogout,
@@ -12,9 +13,7 @@ import { useStore } from './store.js'
 import { AccountTabs } from './components/AccountTabs.js'
 import { AccountsView } from './components/AccountsView.js'
 import { AddAccountDialog } from './components/AddAccountDialog.js'
-import { ChatPanel } from './components/ChatPanel.js'
-import { ConversationList } from './components/ConversationList.js'
-import { CustomerPanel } from './components/CustomerPanel.js'
+import { ChatWorkspace } from './components/ChatWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import { theme } from './theme.js'
@@ -33,6 +32,24 @@ export function App() {
 
   const [view, setView] = useState<ViewKey>('chat')
   const [addOpen, setAddOpen] = useState(false)
+  // 整排的宽度。只用来决定功能中心要不要强制收成图标栏——
+  // 三栏自己的宽度由 ChatWorkspace 量，两处各管各的，不互相牵连。
+  const [rowWidth, setRowWidth] = useState(0)
+  const rowObserver = useRef<ResizeObserver | null>(null)
+
+  // 用回调 ref 而不是 useEffect：这个节点只在登录后才挂出来，用 effect 的话
+  // 依赖要跟着 authState 走，很容易出现"挂了没观察"或"重复观察"。回调 ref
+  // 在节点出现和消失时各调一次，绑定与清理天然成对。
+  const attachRow = useCallback((el: HTMLDivElement | null) => {
+    rowObserver.current?.disconnect()
+    rowObserver.current = null
+    if (!el) return
+    const ro = new ResizeObserver((entries) => { setRowWidth(entries[0]?.contentRect.width ?? 0) })
+    ro.observe(el)
+    rowObserver.current = ro
+  }, [])
+
+  useEffect(() => () => { rowObserver.current?.disconnect() }, [])
 
   // 'checking' = 正在等 session:load 返回，还不知道该显示登录页还是主界面——
   // 这段时间故意不渲染登录页，避免 restore 成功时把正在填表的用户顶掉。
@@ -177,16 +194,16 @@ export function App() {
           </div>
         )}
 
-        <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-          <FunctionCenter view={view} onSelectView={setView} onAddAccount={() => setAddOpen(true)} />
+        <div ref={attachRow} style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+          <FunctionCenter
+            view={view}
+            onSelectView={setView}
+            onAddAccount={() => setAddOpen(true)}
+            compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
+          />
 
           {view === 'chat' ? (
-            <>
-              <ConversationList />
-              <ChatPanel />
-              {/* 客户信息固定在最右侧，不随会话切换消失——位置稳定才能形成肌肉记忆 */}
-              <CustomerPanel />
-            </>
+            <ChatWorkspace />
           ) : (
             <AccountsView onOpenChat={() => setView('chat')} onAddAccount={() => setAddOpen(true)} />
           )}

@@ -39,8 +39,9 @@ export function ConversationList() {
 
   return (
     <div style={{
-      width: 268, flexShrink: 0, display: 'flex', flexDirection: 'column',
-      borderRight: `1px solid ${theme.color.border}`, background: theme.color.bg,
+      // 宽度由外层可拖拽容器给；栏间的分隔线由 Resizer 画，这里不再自带 border
+      flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
+      background: theme.color.bg,
     }}>
       <div style={{ padding: theme.space.md, borderBottom: `1px solid ${theme.color.border}` }}>
         <div style={{

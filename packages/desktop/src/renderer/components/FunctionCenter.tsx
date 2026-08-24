@@ -1,6 +1,7 @@
+import { FUNCTION_CENTER } from '../layout.js'
 import { useStore } from '../store.js'
 import { theme } from '../theme.js'
-import { NotWired } from './ui.js'
+import { IconButton, NotWired } from './ui.js'
 
 /**
  * 左侧功能中心。可收起成一条图标栏——五列布局在 1280 宽的窗口里会把聊天区挤没，
@@ -39,10 +40,12 @@ interface Props {
   view: ViewKey
   onSelectView(v: ViewKey): void
   onAddAccount(): void
+  /** 窗口太窄时强制收成图标栏。不写回 store——窗口一宽回来就该自己展开 */
+  compact?: boolean
 }
 
-export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
-  const open = useStore(s => s.panelOpen)
+export function FunctionCenter({ view, onSelectView, onAddAccount, compact = false }: Props) {
+  const open = useStore(s => s.panelOpen) && !compact
   const togglePanel = useStore(s => s.togglePanel)
 
   function activate(e: Entry): void {
@@ -52,7 +55,8 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
 
   return (
     <aside style={{
-      width: open ? 250 : 62, flexShrink: 0, display: 'flex', flexDirection: 'column',
+      width: open ? FUNCTION_CENTER.open : FUNCTION_CENTER.collapsed,
+      flexShrink: 0, display: 'flex', flexDirection: 'column',
       borderRight: `1px solid ${theme.color.border}`, background: theme.color.bg,
       transition: 'width .16s ease',
     }}>
@@ -68,18 +72,12 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
             </div>
           </div>
         )}
-        <button
-          className="ih-btn"
+        <IconButton
           onClick={togglePanel}
-          title={open ? '收起功能中心' : '展开功能中心'}
-          style={{
-            width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
-            border: `1px solid ${theme.color.border}`, background: theme.color.card,
-            color: theme.color.text, fontSize: 13,
-          }}
+          label={open ? '收起功能中心' : '展开功能中心'}
         >
           {open ? '‹' : '›'}
-        </button>
+        </IconButton>
       </div>
 
       <div className="ih-scroll" style={{ flex: 1, padding: `0 ${open ? theme.space.md : 8}px ${theme.space.md}px` }}>

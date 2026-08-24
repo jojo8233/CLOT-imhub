@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store.js'
 import { theme } from '../theme.js'
+import { CHAT_MAX_WIDTH } from '../layout.js'
 import { EmptyHint, clockTime } from './ui.js'
 
 export function MessageList() {
@@ -29,6 +30,7 @@ export function MessageList() {
       className="ih-scroll"
       style={{ flex: 1, padding: `${theme.space.lg}px ${theme.space.xl}px`, background: theme.color.chat }}
     >
+      <div style={{ maxWidth: CHAT_MAX_WIDTH, margin: '0 auto' }}>
       {messages.map(m => {
         const out = m.direction === 'out'
         return (
@@ -87,6 +89,7 @@ export function MessageList() {
           </div>
         )
       })}
+      </div>
     </div>
   )
 }

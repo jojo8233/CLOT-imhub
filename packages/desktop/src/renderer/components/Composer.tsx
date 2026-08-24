@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client.js'
 import { useStore } from '../store.js'
+import { CHAT_MAX_WIDTH } from '../layout.js'
 import { theme } from '../theme.js'
 
 const LANG_OPTIONS: { code: string; label: string }[] = [
@@ -238,6 +239,7 @@ export function Composer() {
         background: theme.color.card, borderRadius: theme.radius.xl,
         border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.md,
         padding: theme.space.lg,
+        maxWidth: CHAT_MAX_WIDTH, margin: '0 auto',
       }}>
         {justSent && (
           <div style={{

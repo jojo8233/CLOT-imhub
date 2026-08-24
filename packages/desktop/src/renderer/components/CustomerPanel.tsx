@@ -47,8 +47,9 @@ export function CustomerPanel() {
 
   return (
     <aside style={{
-      width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column',
-      borderLeft: `1px solid ${theme.color.border}`, background: theme.color.bg,
+      // 宽度由外层可拖拽容器给；栏间的分隔线由 Resizer 画，这里不再自带 border
+      flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
+      background: theme.color.bg,
     }}>
       {!conv ? (
         <>

@@ -2,10 +2,15 @@ import { useStore } from '../store.js'
 import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Composer } from './Composer.js'
 import { MessageList } from './MessageList.js'
-import { Avatar, Chip, StatusDot } from './ui.js'
+import { Avatar, Chip, IconButton, StatusDot } from './ui.js'
+
+interface Props {
+  focus: boolean
+  onToggleFocus(): void
+}
 
 /** 中间聊天区：会话抬头 + 消息流 + 输入区。三块的边界靠底色区分，不再堆分割线。 */
-export function ChatPanel() {
+export function ChatPanel({ focus, onToggleFocus }: Props) {
   const conversations = useStore(s => s.conversations)
   const accounts = useStore(s => s.accounts)
   const activeId = useStore(s => s.activeConversationId)
@@ -51,16 +56,36 @@ export function ChatPanel() {
             {conv.target_lang
               ? <Chip tone="accent">🔒 回复语言 {conv.target_lang}</Chip>
               : <Chip>自动跟随客户语言</Chip>}
+            <FocusToggle focus={focus} onToggle={onToggleFocus} />
           </>
         ) : (
-          <span style={{ fontSize: theme.font.size.md, fontWeight: 600, color: theme.color.textFaint }}>
-            未选择会话
-          </span>
+          <>
+            <span style={{
+              flex: 1, fontSize: theme.font.size.md,
+              fontWeight: 600, color: theme.color.textFaint,
+            }}>
+              未选择会话
+            </span>
+            <FocusToggle focus={focus} onToggle={onToggleFocus} />
+          </>
         )}
       </div>
 
       <MessageList />
       <Composer />
     </div>
+  )
+}
+
+/** 收起两侧辅助栏，把空间全给聊天。再点一次恢复用户自己拖出来的宽度。 */
+function FocusToggle({ focus, onToggle }: { focus: boolean; onToggle(): void }) {
+  return (
+    <IconButton
+      onClick={onToggle}
+      label={focus ? '退出专注聊天' : '专注聊天'}
+      title={focus ? '退出专注，恢复上次的栏宽' : '收起会话列表与客户资料'}
+    >
+      {focus ? '><' : '<>'}
+    </IconButton>
   )
 }

@@ -43,6 +43,11 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    // 会话页是"功能中心 + 会话列表 + 聊天区"三栏并排。再窄下去只能开始收栏，
+    // 一旦收掉会话列表，选中会话之后就没有入口再换一个会话了。与其做一堆
+    // 折叠态的兜底交互，不如从窗口层面挡住——桌面端本来也没有更窄的场景。
+    minWidth: 940,
+    minHeight: 620,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
       contextIsolation: true,

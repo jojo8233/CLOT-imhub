@@ -70,6 +70,34 @@ export function StatusDot({ status, size = 8 }: { status: string; size?: number 
   )
 }
 
+/**
+ * 圆形图标按钮。样式原样取自功能中心的收起键——本来就该只有一套，
+ * 新增图标按钮一律用它，不要再各写一份内联样式。
+ */
+export function IconButton({ children, onClick, title, label }: {
+  children: ReactNode
+  onClick(): void
+  title?: string
+  label: string
+}) {
+  return (
+    <button
+      className="ih-btn"
+      onClick={onClick}
+      title={title ?? label}
+      aria-label={label}
+      style={{
+        width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
+        border: `1px solid ${theme.color.border}`, background: theme.color.card,
+        color: theme.color.text, fontSize: 13,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
 export function Chip({ children, tone = 'neutral', style }: {
   children: ReactNode
   tone?: 'neutral' | 'accent' | 'muted'
