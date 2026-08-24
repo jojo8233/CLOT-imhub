@@ -24,6 +24,20 @@ const answerBody = z.object({
 
 const idParam = z.object({ id: z.string().uuid() })
 
+const renameBody = z.object({
+  displayName: z.string().trim().min(1, '账号名称不能为空').max(60, '账号名称最长 60 个字'),
+})
+
+const deleteBody = z.object({
+  /**
+   * 必须原样重打一遍账号名才放行。
+   *
+   * 删账号会级联删掉它下面所有会话和消息——可能是几千条真实的客户聊天记录，
+   * 而且没有回收站。一个"确定吗"的弹窗挡不住手滑，让人把名字打一遍能。
+   */
+  confirmName: z.string(),
+})
+
 export interface AccountRouteDeps {
   adapters: AdapterManager
 }
@@ -127,6 +141,86 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
    * 严格限定 owner 本人：管理员能看见下属的账号，但不该代替下属输入他的
    * 二次验证密码——那等于管理员可以拿走一个他能看见的任意账号。
    */
+  /**
+   * 改名。纯展示字段，不影响任何平台侧状态，所以放宽到"看得见就能改"：
+   * 管理员帮下属把一个建错名字的账号改过来是合理的。
+   */
+  app.patch('/api/accounts/:id', async (req, reply) => {
+    if (req.actor.role === 'auditor') {
+      return reply.code(403).send({ error: '风控账号是只读的' })
+    }
+    const params = idParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: '账号 id 不合法' })
+
+    const parsed = renameBody.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? '参数不合法' })
+    }
+
+    // 经 scoped 确认可见，再按 id 更新——看不见的账号连存在与否都不该暴露
+    const visible = await req.scoped.accounts().select('id').where('accounts.id', '=', params.data.id).executeTakeFirst()
+    if (!visible) return reply.code(404).send({ error: '账号不存在或你看不到它' })
+
+    const row = await db.updateTable('accounts')
+      .set({ display_name: parsed.data.displayName })
+      .where('id', '=', params.data.id)
+      .returning(['id', 'platform', 'display_name', 'status', 'owner_user_id', 'team_id', 'history_available_from'])
+      .executeTakeFirstOrThrow()
+    return { account: row }
+  })
+
+  /**
+   * 删除账号。
+   *
+   * 三件事必须一起做完，缺一件都会留下烂摊子：
+   *   1. 清掉平台侧在本机的数据（session / 本地账号数据）
+   *   2. 删数据库行（会话与消息随外键级联消失）
+   *   3. 把"平台上可能还留着一个已关联设备"这件事告诉用户
+   *
+   * 只做 2 的话，平台侧还连着但库里没有对应账号，消息收进来无处安放只能丢弃
+   * ——这个坑刚踩过一次，表现是「扫码明明成功了却一条消息都没有」。
+   */
+  app.delete('/api/accounts/:id', async (req, reply) => {
+    const params = idParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: '账号 id 不合法' })
+
+    const parsed = deleteBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: '参数不合法' })
+
+    // 删除限 owner 本人：这是不可逆操作，且会带走该账号下全部客户消息
+    const account = await requireOwnedAccount(req.actor.userId, params.data.id)
+    if (!account) return reply.code(404).send({ error: '账号不存在或不属于你' })
+
+    if (parsed.data.confirmName !== account.display_name) {
+      return reply.code(400).send({ error: '账号名称不匹配，请原样输入以确认删除' })
+    }
+
+    const counts = await db.selectFrom('messages')
+      .select(db.fn.countAll<string>().as('n'))
+      .where('account_id', '=', account.id)
+      .executeTakeFirstOrThrow()
+
+    // 先清平台数据。这一步失败就中止——宁可什么都没删，也不要删一半：
+    // 库里没了而平台侧还连着，是最难查的那种状态。
+    try {
+      await deps.adapters.purge(account.platform, account.id)
+    } catch (err) {
+      console.error(`[accounts] 账号 ${account.id} 清除平台数据失败，已中止删除:`, err)
+      return reply.code(500).send({ error: '清除平台数据失败，账号未删除。请查看服务端日志' })
+    }
+
+    await db.deleteFrom('accounts').where('id', '=', account.id).execute()
+
+    return {
+      ok: true,
+      deletedMessages: Number(counts.n),
+      /** 平台侧可能仍留着一个已关联设备，需要用户自己去移除 */
+      manualCleanup: account.platform === 'signal'
+        ? '请到手机 Signal 的「设置 → 已关联设备」里移除这台设备'
+        : null,
+    }
+  })
+
   app.post('/api/accounts/:id/auth-answer', async (req, reply) => {
     const params = idParam.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: '账号 id 不合法' })

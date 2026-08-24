@@ -47,6 +47,7 @@ const adapters = {
   connect: vi.fn(async () => {}),
   disconnect: vi.fn(async () => {}),
   submitAuthAnswer: vi.fn(async () => {}),
+  purge: vi.fn(async () => {}),
 }
 
 let app: FastifyInstance
@@ -58,6 +59,8 @@ beforeEach(async () => {
   adapters.connect.mockClear()
   adapters.disconnect.mockClear()
   adapters.submitAuthAnswer.mockClear()
+  adapters.purge.mockClear()
+  adapters.purge.mockResolvedValue(undefined as never)
 
   await db.deleteFrom('message_translations').execute()
   await db.deleteFrom('messages').execute()
@@ -240,5 +243,126 @@ describe('POST /api/accounts/:id/relink', () => {
       method: 'POST', url: `/api/accounts/${agentAccountId}/relink`, headers: auth(managerToken),
     })
     expect(res.statusCode).toBe(404)
+  })
+})
+
+describe('PATCH /api/accounts/:id（改名）', () => {
+  it('owner 本人可以改名', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(agentToken), payload: { displayName: '改过的名字' },
+    })
+    expect(res.statusCode).toBe(200)
+    const row = await db.selectFrom('accounts').select('display_name')
+      .where('id', '=', agentAccountId).executeTakeFirstOrThrow()
+    expect(row.display_name).toBe('改过的名字')
+  })
+
+  it('带队的 manager 也能改——改名不影响任何平台侧状态', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(managerToken), payload: { displayName: '主管改的' },
+    })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('auditor 是只读角色，改不了', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(auditorToken), payload: { displayName: '不该生效' },
+    })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('空名称被拒绝', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(agentToken), payload: { displayName: '   ' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+})
+
+describe('DELETE /api/accounts/:id', () => {
+  it('名称对得上才删，并且先清平台数据再删库', async () => {
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(agentToken), payload: { confirmName: '待关联' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(adapters.purge).toHaveBeenCalledWith('telegram', agentAccountId)
+
+    const row = await db.selectFrom('accounts').select('id')
+      .where('id', '=', agentAccountId).executeTakeFirst()
+    expect(row).toBeUndefined()
+  })
+
+  it('名称对不上一律不删——这是不可逆操作，挡住手滑', async () => {
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(agentToken), payload: { confirmName: '打错了' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(adapters.purge).not.toHaveBeenCalled()
+    const row = await db.selectFrom('accounts').select('id')
+      .where('id', '=', agentAccountId).executeTakeFirst()
+    expect(row).toBeDefined()
+  })
+
+  it('清平台数据失败时中止删除，不留半删状态', async () => {
+    adapters.purge.mockRejectedValueOnce(new Error('磁盘只读'))
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(agentToken), payload: { confirmName: '待关联' },
+    })
+    expect(res.statusCode).toBe(500)
+    // 库里必须还在：删了库而平台侧还连着，消息收进来无处安放，是最难查的状态
+    const row = await db.selectFrom('accounts').select('id')
+      .where('id', '=', agentAccountId).executeTakeFirst()
+    expect(row).toBeDefined()
+  })
+
+  it('看得见但不是自己的账号也不能删', async () => {
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(managerToken), payload: { confirmName: '待关联' },
+    })
+    expect(res.statusCode).toBe(404)
+    expect(adapters.purge).not.toHaveBeenCalled()
+  })
+
+  it('删账号会带走它名下的会话与消息，返回值里说清删了多少条', async () => {
+    const conv = await db.insertInto('conversations').values({
+      account_id: agentAccountId, platform_conversation_id: 'pc-1', contact_external_id: 'c-1',
+    }).returning('id').executeTakeFirstOrThrow()
+    await db.insertInto('messages').values({
+      account_id: agentAccountId, conversation_id: conv.id, platform: 'telegram',
+      platform_message_id: 'm-1', direction: 'in', sender_external_id: 'c-1',
+      body: 'hi', sent_at: new Date(), raw: JSON.stringify({}), media_refs: JSON.stringify([]),
+    }).execute()
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${agentAccountId}`,
+      headers: auth(agentToken), payload: { confirmName: '待关联' },
+    })
+    expect(res.json()).toMatchObject({ ok: true, deletedMessages: 1 })
+
+    const left = await db.selectFrom('conversations').select('id')
+      .where('account_id', '=', agentAccountId).execute()
+    expect(left).toEqual([])
+  })
+
+  it('Signal 账号提示用户去手机上移除已关联设备', async () => {
+    const sig = await db.insertInto('accounts').values({
+      platform: 'signal', owner_user_id: AGENT_ID, team_id: TEAM_ID,
+      display_name: 'SG', status: 'connected', credentials_ref: '+1555',
+    }).returning('id').executeTakeFirstOrThrow()
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${sig.id}`,
+      headers: auth(agentToken), payload: { confirmName: 'SG' },
+    })
+    // 只清本地数据、不动服务端注册，所以手机上那个条目要用户自己删
+    expect(res.json().manualCleanup).toContain('已关联设备')
   })
 })

@@ -316,6 +316,29 @@ export class SignalAdapter implements PlatformAdapter {
     this.ensureProcess()
   }
 
+  /**
+   * 清除本机上这个 Signal 账号的数据。
+   *
+   * 用 deleteLocalAccountData 而不是 unregister：unregister 会去 Signal 服务端
+   * 解除这台设备的注册，那是对用户真实账号的操作。删一条我们这边的记录不该
+   * 顺手改动他的 Signal 账号——万一语义理解错了，代价是不可逆的。
+   *
+   * 代价是手机的「已关联设备」里会留下一个条目，需要用户自己去移除。
+   * 调用方要把这件事明确告诉用户，不能让它悄悄留在那儿。
+   */
+  async purge(accountId: string): Promise<void> {
+    const number = this.numberByAccount.get(accountId)
+    if (number !== undefined) {
+      try {
+        // ignoreRegistered：这个号在服务端仍是注册状态，不加这个参数会被拒绝
+        await this.request('deleteLocalAccountData', { account: number, ignoreRegistered: true })
+      } catch (err) {
+        console.warn(`[signal] 清除 ${accountId} 的本地数据失败:`, err)
+      }
+    }
+    await this.disconnect(accountId)
+  }
+
   async disconnect(accountId: string): Promise<void> {
     const number = this.numberByAccount.get(accountId)
     if (number !== undefined) {

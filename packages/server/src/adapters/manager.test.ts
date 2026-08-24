@@ -15,6 +15,7 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     onCredentialsUpdated: vi.fn(),
     onMessageIdRemapped: vi.fn(),
   submitAuthAnswer: vi.fn(),
+  purge: vi.fn(),
   }
 }
 

@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { api, NetworkError } from '../api/client.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
@@ -16,6 +18,13 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const setActiveAccount = useStore(s => s.setActiveAccount)
+  const setAccounts = useStore(s => s.setAccounts)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<{ id: string; name: string; platform: string } | null>(null)
+
+  async function refresh(): Promise<void> {
+    try { setAccounts((await api.listAccounts()).accounts) } catch { /* 下次进页面会重拉 */ }
+  }
 
   const online = accounts.filter(a => a.status === 'connected').length
 
@@ -108,24 +117,253 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                     {a.id}
                   </div>
 
-                  <button
-                    onClick={() => { setActiveAccount(a.id); onOpenChat() }}
-                    className="ih-btn"
-                    style={{
-                      marginTop: theme.space.md, width: '100%', padding: '10px 0',
-                      borderRadius: theme.radius.pill, border: `1px solid ${theme.color.borderStrong}`,
-                      background: theme.color.surface, color: theme.color.text,
-                      fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
-                    }}
-                  >
-                    查看会话
-                  </button>
+                  <div style={{ marginTop: theme.space.md, display: 'flex', gap: 6 }}>
+                    <CardButton onClick={() => { setActiveAccount(a.id); onOpenChat() }} grow>
+                      查看会话
+                    </CardButton>
+                    <CardButton onClick={() => setRenaming(a.id)}>改名</CardButton>
+                    <CardButton
+                      onClick={() => setDeleting({ id: a.id, name: a.display_name, platform: a.platform })}
+                      danger
+                    >
+                      删除
+                    </CardButton>
+                  </div>
+
+                  {renaming === a.id && (
+                    <RenameRow
+                      current={a.display_name}
+                      onCancel={() => setRenaming(null)}
+                      onDone={async (name) => {
+                        await api.renameAccount(a.id, name)
+                        setRenaming(null)
+                        await refresh()
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             )
           })}
         </div>
       )}
+
+      {deleting && (
+        <DeleteDialog
+          account={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={async () => { setDeleting(null); await refresh() }}
+        />
+      )}
+    </div>
+  )
+}
+
+function CardButton({ children, onClick, grow, danger }: {
+  children: React.ReactNode
+  onClick(): void
+  grow?: boolean
+  danger?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="ih-btn"
+      style={{
+        flex: grow ? 1 : undefined, padding: '9px 14px', whiteSpace: 'nowrap',
+        borderRadius: theme.radius.pill, border: `1px solid ${theme.color.borderStrong}`,
+        background: theme.color.surface,
+        color: danger ? theme.color.danger : theme.color.text,
+        fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function RenameRow({ current, onCancel, onDone }: {
+  current: string
+  onCancel(): void
+  onDone(name: string): Promise<void>
+}) {
+  const [value, setValue] = useState(current)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save(): Promise<void> {
+    const name = value.trim()
+    if (busy || name === '') return
+    if (name === current) { onCancel(); return }
+    setBusy(true)
+    setError(null)
+    try {
+      await onDone(name)
+    } catch (e) {
+      setError(e instanceof NetworkError ? '连不上服务端' : (e instanceof Error ? e.message : '改名失败'))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="ih-fade" style={{ marginTop: theme.space.sm }}>
+      <input
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') void save()
+          if (e.key === 'Escape') onCancel()
+        }}
+        autoFocus
+        maxLength={60}
+        style={{
+          width: '100%', padding: '9px 12px', fontSize: theme.font.size.base,
+          border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.lg,
+          background: theme.color.white, color: theme.color.text,
+        }}
+      />
+      {error && (
+        <div style={{ fontSize: theme.font.size.xs, color: theme.color.danger, marginTop: 4 }}>{error}</div>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <CardButton onClick={() => void save()} grow>{busy ? '保存中…' : '保存'}</CardButton>
+        <CardButton onClick={onCancel}>取消</CardButton>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 删除确认。
+ *
+ * 要求把账号名原样打一遍，不是为了仪式感：删账号会连带删掉它名下所有会话和
+ * 消息，可能是几千条真实的客户聊天记录，而且没有回收站。一个"确定吗"挡不住
+ * 手滑，打一遍名字能。
+ */
+function DeleteDialog({ account, onClose, onDeleted }: {
+  account: { id: string; name: string; platform: string }
+  onClose(): void
+  onDeleted(): Promise<void>
+}) {
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [cleanup, setCleanup] = useState<string | null>(null)
+
+  async function confirm(): Promise<void> {
+    if (busy || typed !== account.name) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await api.deleteAccount(account.id, typed)
+      if (res.manualCleanup) {
+        // 平台侧还留着一个已关联设备，必须让用户看到，不能默默关窗
+        setCleanup(res.manualCleanup)
+        setBusy(false)
+        return
+      }
+      await onDeleted()
+    } catch (e) {
+      setError(e instanceof NetworkError ? '连不上服务端' : (e instanceof Error ? e.message : '删除失败'))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(41,43,41,.38)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        className="ih-fade"
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 460, maxWidth: '90vw', background: theme.color.card,
+          borderRadius: theme.radius.xxl, boxShadow: theme.shadow.lg,
+          padding: theme.space.xl,
+        }}
+      >
+        {cleanup ? (
+          <>
+            <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+              账号已删除
+            </div>
+            <div style={{
+              marginTop: theme.space.md, padding: theme.space.md,
+              background: theme.color.surface, borderRadius: theme.radius.lg,
+              fontSize: theme.font.size.sm, color: theme.color.text, lineHeight: 1.8,
+            }}>
+              还有一步要你自己做：{cleanup}。
+              <div style={{ color: theme.color.textMuted, marginTop: 6 }}>
+                我们只清了本机数据，没有去动你在平台上的账号设置。
+              </div>
+            </div>
+            <div style={{ marginTop: theme.space.lg, display: 'flex', justifyContent: 'flex-end' }}>
+              <CardButton onClick={() => void onDeleted()}>知道了</CardButton>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+              删除「{account.name}」
+            </div>
+            <div style={{
+              marginTop: theme.space.sm, fontSize: theme.font.size.sm,
+              color: theme.color.textMuted, lineHeight: 1.8,
+            }}>
+              这会一并删掉该账号下的<strong style={{ color: theme.color.danger }}>全部会话和消息</strong>，
+              并解除本机与平台的关联。<strong style={{ color: theme.color.danger }}>不可撤销，没有回收站。</strong>
+            </div>
+            <div style={{
+              marginTop: theme.space.lg, fontSize: theme.font.size.sm, color: theme.color.textMuted,
+            }}>
+              确认请输入账号名称：<code style={{
+                background: theme.color.white, padding: '1px 6px', borderRadius: 4, color: theme.color.text,
+              }}>{account.name}</code>
+            </div>
+            <input
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void confirm() }}
+              autoFocus
+              style={{
+                width: '100%', marginTop: theme.space.sm, padding: '10px 12px',
+                fontSize: theme.font.size.md, border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.lg, background: theme.color.white, color: theme.color.text,
+              }}
+            />
+            {error && (
+              <div style={{
+                marginTop: theme.space.md, padding: '8px 12px',
+                background: theme.color.dangerSoft, borderRadius: theme.radius.md,
+                fontSize: theme.font.size.sm, color: theme.color.danger,
+              }}>
+                {error}
+              </div>
+            )}
+            <div style={{ marginTop: theme.space.lg, display: 'flex', gap: theme.space.sm, justifyContent: 'flex-end' }}>
+              <CardButton onClick={onClose}>取消</CardButton>
+              <button
+                onClick={() => void confirm()}
+                disabled={busy || typed !== account.name}
+                className="ih-btn"
+                style={{
+                  padding: '10px 22px', borderRadius: theme.radius.pill, border: 'none',
+                  background: typed === account.name ? theme.color.danger : theme.color.surfaceHover,
+                  color: typed === account.name ? '#ffffff' : theme.color.textFaint,
+                  opacity: 1,
+                  fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
+                }}
+              >
+                {busy ? '删除中…' : '永久删除'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

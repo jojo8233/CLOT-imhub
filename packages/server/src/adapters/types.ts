@@ -72,4 +72,16 @@ export interface PlatformAdapter {
    * 用完立即丢弃。没有流程在等时抛错，不要静默吞掉——那会让前端一直转圈。
    */
   submitAuthAnswer(accountId: string, value: string): Promise<void>
+
+  /**
+   * 断开并**彻底清除**本机上该账号的平台数据，删除账号时调用。
+   *
+   * 必须做到「之后再 connect 需要重新关联」。只删数据库行而留下磁盘上的
+   * session，下次就会出现「平台侧还连着、但库里没有对应账号」的幽灵状态——
+   * 消息收进来无处安放，只能丢弃。
+   *
+   * 实现方要吞掉自己的错误还是抛出，取决于失败是否可恢复：清不干净必须抛，
+   * 让调用方有机会中止删除，而不是留下一个半删状态。
+   */
+  purge(accountId: string): Promise<void>
 }

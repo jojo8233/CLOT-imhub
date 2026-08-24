@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs'
 import * as path from 'node:path'
 import * as tdl from 'tdl'
 import { getTdjson } from 'prebuilt-tdlib'
@@ -223,6 +224,34 @@ export class TelegramAdapter implements PlatformAdapter {
       console.error(`[telegram] 账号 ${accountId} 鉴权失败（${authState._}）:`, err)
       this.emitStatus(accountId, 'pending_auth')
     }
+  }
+
+  /**
+   * 注销并删除本机 session。
+   *
+   * 先调 TDLib 的 logOut 再删文件：只删文件的话，Telegram 服务端那边这个
+   * 「已登录设备」还在，员工手机的设备列表里会永远留着一个没人认识的条目，
+   * 而且它仍然是一个有效的授权。
+   *
+   * logOut 失败不阻断删除——账号可能本来就没登录成功过。但磁盘删不掉要抛：
+   * 残留的 session 会让下次用同名账号重新关联时行为诡异。
+   */
+  async purge(accountId: string): Promise<void> {
+    const client = this.clients.get(accountId)
+    if (client) {
+      try {
+        await client.invoke({ _: 'logOut' })
+      } catch (err) {
+        console.warn(`[telegram] 账号 ${accountId} logOut 失败（可能本来就未登录），继续删除:`, err)
+      }
+      try {
+        await client.close()
+      } catch { /* 已经关掉了 */ }
+      this.clients.delete(accountId)
+    }
+    this.pendingAnswers.delete(accountId)
+    rmSync(path.join(this.opts.dataDir, accountId), { recursive: true, force: true })
+    this.emitStatus(accountId, 'disconnected')
   }
 
   async disconnect(accountId: string): Promise<void> {

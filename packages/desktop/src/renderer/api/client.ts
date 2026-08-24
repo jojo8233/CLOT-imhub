@@ -233,6 +233,25 @@ export const api = {
     return res.account
   },
 
+  async renameAccount(accountId: string, displayName: string): Promise<AccountRow> {
+    const res = await request<{ account: AccountRow }>(`/api/accounts/${accountId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName }),
+    })
+    return res.account
+  },
+
+  /**
+   * 删除账号。confirmName 必须与账号当前名称完全一致，服务端会再校验一次——
+   * 这一步会连带删掉该账号下的全部会话与消息，且不可撤销。
+   */
+  async deleteAccount(accountId: string, confirmName: string): Promise<{ deletedMessages: number; manualCleanup: string | null }> {
+    return request<{ deletedMessages: number; manualCleanup: string | null }>(
+      `/api/accounts/${accountId}`,
+      { method: 'DELETE', body: JSON.stringify({ confirmName }) },
+    )
+  },
+
   /** 二维码过期或中途放弃后重新发起关联 */
   async relinkAccount(accountId: string): Promise<void> {
     await request(`/api/accounts/${accountId}/relink`, { method: 'POST' })

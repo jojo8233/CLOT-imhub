@@ -88,6 +88,18 @@ export class AdapterManager {
     await this.require(platform).submitAuthAnswer(accountId, value)
   }
 
+  /**
+   * 清除某账号在本机的平台数据。
+   *
+   * 必须显式传 platform：账号可能从来没 connect 过（建了没扫码就删），
+   * 那时内部的 accountId → platform 映射里根本没有它，而恰恰是这种账号
+   * 最可能留下半个 session 目录。
+   */
+  async purge(platform: Platform, accountId: string): Promise<void> {
+    await this.require(platform).purge(accountId)
+    this.accountPlatform.delete(accountId)
+  }
+
   async send(accountId: string, conversationId: string, content: OutboundContent): Promise<string> {
     const platform = this.accountPlatform.get(accountId)
     if (!platform) throw new Error(`account ${accountId} is not connected`)
