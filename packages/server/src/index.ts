@@ -40,9 +40,55 @@ const hub = new WsHub()
 const queue = new BullTranslateQueue(redis)
 const ingestor = new MessageIngestor(new KyselyMessageRepo(db), queue)
 
-adapters.onMessage((msg) => { void ingestor.ingest(msg) })
+adapters.onMessage((msg) => {
+  void (async () => {
+    const messageId = await ingestor.ingest(msg)
+    if (!messageId) return
+
+    // 推给该账号的归属人。不推的话新消息和新会话都不会实时出现，
+    // 员工得手动刷新才看得到——那就不是聊天软件了。
+    const row = await db
+      .selectFrom('messages')
+      .innerJoin('accounts', 'accounts.id', 'messages.account_id')
+      .select([
+        'messages.id as id',
+        'messages.conversation_id as conversation_id',
+        'messages.account_id as account_id',
+        'messages.platform as platform',
+        'messages.direction as direction',
+        'messages.body as body',
+        'messages.sent_at as sent_at',
+        'accounts.owner_user_id as owner_user_id',
+      ])
+      .where('messages.id', '=', messageId)
+      .executeTakeFirst()
+
+    if (!row) return
+    hub.publishTo(row.owner_user_id, {
+      type: 'message',
+      messageId: row.id,
+      conversationId: row.conversation_id,
+      accountId: row.account_id,
+      platform: row.platform,
+      direction: row.direction,
+      body: row.body,
+      // 译文此刻还没产出，随后由 translation 事件补上
+      translatedBody: null,
+      sentAt: row.sent_at.toISOString(),
+    })
+  })()
+})
+
 adapters.onStatusChange((accountId, status) => {
-  void db.updateTable('accounts').set({ status }).where('id', '=', accountId).execute()
+  void (async () => {
+    await db.updateTable('accounts').set({ status }).where('id', '=', accountId).execute()
+    const owner = await db
+      .selectFrom('accounts')
+      .select('owner_user_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (owner) hub.publishTo(owner.owner_user_id, { type: 'account_status', accountId, status })
+  })()
 })
 
 // Worker 和 Fastify 共用一个进程，但各自独立跑：BullMQ Worker 内部是自己的轮询循环，

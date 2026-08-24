@@ -11,6 +11,8 @@ export function App() {
   const setMessages = useStore(s => s.setMessages)
   const setActiveConversation = useStore(s => s.setActiveConversation)
   const applyTranslation = useStore(s => s.applyTranslation)
+  const appendMessage = useStore(s => s.appendMessage)
+  const setAccountStatus = useStore(s => s.setAccountStatus)
   const conversations = useStore(s => s.conversations)
   const activeId = useStore(s => s.activeConversationId)
 
@@ -25,7 +27,29 @@ export function App() {
       setAccounts((await api.listAccounts()).accounts)
       setConversations((await api.listConversations()).conversations)
       api.connectWs((event) => {
-        if (event.type === 'translation') applyTranslation(event.messageId, event.translatedText)
+        if (event.type === 'translation') {
+          applyTranslation(event.messageId, event.translatedText)
+          return
+        }
+        if (event.type === 'account_status') {
+          setAccountStatus(event.accountId, event.status)
+          return
+        }
+        if (event.type === 'message') {
+          // 会话列表可能因为这条消息新增了会话，或需要重排——整体重拉最省事，
+          // 上限 200 行，开销可以忽略
+          void api.listConversations().then((r) => setConversations(r.conversations))
+          // 只有正在看的那个会话才需要把消息插进列表
+          if (event.conversationId === useStore.getState().activeConversationId) {
+            appendMessage({
+              id: event.messageId,
+              direction: event.direction,
+              body: event.body,
+              sent_at: event.sentAt,
+              translated_text: event.translatedBody,
+            })
+          }
+        }
       })
     })()
   }, [])
