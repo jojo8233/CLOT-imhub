@@ -2,11 +2,12 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { Kysely, PostgresDialect } from 'kysely'
 import pg from 'pg'
 import type { Database } from '../db/types.js'
+import { testDatabaseUrl } from '../db/test-db.js'
 import { KyselyMessageRepo } from './repo.js'
 
 const db = new Kysely<Database>({
   dialect: new PostgresDialect({
-    pool: new pg.Pool({ connectionString: 'postgres://imhub:imhub_dev@localhost:5432/imhub' }),
+    pool: new pg.Pool({ connectionString: testDatabaseUrl() }),
   }),
 })
 const repo = new KyselyMessageRepo(db)
