@@ -15,6 +15,7 @@ function deps(overrides: Record<string, unknown> = {}) {
       }),
     },
     saveTranslation: vi.fn().mockResolvedValue(undefined),
+    saveDetectedLang: vi.fn().mockResolvedValue(undefined),
     publish: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
@@ -63,6 +64,25 @@ describe('runTranslateJob', () => {
     await runTranslateJob(job, d as never)
     expect(d.gateway.translate).not.toHaveBeenCalled()
     expect(d.saveTranslation).not.toHaveBeenCalled()
+  })
+
+  it('把检测到的源语言写回 body_lang', async () => {
+    const d = deps()
+    await runTranslateJob(job, d as never)
+    expect(d.saveDetectedLang).toHaveBeenCalledWith('msg-1', 'en')
+  })
+
+  it("检测语言是 'und' 时不写 body_lang——那是占位值不是语言", async () => {
+    const d = deps({
+      gateway: {
+        translate: vi.fn().mockResolvedValue({
+          text: '你好，这个还有货吗？', detectedLang: 'und',
+          provider: 'deepl', cached: false, downgradedFrom: [],
+        }),
+      },
+    })
+    await runTranslateJob(job, d as never)
+    expect(d.saveDetectedLang).not.toHaveBeenCalled()
   })
 
   it('使用该会话配置的引擎', async () => {

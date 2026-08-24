@@ -48,6 +48,8 @@ export interface ConversationsTable {
   contact_external_id: string
   contact_display_name: string | null
   last_message_at: Timestamp | null
+  /** null 表示自动跟随客户语言，有值表示员工按会话锁定了目标语言 */
+  target_lang: string | null
 }
 
 export interface MessagesTable {

@@ -32,4 +32,25 @@ export class ScopedDb {
       this.scope,
     )
   }
+
+  /**
+   * 更新会话的目标语言锁。Kysely 的 UPDATE 不支持像 SELECT 一样 join 后过滤，
+   * 所以这里先用 accountsJoinedWithConversations() 确认会话在当前可见范围内，
+   * 再对已确认的 id 执行不带 join 的 UPDATE——db 本身仍是私有字段，不会被路由层拿到。
+   *
+   * 返回 false 表示会话不存在或不在可见范围内，路由据此回 404。
+   */
+  async updateConversationTargetLang(conversationId: string, targetLang: string | null): Promise<boolean> {
+    const visible = await this.accountsJoinedWithConversations()
+      .select('conversations.id as id')
+      .where('conversations.id', '=', conversationId)
+      .executeTakeFirst()
+    if (!visible) return false
+
+    await this.db.updateTable('conversations')
+      .set({ target_lang: targetLang })
+      .where('id', '=', conversationId)
+      .execute()
+    return true
+  }
 }

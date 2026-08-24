@@ -140,6 +140,9 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
         provider: input.provider,
       })).execute()
     },
+    saveDetectedLang: async (messageId, lang) => {
+      await db.updateTable('messages').set({ body_lang: lang }).where('id', '=', messageId).execute()
+    },
     publish: async (event) => {
       const owner = await db.selectFrom('messages')
         .innerJoin('accounts', 'accounts.id', 'messages.account_id')

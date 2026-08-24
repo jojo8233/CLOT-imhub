@@ -16,6 +16,8 @@ export interface TranslateJobDeps {
   saveTranslation(input: {
     messageId: string; targetLang: string; provider: string; translatedText: string
   }): Promise<void>
+  /** 把翻译网关检测到的源语言写回 messages.body_lang，供 resolveTargetLang 跟随客户语言。 */
+  saveDetectedLang(messageId: string, lang: string): Promise<void>
   publish(event: WsTranslationEvent): Promise<void>
 }
 
@@ -37,6 +39,12 @@ export async function runTranslateJob(data: TranslateJobData, deps: TranslateJob
     messageId: message.id, targetLang: AGENT_LANG,
     provider: result.provider, translatedText: result.text,
   })
+
+  // 'und' 是 provider 没能识别语言时的占位值，不是一种语言——写进去会污染
+  // resolveTargetLang 的"跟随客户语言"推断，所以跳过不写。
+  if (result.detectedLang !== 'und') {
+    await deps.saveDetectedLang(message.id, result.detectedLang)
+  }
 
   await deps.publish({
     type: 'translation', messageId: message.id, targetLang: AGENT_LANG,
