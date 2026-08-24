@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs'
-import * as path from 'node:path'
 import { Worker } from 'bullmq'
 import Redis from 'ioredis'
 import { config } from './config.js'
@@ -132,7 +130,7 @@ async function connectRegisteredAccounts(): Promise<void> {
 
   const all = await db
     .selectFrom('accounts')
-    .select(['id', 'platform', 'display_name', 'credentials_ref'])
+    .select(['id', 'platform', 'display_name', 'credentials_ref', 'status'])
     .where('platform', '=', 'telegram')
     .execute()
 
@@ -141,17 +139,22 @@ async function connectRegisteredAccounts(): Promise<void> {
     return
   }
 
-  // 只自动连接本地已有 TDLib session 的账号。
+  // 只自动连接「上次成功连上过」的账号，判据是数据库里持久化的 status。
+  //
+  // 不能用「TDLib 数据目录是否存在」来判断：TDLib 在认证完成之前就会把 db 目录
+  // 建好，没登录过的账号一样有这个目录（实测 348K vs 已登录的 7.2M），
+  // 按目录判断会误认为已登录，重启时照样卡在 stdin 上。
   //
   // 没登录过的账号调 login() 会永久阻塞在 stdin 等手机号——无脑遍历全部账号
-  // 会让服务端一旦重启就再也起不来（卡在第一个没登录过的账号上）。
+  // 会让服务端一旦重启就再也起不来（卡在第一个没登录过的账号上），
+  // 而且日志里只有一行「正在连接…」，看不出为什么不动。
   // 首次登录必须显式指定：IM_HUB_LOGIN_ACCOUNT=<账号id 或 名称片段>
   const wanted = process.env.IM_HUB_LOGIN_ACCOUNT?.trim()
-  const hasSession = (id: string): boolean =>
-    existsSync(path.join(config.TDLIB_DATA_DIR, id, 'db'))
 
   const accounts = all.filter((a) => {
-    if (hasSession(a.id)) return true
+    // 注意：如果员工在手机上主动解除了这台设备的授权，status 仍是 connected，
+    // 重连时会退回登录流程并再次阻塞。那种情况需要人工介入，把它改回 pending_auth。
+    if (a.status === 'connected') return true
     if (!wanted) return false
     return a.id === wanted || a.display_name.includes(wanted)
   })
@@ -171,9 +174,8 @@ async function connectRegisteredAccounts(): Promise<void> {
 
   for (const account of accounts) {
     try {
-      const first = !hasSession(account.id)
       console.log(
-        first
+        account.status !== 'connected'
           ? `[server] 正在首次登录「${account.display_name}」，按提示输入手机号与验证码…`
           : `[server] 正在恢复「${account.display_name}」的已有会话…`,
       )
