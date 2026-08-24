@@ -63,6 +63,10 @@ export async function buildServer(
       cb(null, ok)
     },
     credentials: true,
+    // 必须显式列出：@fastify/cors v11 的 methods 默认值是 'GET,HEAD,POST'，
+    // 不含 PATCH/PUT/DELETE。漏了会让浏览器在预检阶段就拦掉请求，
+    // 而 curl 因为不发 Origin 头、不触发预检，测起来一切正常——假信号。
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   })
 
   await app.register(websocket)
