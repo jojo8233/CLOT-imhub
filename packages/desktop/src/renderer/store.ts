@@ -13,6 +13,7 @@ interface State {
   applyTranslation(messageId: string, text: string): void
   appendMessage(m: MessageRow): void
   setAccountStatus(accountId: string, status: string): void
+  updateConversationTargetLang(id: string, targetLang: string | null): void
 }
 
 export const useStore = create<State>((set) => ({
@@ -33,5 +34,9 @@ export const useStore = create<State>((set) => ({
   ),
   setAccountStatus: (accountId, status) => set((s) => ({
     accounts: s.accounts.map((a) => a.id === accountId ? { ...a, status } : a),
+  })),
+  // PATCH 成功后同步进列表缓存，这样切走再切回来锁定状态还在，不用重新拉一次会话列表。
+  updateConversationTargetLang: (id, targetLang) => set((s) => ({
+    conversations: s.conversations.map((c) => c.id === id ? { ...c, target_lang: targetLang } : c),
   })),
 }))

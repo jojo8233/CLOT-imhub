@@ -45,6 +45,12 @@ export interface ConversationRow {
   contact_display_name: string | null
   contact_external_id: string
   last_message_at: string | null
+  /**
+   * null = 自动跟随客户语言，有值 = 员工锁定。
+   * 注：设计文档写的是 GET /api/conversations 不返回这个字段，但实测服务端已经在返回——
+   * 直接用它做语言选择器的初始值，比只靠 translate-preview 响应回填更可靠。
+   */
+  target_lang: string | null
 }
 
 export interface MessageRow {
@@ -66,11 +72,31 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
-  send: (conversationId: string, body: string, targetLang: string) =>
-    request<{ sentText: string; provider: string }>('/api/messages/send', {
+  /**
+   * 只翻译，不发送。用来在发送前生成可编辑的预览 + 回译对照。
+   * backTranslated 为 null 表示回译服务当次失败，translated/targetLang/provider 仍然可用。
+   */
+  translatePreview: (conversationId: string, text: string) =>
+    request<{ translated: string; backTranslated: string | null; targetLang: string; provider: string }>(
+      '/api/messages/translate-preview',
+      { method: 'POST', body: JSON.stringify({ conversationId, text }) },
+    ),
+  /**
+   * preTranslated: true 时 body 必须是员工在预览框里最终确认过的文本，服务端原样发出、
+   * 不再翻译一次——重译结果可能和预览不一致，那样"先看后发"就没意义了。
+   * targetLang 在 preTranslated: true 时服务端会忽略，只在 preTranslated: false（旧行为）时使用。
+   */
+  send: (conversationId: string, body: string, opts: { preTranslated: boolean; targetLang?: string }) =>
+    request<{ platformMessageId: string; sentText: string; provider?: string }>('/api/messages/send', {
       method: 'POST',
-      body: JSON.stringify({ conversationId, body, targetLang }),
+      body: JSON.stringify({ conversationId, body, preTranslated: opts.preTranslated, targetLang: opts.targetLang }),
     }),
+  /** targetLang 为 null 表示解锁、恢复自动跟随客户语言。 */
+  updateTargetLang: (conversationId: string, targetLang: string | null) =>
+    request<{ id: string; targetLang: string | null }>(
+      `/api/conversations/${conversationId}/target-lang`,
+      { method: 'PATCH', body: JSON.stringify({ targetLang }) },
+    ),
   /**
    * 鉴权走首帧消息，不走 query string —— token 有 12 小时有效期，
    * 出现在 URL 里会被反向代理/服务端访问日志记下来，query string 鉴权就是把这个
