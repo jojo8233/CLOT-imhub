@@ -57,6 +57,21 @@ export class NetworkError extends Error {
 let token: string | null = null
 let currentUser: SessionUser | null = null
 
+/**
+ * 仅供把登录态注入**我们自己构建的补丁版客户端**使用。
+ *
+ * token 刻意只活在模块变量里：不落 localStorage、不打 console、不进 URL。
+ * 这两个导出是唯一的例外出口，调用点必须是 im-hub 自己的代码。
+ * 绝不能把返回值交给任何第三方页面——那等于把 12 小时的可用凭证送出去。
+ */
+export function getSessionToken(): string | null {
+  return token
+}
+
+export function getServerUrl(): string {
+  return BASE
+}
+
 export function hasToken(): boolean {
   return token !== null
 }

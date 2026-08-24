@@ -13,6 +13,7 @@ import { authRoutes } from './routes/auth.js'
 import { accountRoutes } from './routes/accounts.js'
 import { conversationRoutes } from './routes/conversations.js'
 import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
+import { translateRoutes } from './routes/translate.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -89,6 +90,7 @@ export async function buildServer(
   await app.register(async (instance) => { await accountRoutes(instance, deps) })
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
+  await app.register(async (instance) => { await translateRoutes(instance, deps) })
 
   /**
    * 鉴权走首帧消息，不走 query string —— URL 里的 token 会落进反向代理和服务端

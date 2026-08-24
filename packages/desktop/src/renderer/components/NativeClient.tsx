@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { getServerUrl, getSessionToken } from '../api/client.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { EmptyHint } from './ui.js'
@@ -18,9 +19,19 @@ import { EmptyHint } from './ui.js'
  * 只暴露最小接口。
  */
 
-/** 各平台的网页版地址。没有网页版的平台不在这里，只能走别的路。 */
+/**
+ * 各平台加载哪份客户端。
+ *
+ * 指向**我们自己构建的补丁版**，不是官方地址：补丁版里翻译改走 im-hub 的
+ * 网关，并且去掉了 Telegram 的 Premium 门禁。扒官方页面的 DOM 是行不通的
+ * ——那份代码混淆过，选择器一改版就失效，而且失效时不报错、只是悄悄不翻译。
+ *
+ * 开发期指向 telegram-tt 的 Vite 服务器；打包后会换成随应用分发的静态产物。
+ */
 const WEB_CLIENT: Record<string, string> = {
-  telegram: 'https://web.telegram.org/k/',
+  // 开发期指向 telegram-tt 的 Vite 服务器（代码/telegram-tt，npm run dev）。
+  // 打包时这里要换成随应用分发的静态产物地址，见 native-client-pivot 设计文档。
+  telegram: 'http://localhost:1234/',
 }
 
 export function nativeClientSupported(platform: string): boolean {
@@ -80,13 +91,28 @@ function WebviewPane({ accountId, src, visible }: {
   visible: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
+  // 放 ref 里：dom-ready 回调只绑定一次，不该因为 token 变化重新绑监听
+  const tokenRef = useRef(getSessionToken() ?? '')
+  const serverUrlRef = useRef(getServerUrl())
+  tokenRef.current = getSessionToken() ?? ''
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [detail, setDetail] = useState<string>('')
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const onReady = (): void => { setState('ready') }
+    const onReady = (): void => {
+      setState('ready')
+      // 把服务端地址与登录态注入补丁版客户端，它据此调 /api/translate/batch。
+      //
+      // 用 executeJavaScript 而不是 <webview preload>：preload 要单独走一遍
+      // 构建配置，而这里注入的时机（dom-ready）远早于用户点开会话触发翻译，
+      // 够用。将来要在页面脚本之前注入别的东西时再改成 preload。
+      const cfg = JSON.stringify({ serverUrl: serverUrlRef.current, token: tokenRef.current })
+      void (el as unknown as { executeJavaScript(code: string): Promise<unknown> })
+        .executeJavaScript(`window.__IM_HUB__ = ${cfg}`)
+        .catch((err: unknown) => { console.error('[native] 注入 im-hub 配置失败', err) })
+    }
     const onFail = (e: Event): void => {
       const err = e as Event & { errorCode?: number; errorDescription?: string; isMainFrame?: boolean }
       // 子资源加载失败很常见（广告、统计、被墙的 CDN），只有主框架失败才算真挂了
