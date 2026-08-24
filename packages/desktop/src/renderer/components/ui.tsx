@@ -31,7 +31,7 @@ export function Avatar({ name, size = 36, seed, tone = 'light' }: {
       width: size, height: size, borderRadius: '50%', flexShrink: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: tone === 'dark' ? theme.color.ink : `hsl(${h} 44% 93%)`,
-      color: tone === 'dark' ? '#fff' : `hsl(${h} 34% 30%)`,
+      color: tone === 'dark' ? theme.color.onInk : `hsl(${h} 34% 30%)`,
       fontSize: Math.round(size * 0.42), fontWeight: theme.font.weight.bold,
     }}>
       {initial(name)}
@@ -47,7 +47,7 @@ export function PlatformIcon({ platform, size = 18 }: { platform: string; size?:
       title={PLATFORM_LABEL[platform] ?? platform}
       style={{
         width: size, height: size, borderRadius: Math.round(size * 0.32), flexShrink: 0,
-        background: color, color: '#fff', fontSize: Math.round(size * 0.5), fontWeight: theme.font.weight.heavy,
+        background: color, color: theme.color.onInk, fontSize: Math.round(size * 0.5), fontWeight: theme.font.weight.heavy,
         display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
       }}
     >

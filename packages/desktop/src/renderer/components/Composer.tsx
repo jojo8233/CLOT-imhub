@@ -221,26 +221,28 @@ export function Composer() {
   const displayLang = lockedLang ?? resolvedLang
   const hasPreview = preview.trim() !== ''
 
+  const sendDisabled = !conversationId || !hasPreview || sending || sendLocked
+
   const inputStyle = {
     width: '100%', height: 58, resize: 'none' as const, padding: '10px 14px',
     fontSize: theme.font.size.md, lineHeight: 1.6, fontFamily: theme.font.sans,
     border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.lg,
-    background: theme.color.surface, color: theme.color.text,
+    background: theme.color.white, color: theme.color.text,
   }
 
   return (
     <div style={{
-      flexShrink: 0, padding: theme.space.md, background: theme.color.surface,
+      flexShrink: 0, padding: theme.space.md, background: theme.color.chat,
     }}>
       <div style={{
-        background: theme.color.bg, borderRadius: theme.radius.xl,
+        background: theme.color.card, borderRadius: theme.radius.xl,
         border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.md,
         padding: theme.space.lg,
       }}>
         {justSent && (
           <div style={{
             fontSize: theme.font.size.xs, color: theme.color.onLime,
-            background: theme.color.lime, borderRadius: theme.radius.pill,
+            background: theme.color.limeSoft, borderRadius: theme.radius.pill,
             padding: '5px 9px', marginBottom: theme.space.sm,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -305,7 +307,7 @@ export function Composer() {
               {hovering && (
                 <div className="ih-fade" style={{
                   position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 8,
-                  background: theme.color.inkDeep, color: '#fff',
+                  background: theme.color.inkDeep, color: theme.color.onInk,
                   padding: `${theme.space.md}px ${theme.space.lg}px`, borderRadius: theme.radius.xl,
                   fontSize: theme.font.size.sm, lineHeight: 1.75, zIndex: 20,
                   boxShadow: theme.shadow.lg,
@@ -377,7 +379,7 @@ export function Composer() {
             style={{
               fontSize: theme.font.size.xs, padding: '5px 8px', fontFamily: theme.font.sans,
               border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.pill,
-              background: theme.color.bg, color: theme.color.text,
+              background: theme.color.white, color: theme.color.text,
             }}
           >
             {!displayLang && <option value="" disabled>自动</option>}
@@ -391,7 +393,7 @@ export function Composer() {
             style={{
               fontSize: theme.font.size.xs, padding: '5px 12px', borderRadius: theme.radius.pill,
               border: `1px solid ${lockedLang != null ? 'transparent' : theme.color.border}`,
-              background: lockedLang != null ? theme.color.lime : theme.color.bg,
+              background: lockedLang != null ? theme.color.lime : theme.color.white,
               color: lockedLang != null ? theme.color.onLime : theme.color.textMuted,
               fontWeight: theme.font.weight.heavy, whiteSpace: 'nowrap', flexShrink: 0,
             }}
@@ -407,9 +409,9 @@ export function Composer() {
             disabled={!conversationId || zh.trim() === '' || translating}
             className="ih-btn"
             style={{
-              padding: '9px 18px', borderRadius: theme.radius.pill,
-              border: `1px solid ${theme.color.borderStrong}`, background: theme.color.bg,
-              color: theme.color.text, fontSize: theme.font.size.base,
+              padding: '9px 16px', borderRadius: theme.radius.pill,
+              border: '1px solid transparent', background: 'transparent',
+              color: theme.color.textMuted, fontSize: theme.font.size.base,
               fontWeight: theme.font.weight.bold, whiteSpace: 'nowrap', flexShrink: 0,
             }}
           >
@@ -417,12 +419,16 @@ export function Composer() {
           </button>
           <button
             onClick={() => void handleSend()}
-            disabled={!conversationId || !hasPreview || sending || sendLocked}
+            disabled={sendDisabled}
             className="ih-btn"
             title={sendLocked ? '刚翻译完，先看一眼译文' : undefined}
             style={{
               padding: '9px 24px', borderRadius: theme.radius.pill, border: 'none',
-              background: theme.color.ink, color: theme.color.lime,
+              // 不可用时不要只是把黑键调半透明——浅底上会糊成一坨脏墨色。
+              // 直接换成浅灰底弱文字：没译文时输入区里压根不该有一块黑。
+              background: sendDisabled ? theme.color.surface : theme.color.ink,
+              color: sendDisabled ? theme.color.textFaint : theme.color.lime,
+              opacity: 1,
               fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
               whiteSpace: 'nowrap', flexShrink: 0,
             }}

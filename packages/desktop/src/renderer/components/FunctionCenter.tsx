@@ -74,7 +74,7 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
           title={open ? '收起功能中心' : '展开功能中心'}
           style={{
             width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
-            border: `1px solid ${theme.color.border}`, background: theme.color.bg,
+            border: `1px solid ${theme.color.border}`, background: theme.color.card,
             color: theme.color.text, fontSize: 13,
           }}
         >
@@ -100,13 +100,13 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
                 border: '1px solid transparent',
                 borderRadius: theme.radius.lg,
                 background: active ? theme.color.ink : 'transparent',
-                opacity: wired ? 1 : .5,
+                opacity: wired ? 1 : .78,
               }}
             >
               <span style={{
                 width: 32, height: 32, flexShrink: 0, borderRadius: theme.radius.md,
                 // 选中行是黑底，图标块反过来用绿；未接入的退成灰
-                background: active ? theme.color.lime : wired ? theme.color.surface : theme.color.surfaceHover,
+                background: active ? theme.color.lime : wired ? theme.color.card : theme.color.surface,
                 color: active ? theme.color.onLime : wired ? theme.color.text : theme.color.textFaint,
                 fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -118,14 +118,14 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
                   <span style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
-                    color: active ? '#fff' : theme.color.text,
+                    color: active ? theme.color.onInk : theme.color.text,
                   }}>
                     {e.title}
                     {!wired && <NotWired what={e.title} />}
                   </span>
                   <span style={{
                     display: 'block', fontSize: theme.font.size.xs,
-                    color: active ? theme.color.onInk : theme.color.textMuted,
+                    color: active ? theme.color.onInkMuted : theme.color.textMuted,
                     marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
                     {e.desc}

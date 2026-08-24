@@ -66,7 +66,7 @@ export function ConversationList() {
             style={{
               width: '100%', padding: '9px 12px 9px 28px', fontSize: theme.font.size.base,
               border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.pill,
-              background: theme.color.surface, color: theme.color.text,
+              background: theme.color.white, color: theme.color.text,
             }}
           />
         </div>
@@ -80,7 +80,7 @@ export function ConversationList() {
                 padding: '5px 14px', borderRadius: theme.radius.pill,
                 border: `1px solid ${filter === key ? 'transparent' : theme.color.border}`,
                 background: filter === key ? theme.color.ink : 'transparent',
-                color: filter === key ? '#fff' : theme.color.textMuted,
+                color: filter === key ? theme.color.onInk : theme.color.textMuted,
                 fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
               }}
             >
@@ -133,7 +133,7 @@ export function ConversationList() {
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 6, marginTop: 2,
                   fontSize: theme.font.size.xs,
-                  color: on ? theme.color.onLime : theme.color.textMuted, opacity: on ? .75 : 1,
+                  color: on ? theme.color.onLime : theme.color.textMuted,
                 }}>
                   <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.contact_external_id}
@@ -141,7 +141,7 @@ export function ConversationList() {
                   {c.target_lang && (
                     <Chip
                       tone={on ? 'neutral' : 'accent'}
-                      style={{ flexShrink: 0, background: on ? theme.color.bg : undefined }}
+                      style={{ flexShrink: 0, background: on ? theme.color.white : undefined }}
                     >
                       🔒 {c.target_lang}
                     </Chip>

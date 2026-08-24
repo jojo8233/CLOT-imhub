@@ -46,7 +46,7 @@ export function LoginPage({ onLoginSuccess }: Props) {
         onSubmit={(e) => void handleSubmit(e)}
         style={{
           width: 380,
-          background: theme.color.bg,
+          background: theme.color.card,
           border: 'none',
           borderRadius: theme.radius.xxl,
           boxShadow: theme.shadow.app,
@@ -95,7 +95,7 @@ export function LoginPage({ onLoginSuccess }: Props) {
             boxSizing: 'border-box',
             marginBottom: theme.space.md,
             color: theme.color.text,
-            background: theme.color.bg,
+            background: theme.color.white,
           }}
         />
 
@@ -122,7 +122,7 @@ export function LoginPage({ onLoginSuccess }: Props) {
             boxSizing: 'border-box',
             marginBottom: theme.space.lg,
             color: theme.color.text,
-            background: theme.color.bg,
+            background: theme.color.white,
           }}
         />
 

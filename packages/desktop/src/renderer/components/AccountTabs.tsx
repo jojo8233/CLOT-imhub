@@ -131,8 +131,8 @@ function AccountTab({ label, platform, status, active, onClick, badge }: {
         flexShrink: 0, height: 38, display: 'flex', alignItems: 'center', gap: theme.space.sm,
         padding: `0 ${theme.space.md}px`, borderRadius: theme.radius.pill,
         border: `1px solid ${active ? 'transparent' : theme.color.border}`,
-        background: active ? theme.color.ink : theme.color.surface,
-        color: active ? '#fff' : theme.color.text,
+        background: active ? theme.color.ink : theme.color.card,
+        color: active ? theme.color.onInk : theme.color.text,
         fontSize: theme.font.size.base,
         fontWeight: active ? theme.font.weight.heavy : theme.font.weight.medium,
       }}
@@ -153,7 +153,7 @@ function AccountTab({ label, platform, status, active, onClick, badge }: {
       {badge !== undefined && badge > 0 && (
         <span style={{
           minWidth: 18, height: 18, padding: '0 5px', borderRadius: theme.radius.pill,
-          background: active ? theme.color.lime : theme.color.bg,
+          background: active ? theme.color.lime : theme.color.white,
           color: active ? theme.color.onLime : theme.color.textMuted,
           fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
           display: 'flex', alignItems: 'center', justifyContent: 'center',

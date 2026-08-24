@@ -16,7 +16,7 @@ export function ChatPanel() {
 
   return (
     <div style={{
-      flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: theme.color.surface,
+      flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: theme.color.chat,
     }}>
       <div style={{
         height: 68, flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.md,

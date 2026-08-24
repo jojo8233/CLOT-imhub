@@ -24,7 +24,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(13,13,13,.45)',
+        position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(41,43,41,.38)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
@@ -32,7 +32,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
         className="ih-fade"
         onClick={e => e.stopPropagation()}
         style={{
-          width: 620, maxWidth: '90vw', background: theme.color.bg,
+          width: 620, maxWidth: '90vw', background: theme.color.card,
           borderRadius: theme.radius.xxl, boxShadow: theme.shadow.lg, overflow: 'hidden',
         }}
       >
@@ -51,7 +51,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
             onClick={onClose}
             style={{
               width: 34, height: 34, borderRadius: '50%',
-              border: `1px solid ${theme.color.border}`, background: theme.color.bg,
+              border: `1px solid ${theme.color.border}`, background: theme.color.white,
               color: theme.color.textMuted, fontSize: 15,
             }}
           >
@@ -72,7 +72,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
                 style={{
                   textAlign: 'left', padding: theme.space.md, borderRadius: theme.radius.lg,
                   border: `1.5px solid ${on ? theme.color.limeDeep : theme.color.border}`,
-                  background: on ? theme.color.limeSoft : theme.color.bg,
+                  background: on ? theme.color.limeSoft : theme.color.white,
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: theme.space.sm, marginBottom: 6 }}>
@@ -102,9 +102,9 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
           <div style={{ fontWeight: 600, color: theme.color.text, marginBottom: 4 }}>
             为什么现在还创建不了
           </div>
-          服务端目前只有 <code style={{ background: theme.color.bg, padding: '1px 5px', borderRadius: 4 }}>GET /api/accounts</code>，
+          服务端目前只有 <code style={{ background: theme.color.white, padding: '1px 5px', borderRadius: 4 }}>GET /api/accounts</code>，
           账号来自 seed。要在这里创建，还缺三样：新建账号的接口、把扫码链接推到前端的通道
-          （适配器里的 <code style={{ background: theme.color.bg, padding: '1px 5px', borderRadius: 4 }}>onAuthChallenge</code> 已经留好）、
+          （适配器里的 <code style={{ background: theme.color.white, padding: '1px 5px', borderRadius: 4 }}>onAuthChallenge</code> 已经留好）、
           以及各平台自己的登录实现。
         </div>
 
@@ -117,7 +117,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
             className="ih-btn"
             style={{
               padding: '10px 22px', borderRadius: theme.radius.pill,
-              border: `1px solid ${theme.color.borderStrong}`, background: theme.color.bg,
+              border: `1px solid ${theme.color.borderStrong}`, background: theme.color.white,
               fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold, color: theme.color.text,
             }}
           >

@@ -27,7 +27,7 @@ export function MessageList() {
     <div
       ref={scrollRef}
       className="ih-scroll"
-      style={{ flex: 1, padding: `${theme.space.lg}px ${theme.space.xl}px`, background: theme.color.surface }}
+      style={{ flex: 1, padding: `${theme.space.lg}px ${theme.space.xl}px`, background: theme.color.chat }}
     >
       {messages.map(m => {
         const out = m.direction === 'out'
@@ -44,8 +44,8 @@ export function MessageList() {
                 : `${theme.radius.sm}px ${theme.radius.xl}px ${theme.radius.xl}px ${theme.radius.xl}px`,
               // 自己发的用深靛蓝实心，客户的用白底描边——一眼分清方向，
               // 不用去读左右对齐（窄窗口里对齐差别会变得不明显）
-              background: out ? theme.color.ink : theme.color.bg,
-              color: out ? '#fff' : theme.color.text,
+              background: out ? theme.color.inkSoft : theme.color.white,
+              color: out ? theme.color.onInk : theme.color.text,
               border: out ? 'none' : `1px solid ${theme.color.border}`,
               boxShadow: theme.shadow.sm,
             }}>
@@ -62,7 +62,7 @@ export function MessageList() {
                     marginTop: theme.space.sm, paddingTop: theme.space.sm,
                     borderTop: `1px solid ${out ? theme.color.onInkLine : theme.color.border}`,
                     fontSize: theme.font.size.base, lineHeight: 1.6,
-                    color: out ? theme.color.onInk : theme.color.textMuted,
+                    color: out ? theme.color.onInkMuted : theme.color.textMuted,
                     wordBreak: 'break-word',
                   }}>
                     {m.translated_text}

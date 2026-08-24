@@ -20,7 +20,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
   const online = accounts.filter(a => a.status === 'connected').length
 
   return (
-    <div className="ih-scroll" style={{ flex: 1, minWidth: 0, background: theme.color.surface }}>
+    <div className="ih-scroll" style={{ flex: 1, minWidth: 0, background: theme.color.chat }}>
       <div style={{
         padding: `${theme.space.xl}px ${theme.space.xl}px ${theme.space.lg}px`,
         display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
@@ -61,7 +61,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
               ?? theme.color.status.pending_auth
             return (
               <div key={a.id} style={{
-                background: theme.color.bg, borderRadius: theme.radius.xl,
+                background: theme.color.card, borderRadius: theme.radius.xl,
                 border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.sm, overflow: 'hidden',
               }}>
                 <div style={{ height: 5, background: online2(a.status) ? theme.color.lime : statusColor }} />
@@ -114,7 +114,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                     style={{
                       marginTop: theme.space.md, width: '100%', padding: '10px 0',
                       borderRadius: theme.radius.pill, border: `1px solid ${theme.color.borderStrong}`,
-                      background: theme.color.bg, color: theme.color.text,
+                      background: theme.color.surface, color: theme.color.text,
                       fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
                     }}
                   >

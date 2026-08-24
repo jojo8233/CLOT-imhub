@@ -60,7 +60,7 @@ export function CustomerPanel() {
           {/* 身份 */}
           <div style={{
             margin: theme.space.md, padding: `${theme.space.xl}px ${theme.space.lg}px`,
-            textAlign: 'center', background: theme.color.lime, borderRadius: theme.radius.xl,
+            textAlign: 'center', background: theme.color.limeSoft, borderRadius: theme.radius.xl,
           }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: theme.space.md }}>
               <Avatar
@@ -77,19 +77,19 @@ export function CustomerPanel() {
               {conv.contact_display_name ?? conv.contact_external_id}
             </div>
             <div className="ih-selectable" style={{
-              fontSize: theme.font.size.xs, color: theme.color.onLime, opacity: .6,
+              fontSize: theme.font.size.xs, color: theme.color.textMuted,
               marginTop: 3, wordBreak: 'break-all',
             }}>
               {conv.contact_external_id}
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: theme.space.md }}>
               {account && (
-                <Chip style={{ background: theme.color.bg, color: theme.color.text }}>
+                <Chip style={{ background: theme.color.white, color: theme.color.text }}>
                   {PLATFORM_LABEL[account.platform] ?? account.platform}
                 </Chip>
               )}
               {account && (
-                <Chip style={{ background: theme.color.bg, color: theme.color.text }}>
+                <Chip style={{ background: theme.color.white, color: theme.color.text }}>
                   {account.display_name}
                 </Chip>
               )}
@@ -145,7 +145,7 @@ export function CustomerPanel() {
           }}>
             <div style={{ fontWeight: 600, color: theme.color.text, marginBottom: 4 }}>档案还差什么</div>
             服务端目前没有存档案的表。要让这几栏活起来，需要：一张
-            <code style={{ background: theme.color.bg, padding: '1px 5px', borderRadius: 4, margin: '0 3px' }}>
+            <code style={{ background: theme.color.white, padding: '1px 5px', borderRadius: 4, margin: '0 3px' }}>
               customer_profiles
             </code>
             表（跟会话一对一）、一个读写接口（手动补充要能存），以及从聊天记录里提取摘要的那一步。
@@ -173,7 +173,7 @@ export function CustomerPanel() {
               className="ih-btn"
               style={{
                 flex: 1, padding: '10px 0', borderRadius: theme.radius.pill,
-                border: `1px solid ${theme.color.borderStrong}`, background: theme.color.bg,
+                border: `1px solid ${theme.color.borderStrong}`, background: theme.color.card,
                 color: theme.color.text, fontSize: theme.font.size.base,
                 fontWeight: theme.font.weight.bold,
               }}
@@ -192,7 +192,7 @@ function Stat({ label, value, dark = false }: { label: string; value: string; da
   return (
     <div style={{
       padding: `${theme.space.md}px ${theme.space.md}px`, borderRadius: theme.radius.lg,
-      background: dark ? theme.color.ink : theme.color.surface,
+      background: dark ? theme.color.inkSoft : theme.color.card,
     }}>
       <div style={{
         fontSize: theme.font.size.xs,
@@ -203,7 +203,7 @@ function Stat({ label, value, dark = false }: { label: string; value: string; da
       <div style={{
         fontSize: dark ? theme.font.size.xl : theme.font.size.md,
         fontWeight: theme.font.weight.heavy, letterSpacing: -.5, marginTop: 2,
-        color: dark ? '#fff' : theme.color.text,
+        color: dark ? theme.color.onInk : theme.color.text,
       }}>
         {value}
       </div>
