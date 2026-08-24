@@ -56,6 +56,12 @@ function createWindow(): void {
       // sandbox 默认也是 true——两者叠加会让 preload 静默失效、window.imHub 为
       // undefined、渲染进程白屏且无任何提示。真正的隔离由上面两项保证。
       sandbox: false,
+      // 套壳原生客户端需要 <webview>：每个平台账号一个独立 partition 的
+      // webview，登录态彼此隔离，这就是"多开"的实现方式。
+      //
+      // webview 里加载的是第三方站点，必须当作不可信内容：它自己的 preload
+      // 只暴露翻译相关的最小接口，绝不把 window.imHub 或 node 能力带进去。
+      webviewTag: true,
     },
   })
 

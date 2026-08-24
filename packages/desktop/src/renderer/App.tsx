@@ -14,6 +14,7 @@ import { AccountTabs } from './components/AccountTabs.js'
 import { AccountsView } from './components/AccountsView.js'
 import { AddAccountDialog } from './components/AddAccountDialog.js'
 import { ChatWorkspace } from './components/ChatWorkspace.js'
+import { NativeClient } from './components/NativeClient.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import { theme } from './theme.js'
@@ -218,6 +219,8 @@ export function App() {
 
           {view === 'chat' ? (
             <ChatWorkspace />
+          ) : view === 'native' ? (
+            <NativeClient />
           ) : (
             <AccountsView onOpenChat={() => setView('chat')} onAddAccount={() => setAddOpen(true)} />
           )}
