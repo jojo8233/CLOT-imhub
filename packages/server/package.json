@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx src/db/seed.ts",
-    "preflight": "tsx src/db/preflight.ts"
+    "preflight": "tsx src/db/preflight.ts",
+    "reset-account": "tsx src/db/reset-account.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.33.1",
