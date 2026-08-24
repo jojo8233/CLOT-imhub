@@ -59,28 +59,40 @@ export function CustomerPanel() {
         <div className="ih-scroll" style={{ flex: 1 }}>
           {/* 身份 */}
           <div style={{
-            padding: `${theme.space.xl}px ${theme.space.lg}px ${theme.space.lg}px`,
-            textAlign: 'center', borderBottom: `1px solid ${theme.color.border}`,
+            margin: theme.space.md, padding: `${theme.space.xl}px ${theme.space.lg}px`,
+            textAlign: 'center', background: theme.color.lime, borderRadius: theme.radius.xl,
           }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: theme.space.md }}>
               <Avatar
                 name={conv.contact_display_name ?? conv.contact_external_id}
                 seed={conv.contact_external_id}
-                size={66}
+                size={68}
+                tone="dark"
               />
             </div>
-            <div style={{ fontSize: theme.font.size.lg, fontWeight: 700, wordBreak: 'break-word' }}>
+            <div style={{
+              fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy,
+              letterSpacing: -.3, color: theme.color.onLime, wordBreak: 'break-word',
+            }}>
               {conv.contact_display_name ?? conv.contact_external_id}
             </div>
             <div className="ih-selectable" style={{
-              fontSize: theme.font.size.xs, color: theme.color.textFaint,
+              fontSize: theme.font.size.xs, color: theme.color.onLime, opacity: .6,
               marginTop: 3, wordBreak: 'break-all',
             }}>
               {conv.contact_external_id}
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: theme.space.md }}>
-              {account && <Chip>{PLATFORM_LABEL[account.platform] ?? account.platform}</Chip>}
-              {account && <Chip>{account.display_name}</Chip>}
+              {account && (
+                <Chip style={{ background: theme.color.bg, color: theme.color.text }}>
+                  {PLATFORM_LABEL[account.platform] ?? account.platform}
+                </Chip>
+              )}
+              {account && (
+                <Chip style={{ background: theme.color.bg, color: theme.color.text }}>
+                  {account.display_name}
+                </Chip>
+              )}
             </div>
           </div>
 
@@ -90,8 +102,8 @@ export function CustomerPanel() {
             display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space.sm,
             padding: `0 ${theme.space.lg}px ${theme.space.md}px`,
           }}>
-            <Stat label="客户发来" value={String(stats.in)} />
-            <Stat label="我方发出" value={String(stats.out)} />
+            <Stat label="客户发来" value={String(stats.in)} dark />
+            <Stat label="我方发出" value={String(stats.out)} dark />
             <Stat label="最近活跃" value={relativeTime(conv.last_message_at) || '—'} />
             <Stat label="回复语言" value={conv.target_lang ?? '自动跟随'} />
           </div>
@@ -112,7 +124,8 @@ export function CustomerPanel() {
                 borderBottom: `1px solid ${theme.color.border}`,
               }}>
                 <div style={{
-                  fontSize: theme.font.size.xs, color: theme.color.textMuted, marginBottom: 2,
+                  fontSize: theme.font.size.xs, color: theme.color.textMuted,
+                  marginBottom: 2, fontWeight: theme.font.weight.medium,
                 }}>
                   {f.label}
                 </div>
@@ -147,9 +160,9 @@ export function CustomerPanel() {
               title="等 customer_profiles 表和读写接口"
               className="ih-btn"
               style={{
-                flex: 1, padding: '9px 0', borderRadius: theme.radius.md, border: 'none',
-                background: theme.color.accent, color: '#fff',
-                fontSize: theme.font.size.base, fontWeight: 600,
+                flex: 1, padding: '10px 0', borderRadius: theme.radius.pill, border: 'none',
+                background: theme.color.ink, color: theme.color.lime,
+                fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
               }}
             >
               手动补充
@@ -159,9 +172,10 @@ export function CustomerPanel() {
               title="等摘要提取接入"
               className="ih-btn"
               style={{
-                flex: 1, padding: '9px 0', borderRadius: theme.radius.md,
-                border: `1px solid ${theme.color.border}`, background: theme.color.bg,
-                color: theme.color.text, fontSize: theme.font.size.base, fontWeight: 600,
+                flex: 1, padding: '10px 0', borderRadius: theme.radius.pill,
+                border: `1px solid ${theme.color.borderStrong}`, background: theme.color.bg,
+                color: theme.color.text, fontSize: theme.font.size.base,
+                fontWeight: theme.font.weight.bold,
               }}
             >
               重新提取
@@ -173,13 +187,26 @@ export function CustomerPanel() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+/** dark 用在消息计数上：数字是这块里最该被一眼看到的东西 */
+function Stat({ label, value, dark = false }: { label: string; value: string; dark?: boolean }) {
   return (
     <div style={{
-      padding: theme.space.sm, borderRadius: theme.radius.md, background: theme.color.surface,
+      padding: `${theme.space.md}px ${theme.space.md}px`, borderRadius: theme.radius.lg,
+      background: dark ? theme.color.ink : theme.color.surface,
     }}>
-      <div style={{ fontSize: theme.font.size.xs, color: theme.color.textMuted }}>{label}</div>
-      <div style={{ fontSize: theme.font.size.md, fontWeight: 700, marginTop: 2 }}>{value}</div>
+      <div style={{
+        fontSize: theme.font.size.xs,
+        color: dark ? theme.color.onInkFaint : theme.color.textMuted,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: dark ? theme.font.size.xl : theme.font.size.md,
+        fontWeight: theme.font.weight.heavy, letterSpacing: -.5, marginTop: 2,
+        color: dark ? '#fff' : theme.color.text,
+      }}>
+        {value}
+      </div>
     </div>
   )
 }

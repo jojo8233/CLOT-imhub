@@ -26,7 +26,7 @@ export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) 
 
   return (
       <div style={{
-        height: 60, flexShrink: 0, display: 'flex', alignItems: 'center',
+        height: 68, flexShrink: 0, display: 'flex', alignItems: 'center',
         borderBottom: `1px solid ${theme.color.border}`, background: theme.color.bg,
       }}>
         {/* 品牌块。参考稿里它自成一格，右侧有一道竖线把它和标签页分开 */}
@@ -36,15 +36,15 @@ export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) 
           borderRight: `1px solid ${theme.color.border}`,
         }}>
           <div style={{
-            width: 34, height: 34, borderRadius: theme.radius.md, flexShrink: 0,
-            background: `linear-gradient(135deg, ${theme.color.navy}, ${theme.color.accent})`,
-            color: '#fff', fontSize: 15, fontWeight: 700,
+            width: 36, height: 36, borderRadius: theme.radius.md, flexShrink: 0,
+            background: theme.color.ink, color: theme.color.lime,
+            fontSize: 15, fontWeight: theme.font.weight.heavy,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             IH
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: theme.font.size.md, fontWeight: 700, letterSpacing: .2 }}>im-hub</div>
+            <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>im-hub</div>
             <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>跨境客服工作台</div>
           </div>
         </div>
@@ -76,7 +76,7 @@ export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) 
             onClick={onAddAccount}
             title="添加账号"
             style={{
-              width: 30, height: 30, flexShrink: 0, borderRadius: theme.radius.md,
+              width: 34, height: 34, flexShrink: 0, borderRadius: '50%',
               border: `1px dashed ${theme.color.borderStrong}`, background: 'transparent',
               color: theme.color.textMuted, fontSize: 17, lineHeight: 1,
             }}
@@ -93,7 +93,7 @@ export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) 
           <Avatar name={currentUserName} size={30} />
           <div style={{ maxWidth: 96, overflow: 'hidden' }}>
             <div style={{
-              fontSize: theme.font.size.base, fontWeight: 600,
+              fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
               whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden',
             }}>
               {currentUserName ?? '—'}
@@ -128,12 +128,13 @@ function AccountTab({ label, platform, status, active, onClick, badge }: {
       onClick={onClick}
       title={status ? `${label} · ${STATUS_LABEL[status] ?? status}` : label}
       style={{
-        flexShrink: 0, height: 34, display: 'flex', alignItems: 'center', gap: theme.space.sm,
-        padding: `0 ${theme.space.md}px`, borderRadius: theme.radius.md,
+        flexShrink: 0, height: 38, display: 'flex', alignItems: 'center', gap: theme.space.sm,
+        padding: `0 ${theme.space.md}px`, borderRadius: theme.radius.pill,
         border: `1px solid ${active ? 'transparent' : theme.color.border}`,
-        background: active ? theme.color.navy : theme.color.bg,
+        background: active ? theme.color.ink : theme.color.surface,
         color: active ? '#fff' : theme.color.text,
-        fontSize: theme.font.size.base, fontWeight: active ? 600 : 500,
+        fontSize: theme.font.size.base,
+        fontWeight: active ? theme.font.weight.heavy : theme.font.weight.medium,
       }}
     >
       {platform && (
@@ -152,9 +153,9 @@ function AccountTab({ label, platform, status, active, onClick, badge }: {
       {badge !== undefined && badge > 0 && (
         <span style={{
           minWidth: 18, height: 18, padding: '0 5px', borderRadius: theme.radius.pill,
-          background: active ? 'rgba(255,255,255,.22)' : theme.color.surface,
-          color: active ? '#fff' : theme.color.textMuted,
-          fontSize: theme.font.size.xs, fontWeight: 600,
+          background: active ? theme.color.lime : theme.color.bg,
+          color: active ? theme.color.onLime : theme.color.textMuted,
+          fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           {badge}

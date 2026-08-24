@@ -222,10 +222,10 @@ export function Composer() {
   const hasPreview = preview.trim() !== ''
 
   const inputStyle = {
-    width: '100%', height: 58, resize: 'none' as const, padding: '9px 11px',
+    width: '100%', height: 58, resize: 'none' as const, padding: '10px 14px',
     fontSize: theme.font.size.md, lineHeight: 1.6, fontFamily: theme.font.sans,
-    border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.md,
-    background: theme.color.bg, color: theme.color.text,
+    border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.lg,
+    background: theme.color.surface, color: theme.color.text,
   }
 
   return (
@@ -234,13 +234,13 @@ export function Composer() {
     }}>
       <div style={{
         background: theme.color.bg, borderRadius: theme.radius.xl,
-        border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.sm,
-        padding: theme.space.md,
+        border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.md,
+        padding: theme.space.lg,
       }}>
         {justSent && (
           <div style={{
-            fontSize: theme.font.size.xs, color: theme.color.status.connected,
-            background: '#22b5731a', borderRadius: theme.radius.sm,
+            fontSize: theme.font.size.xs, color: theme.color.onLime,
+            background: theme.color.lime, borderRadius: theme.radius.pill,
             padding: '5px 9px', marginBottom: theme.space.sm,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -284,9 +284,10 @@ export function Composer() {
           <div className="ih-fade" style={{ marginTop: theme.space.md }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5,
-              fontSize: theme.font.size.xs, color: theme.color.accent, fontWeight: 600,
+              fontSize: theme.font.size.xs, color: theme.color.text,
+              fontWeight: theme.font.weight.heavy,
             }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: theme.color.accent }} />
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.color.limeDeep }} />
               译文预览
               <span style={{ color: theme.color.textFaint, fontWeight: 400 }}>
                 可直接改，悬停看原文与回译对照
@@ -304,27 +305,27 @@ export function Composer() {
               {hovering && (
                 <div className="ih-fade" style={{
                   position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 8,
-                  background: theme.color.navyDeep, color: '#fff',
-                  padding: `${theme.space.md}px ${theme.space.lg}px`, borderRadius: theme.radius.lg,
+                  background: theme.color.inkDeep, color: '#fff',
+                  padding: `${theme.space.md}px ${theme.space.lg}px`, borderRadius: theme.radius.xl,
                   fontSize: theme.font.size.sm, lineHeight: 1.75, zIndex: 20,
                   boxShadow: theme.shadow.lg,
                 }}>
                   <div style={{ display: 'flex', gap: theme.space.sm }}>
-                    <span style={{ color: 'rgba(255,255,255,.55)', flexShrink: 0, width: 56 }}>你输入的</span>
+                    <span style={{ color: theme.color.onInkFaint, flexShrink: 0, width: 56 }}>你输入的</span>
                     <span style={{ minWidth: 0 }}>{previewSourceZh}</span>
                   </div>
                   <div style={{
                     display: 'flex', gap: theme.space.sm, marginTop: 6, paddingTop: 6,
-                    borderTop: '1px solid rgba(255,255,255,.14)',
+                    borderTop: `1px solid ${theme.color.onInkLine}`,
                   }}>
-                    <span style={{ color: 'rgba(255,255,255,.55)', flexShrink: 0, width: 56 }}>回译成中文</span>
+                    <span style={{ color: theme.color.onInkFaint, flexShrink: 0, width: 56 }}>回译成中文</span>
                     <span style={{ minWidth: 0 }}>
                       {backTranslating ? '更新中…' : (backTranslated ?? '回译不可用')}
                     </span>
                   </div>
                   <div style={{
-                    marginTop: 8, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,.14)',
-                    color: 'rgba(255,255,255,.5)', fontSize: theme.font.size.xs, lineHeight: 1.6,
+                    marginTop: 8, paddingTop: 6, borderTop: `1px solid ${theme.color.onInkLine}`,
+                    color: theme.color.onInkFaint, fontSize: theme.font.size.xs, lineHeight: 1.6,
                   }}>
                     回译顺不代表翻对了。要比的是关键信息有没有丢：价格、数量、否定词、时间、人名。
                   </div>
@@ -341,7 +342,7 @@ export function Composer() {
                   }
                 }}
                 disabled={sending}
-                style={{ ...inputStyle, borderColor: theme.color.accent, background: theme.color.accentSoft }}
+                style={{ ...inputStyle, borderColor: theme.color.limeDeep, background: theme.color.limeSoft }}
               />
             </div>
 
@@ -360,18 +361,22 @@ export function Composer() {
 
         {/* 底栏：左边语言设置，右边动作。主按钮永远在右下角，位置不随状态跳 */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: theme.space.sm,
+          display: 'flex', alignItems: 'center', gap: theme.space.sm, flexWrap: 'wrap',
           marginTop: theme.space.md, paddingTop: theme.space.md,
           borderTop: `1px solid ${theme.color.border}`,
         }}>
-          <span style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>回复语言</span>
+          <span style={{
+            fontSize: theme.font.size.xs, color: theme.color.textFaint, whiteSpace: 'nowrap',
+          }}>
+            回复语言
+          </span>
           <select
             value={displayLang ?? ''}
             onChange={e => void handleSelectLang(e.target.value)}
             disabled={!conversationId}
             style={{
-              fontSize: theme.font.size.xs, padding: '4px 6px', fontFamily: theme.font.sans,
-              border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.sm,
+              fontSize: theme.font.size.xs, padding: '5px 8px', fontFamily: theme.font.sans,
+              border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.pill,
               background: theme.color.bg, color: theme.color.text,
             }}
           >
@@ -384,26 +389,28 @@ export function Composer() {
             className="ih-btn"
             title={lockedLang != null ? '点击解锁，恢复自动跟随客户语言' : '点击锁定当前语言，不再随客户切换'}
             style={{
-              fontSize: theme.font.size.xs, padding: '4px 10px', borderRadius: theme.radius.pill,
+              fontSize: theme.font.size.xs, padding: '5px 12px', borderRadius: theme.radius.pill,
               border: `1px solid ${lockedLang != null ? 'transparent' : theme.color.border}`,
-              background: lockedLang != null ? theme.color.accentSoft : theme.color.bg,
-              color: lockedLang != null ? theme.color.accent : theme.color.textMuted,
-              fontWeight: 600,
+              background: lockedLang != null ? theme.color.lime : theme.color.bg,
+              color: lockedLang != null ? theme.color.onLime : theme.color.textMuted,
+              fontWeight: theme.font.weight.heavy, whiteSpace: 'nowrap', flexShrink: 0,
             }}
           >
             {lockedLang != null ? '🔒 已锁定' : '🔓 自动'}
           </button>
 
-          <div style={{ flex: 1 }} />
-
+          <div style={{
+            display: 'flex', gap: theme.space.sm, marginLeft: 'auto', flexShrink: 0,
+          }}>
           <button
             onClick={() => void handleTranslate()}
             disabled={!conversationId || zh.trim() === '' || translating}
             className="ih-btn"
             style={{
-              padding: '8px 16px', borderRadius: theme.radius.md,
-              border: `1px solid ${theme.color.border}`, background: theme.color.bg,
-              color: theme.color.text, fontSize: theme.font.size.base, fontWeight: 600,
+              padding: '9px 18px', borderRadius: theme.radius.pill,
+              border: `1px solid ${theme.color.borderStrong}`, background: theme.color.bg,
+              color: theme.color.text, fontSize: theme.font.size.base,
+              fontWeight: theme.font.weight.bold, whiteSpace: 'nowrap', flexShrink: 0,
             }}
           >
             {translating ? '翻译中…' : '翻译'}
@@ -414,13 +421,15 @@ export function Composer() {
             className="ih-btn"
             title={sendLocked ? '刚翻译完，先看一眼译文' : undefined}
             style={{
-              padding: '8px 20px', borderRadius: theme.radius.md, border: 'none',
-              background: theme.color.navy, color: '#fff',
-              fontSize: theme.font.size.base, fontWeight: 600,
+              padding: '9px 24px', borderRadius: theme.radius.pill, border: 'none',
+              background: theme.color.ink, color: theme.color.lime,
+              fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
+              whiteSpace: 'nowrap', flexShrink: 0,
             }}
           >
             {sending ? '发送中…' : sendLocked ? '确认译文中…' : '发送'}
           </button>
+          </div>
         </div>
       </div>
     </div>

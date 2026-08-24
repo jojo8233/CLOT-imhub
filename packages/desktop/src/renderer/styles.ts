@@ -24,8 +24,8 @@ const css = `
 
   input:focus, textarea:focus, select:focus {
     outline: none;
-    border-color: ${t.color.accent} !important;
-    box-shadow: 0 0 0 3px ${t.color.accentSoft};
+    border-color: ${t.color.limeDeep} !important;
+    box-shadow: 0 0 0 3px ${t.color.limeSoft};
   }
 
   /* 细滚动条：默认那条在浅灰卡片上太重，会把视线从内容上拽走 */

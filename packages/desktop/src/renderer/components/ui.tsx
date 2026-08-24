@@ -18,14 +18,21 @@ export function hueOf(seed: string): number {
   return sum % 360
 }
 
-export function Avatar({ name, size = 36, seed }: { name: string | null; size?: number; seed?: string }) {
+export function Avatar({ name, size = 36, seed, tone = 'light' }: {
+  name: string | null
+  size?: number
+  seed?: string
+  /** dark = 黑底白字，放在绿卡片上用；light = 极淡的彩色底 */
+  tone?: 'light' | 'dark'
+}) {
   const h = hueOf(seed ?? name ?? '')
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', flexShrink: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: `hsl(${h} 62% 92%)`, color: `hsl(${h} 55% 34%)`,
-      fontSize: Math.round(size * 0.42), fontWeight: 600,
+      background: tone === 'dark' ? theme.color.ink : `hsl(${h} 44% 93%)`,
+      color: tone === 'dark' ? '#fff' : `hsl(${h} 34% 30%)`,
+      fontSize: Math.round(size * 0.42), fontWeight: theme.font.weight.bold,
     }}>
       {initial(name)}
     </div>
@@ -39,8 +46,8 @@ export function PlatformIcon({ platform, size = 18 }: { platform: string; size?:
     <div
       title={PLATFORM_LABEL[platform] ?? platform}
       style={{
-        width: size, height: size, borderRadius: Math.round(size * 0.3), flexShrink: 0,
-        background: color, color: '#fff', fontSize: Math.round(size * 0.55), fontWeight: 700,
+        width: size, height: size, borderRadius: Math.round(size * 0.32), flexShrink: 0,
+        background: color, color: '#fff', fontSize: Math.round(size * 0.5), fontWeight: theme.font.weight.heavy,
         display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
       }}
     >
@@ -70,7 +77,7 @@ export function Chip({ children, tone = 'neutral', style }: {
 }) {
   const tones = {
     neutral: { bg: theme.color.surface, fg: theme.color.textMuted },
-    accent: { bg: theme.color.accentSoft, fg: theme.color.accent },
+    accent: { bg: theme.color.lime, fg: theme.color.onLime },
     muted: { bg: 'transparent', fg: theme.color.textFaint },
   }[tone]
   return (
@@ -78,7 +85,7 @@ export function Chip({ children, tone = 'neutral', style }: {
       display: 'inline-flex', alignItems: 'center', gap: 4,
       padding: '2px 8px', borderRadius: theme.radius.pill,
       background: tones.bg, color: tones.fg,
-      fontSize: theme.font.size.xs, fontWeight: 500, whiteSpace: 'nowrap',
+      fontSize: theme.font.size.xs, fontWeight: theme.font.weight.medium, whiteSpace: 'nowrap',
       ...style,
     }}>
       {children}
@@ -104,7 +111,10 @@ export function SectionTitle({ children, extra }: { children: ReactNode; extra?:
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: `${theme.space.md}px ${theme.space.lg}px ${theme.space.sm}px`,
     }}>
-      <span style={{ fontSize: theme.font.size.xs, fontWeight: 600, letterSpacing: .6, color: theme.color.textFaint }}>
+      <span style={{
+        fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
+        letterSpacing: .8, color: theme.color.textFaint, textTransform: 'uppercase',
+      }}>
         {children}
       </span>
       {extra}

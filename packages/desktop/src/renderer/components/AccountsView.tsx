@@ -1,11 +1,14 @@
 import { useStore } from '../store.js'
-import { PLATFORM_COLOR, PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
+import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
 
 /**
  * 账号状态总览。管理员要一眼看出哪个号掉线了，所以状态放在卡片最显眼的位置，
  * 断线和降级用色块而不只是小圆点——一排绿点里混一个红点很容易被跳过。
  */
+/** 在线是唯一"一切正常"的状态，只有它配得上柠檬绿；其余一律用各自的告警色 */
+const online2 = (status: string): boolean => status === 'connected'
+
 export function AccountsView({ onOpenChat, onAddAccount }: {
   onOpenChat(): void
   onAddAccount(): void
@@ -23,7 +26,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
         display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
       }}>
         <div>
-          <div style={{ fontSize: theme.font.size.xl, fontWeight: 700 }}>账号状态</div>
+          <div style={{ fontSize: theme.font.size.xl, fontWeight: theme.font.weight.heavy, letterSpacing: -.6 }}>账号状态</div>
           <div style={{ fontSize: theme.font.size.sm, color: theme.color.textMuted, marginTop: 3 }}>
             {accounts.length} 个账号，{online} 个在线
           </div>
@@ -32,9 +35,9 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
           onClick={onAddAccount}
           className="ih-btn"
           style={{
-            padding: '9px 16px', borderRadius: theme.radius.md, border: 'none',
-            background: theme.color.accent, color: '#fff',
-            fontSize: theme.font.size.base, fontWeight: 600,
+            padding: '10px 20px', borderRadius: theme.radius.pill, border: 'none',
+            background: theme.color.ink, color: theme.color.lime,
+            fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
           }}
         >
           + 添加账号
@@ -61,16 +64,13 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                 background: theme.color.bg, borderRadius: theme.radius.xl,
                 border: `1px solid ${theme.color.border}`, boxShadow: theme.shadow.sm, overflow: 'hidden',
               }}>
-                <div style={{
-                  height: 4,
-                  background: `linear-gradient(90deg, ${PLATFORM_COLOR[a.platform] ?? theme.color.textFaint}, ${statusColor})`,
-                }} />
+                <div style={{ height: 5, background: online2(a.status) ? theme.color.lime : statusColor }} />
                 <div style={{ padding: theme.space.lg }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: theme.space.sm }}>
                     <PlatformIcon platform={a.platform} size={30} />
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{
-                        fontSize: theme.font.size.md, fontWeight: 700,
+                        fontSize: theme.font.size.md, fontWeight: theme.font.weight.heavy,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>
                         {a.display_name}
@@ -81,9 +81,10 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                     </div>
                     <span style={{
                       display: 'inline-flex', alignItems: 'center', gap: 5,
-                      padding: '3px 10px', borderRadius: theme.radius.pill,
-                      background: `${statusColor}1a`, color: statusColor,
-                      fontSize: theme.font.size.xs, fontWeight: 600,
+                      padding: '4px 11px', borderRadius: theme.radius.pill,
+                      background: online2(a.status) ? theme.color.lime : `${statusColor}1a`,
+                      color: online2(a.status) ? theme.color.onLime : statusColor,
+                      fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
                     }}>
                       <StatusDot status={a.status} size={6} />
                       {STATUS_LABEL[a.status] ?? a.status}
@@ -111,10 +112,10 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                     onClick={() => { setActiveAccount(a.id); onOpenChat() }}
                     className="ih-btn"
                     style={{
-                      marginTop: theme.space.md, width: '100%', padding: '8px 0',
-                      borderRadius: theme.radius.md, border: `1px solid ${theme.color.border}`,
-                      background: theme.color.surface, color: theme.color.text,
-                      fontSize: theme.font.size.base, fontWeight: 600,
+                      marginTop: theme.space.md, width: '100%', padding: '10px 0',
+                      borderRadius: theme.radius.pill, border: `1px solid ${theme.color.borderStrong}`,
+                      background: theme.color.bg, color: theme.color.text,
+                      fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
                     }}
                   >
                     查看会话

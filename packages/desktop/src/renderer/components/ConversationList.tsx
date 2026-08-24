@@ -46,7 +46,7 @@ export function ConversationList() {
         <div style={{
           display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: theme.space.sm,
         }}>
-          <span style={{ fontSize: theme.font.size.md, fontWeight: 700 }}>会话</span>
+          <span style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>会话</span>
           <span style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>
             {accountName ?? '全部账号'} · {shown.length}
           </span>
@@ -64,8 +64,8 @@ export function ConversationList() {
             onChange={e => setQ(e.target.value)}
             placeholder="搜索联系人"
             style={{
-              width: '100%', padding: '7px 10px 7px 26px', fontSize: theme.font.size.base,
-              border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.md,
+              width: '100%', padding: '9px 12px 9px 28px', fontSize: theme.font.size.base,
+              border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.pill,
               background: theme.color.surface, color: theme.color.text,
             }}
           />
@@ -77,11 +77,11 @@ export function ConversationList() {
               key={key}
               onClick={() => setFilter(key)}
               style={{
-                padding: '4px 12px', borderRadius: theme.radius.pill,
+                padding: '5px 14px', borderRadius: theme.radius.pill,
                 border: `1px solid ${filter === key ? 'transparent' : theme.color.border}`,
-                background: filter === key ? theme.color.accentSoft : 'transparent',
-                color: filter === key ? theme.color.accent : theme.color.textMuted,
-                fontSize: theme.font.size.xs, fontWeight: 600,
+                background: filter === key ? theme.color.ink : 'transparent',
+                color: filter === key ? '#fff' : theme.color.textMuted,
+                fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
               }}
             >
               {label}
@@ -108,33 +108,44 @@ export function ConversationList() {
               onClick={() => setActive(c.id)}
               style={{
                 display: 'flex', alignItems: 'center', gap: theme.space.sm,
-                padding: theme.space.sm, borderRadius: theme.radius.lg, marginBottom: 2,
+                padding: theme.space.sm, borderRadius: theme.radius.lg, marginBottom: 3,
                 cursor: 'pointer',
-                background: on ? theme.color.accentSoft : 'transparent',
-                boxShadow: on ? `inset 0 0 0 1px ${theme.color.accent}` : undefined,
+                background: on ? theme.color.lime : 'transparent',
               }}
             >
-              <Avatar name={name} seed={c.contact_external_id} size={38} />
+              <Avatar name={name} seed={c.contact_external_id} size={38} tone={on ? 'dark' : 'light'} />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   <span style={{
-                    flex: 1, minWidth: 0, fontSize: theme.font.size.base, fontWeight: 600,
+                    flex: 1, minWidth: 0, fontSize: theme.font.size.base,
+                    fontWeight: on ? theme.font.weight.heavy : theme.font.weight.bold,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
                     {name}
                   </span>
-                  <span style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint, flexShrink: 0 }}>
+                  <span style={{
+                    fontSize: theme.font.size.xs, flexShrink: 0,
+                    color: on ? theme.color.onLime : theme.color.textFaint,
+                  }}>
                     {relativeTime(c.last_message_at)}
                   </span>
                 </div>
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 6, marginTop: 2,
-                  fontSize: theme.font.size.xs, color: theme.color.textMuted,
+                  fontSize: theme.font.size.xs,
+                  color: on ? theme.color.onLime : theme.color.textMuted, opacity: on ? .75 : 1,
                 }}>
                   <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.contact_external_id}
                   </span>
-                  {c.target_lang && <Chip tone="accent" style={{ flexShrink: 0 }}>🔒 {c.target_lang}</Chip>}
+                  {c.target_lang && (
+                    <Chip
+                      tone={on ? 'neutral' : 'accent'}
+                      style={{ flexShrink: 0, background: on ? theme.color.bg : undefined }}
+                    >
+                      🔒 {c.target_lang}
+                    </Chip>
+                  )}
                 </div>
               </div>
             </div>

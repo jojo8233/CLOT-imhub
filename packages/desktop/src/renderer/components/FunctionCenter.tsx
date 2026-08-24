@@ -62,7 +62,7 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
       }}>
         {open && (
           <div>
-            <div style={{ fontSize: theme.font.size.lg, fontWeight: 700 }}>功能中心</div>
+            <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>功能中心</div>
             <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint, marginTop: 1 }}>
               {ENTRIES.filter(e => e.view ?? e.action).length} / {ENTRIES.length} 项已接入
             </div>
@@ -73,9 +73,9 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
           onClick={togglePanel}
           title={open ? '收起功能中心' : '展开功能中心'}
           style={{
-            width: 30, height: 30, flexShrink: 0, borderRadius: theme.radius.md,
+            width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
             border: `1px solid ${theme.color.border}`, background: theme.color.bg,
-            color: theme.color.textMuted, fontSize: 13,
+            color: theme.color.text, fontSize: 13,
           }}
         >
           {open ? '‹' : '›'}
@@ -97,17 +97,18 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
                 width: '100%', display: 'flex', alignItems: 'center', gap: theme.space.md,
                 padding: open ? theme.space.sm : 6, marginBottom: 4, textAlign: 'left',
                 justifyContent: open ? 'flex-start' : 'center',
-                border: `1px solid ${active ? theme.color.accent : 'transparent'}`,
+                border: '1px solid transparent',
                 borderRadius: theme.radius.lg,
-                background: active ? theme.color.accentSoft : 'transparent',
-                opacity: wired ? 1 : .55,
+                background: active ? theme.color.ink : 'transparent',
+                opacity: wired ? 1 : .5,
               }}
             >
               <span style={{
                 width: 32, height: 32, flexShrink: 0, borderRadius: theme.radius.md,
-                background: wired ? e.tint : theme.color.surfaceHover,
-                color: wired ? '#fff' : theme.color.textFaint,
-                fontSize: theme.font.size.base, fontWeight: 700,
+                // 选中行是黑底，图标块反过来用绿；未接入的退成灰
+                background: active ? theme.color.lime : wired ? theme.color.surface : theme.color.surfaceHover,
+                color: active ? theme.color.onLime : wired ? theme.color.text : theme.color.textFaint,
+                fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
                 {e.glyph}
@@ -116,13 +117,15 @@ export function FunctionCenter({ view, onSelectView, onAddAccount }: Props) {
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    fontSize: theme.font.size.base, fontWeight: 600, color: theme.color.text,
+                    fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
+                    color: active ? '#fff' : theme.color.text,
                   }}>
                     {e.title}
                     {!wired && <NotWired what={e.title} />}
                   </span>
                   <span style={{
-                    display: 'block', fontSize: theme.font.size.xs, color: theme.color.textMuted,
+                    display: 'block', fontSize: theme.font.size.xs,
+                    color: active ? theme.color.onInk : theme.color.textMuted,
                     marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
                     {e.desc}

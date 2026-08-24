@@ -37,11 +37,14 @@ export function MessageList() {
           }}>
             <div className="ih-selectable" style={{
               maxWidth: '76%', minWidth: 0,
-              padding: `${theme.space.sm}px ${theme.space.md}px`,
-              borderRadius: theme.radius.lg,
+              padding: `${theme.space.md}px ${theme.space.lg}px`,
+              // 靠自己那一侧的角收小，气泡才有指向感
+              borderRadius: out
+                ? `${theme.radius.xl}px ${theme.radius.sm}px ${theme.radius.xl}px ${theme.radius.xl}px`
+                : `${theme.radius.sm}px ${theme.radius.xl}px ${theme.radius.xl}px ${theme.radius.xl}px`,
               // 自己发的用深靛蓝实心，客户的用白底描边——一眼分清方向，
               // 不用去读左右对齐（窄窗口里对齐差别会变得不明显）
-              background: out ? theme.color.navy : theme.color.bg,
+              background: out ? theme.color.ink : theme.color.bg,
               color: out ? '#fff' : theme.color.text,
               border: out ? 'none' : `1px solid ${theme.color.border}`,
               boxShadow: theme.shadow.sm,
@@ -57,9 +60,9 @@ export function MessageList() {
                 ? (
                   <div style={{
                     marginTop: theme.space.sm, paddingTop: theme.space.sm,
-                    borderTop: `1px solid ${out ? 'rgba(255,255,255,.22)' : theme.color.border}`,
+                    borderTop: `1px solid ${out ? theme.color.onInkLine : theme.color.border}`,
                     fontSize: theme.font.size.base, lineHeight: 1.6,
-                    color: out ? 'rgba(255,255,255,.78)' : theme.color.textMuted,
+                    color: out ? theme.color.onInk : theme.color.textMuted,
                     wordBreak: 'break-word',
                   }}>
                     {m.translated_text}
@@ -68,7 +71,7 @@ export function MessageList() {
                 : (
                   <div style={{
                     marginTop: theme.space.xs, fontSize: theme.font.size.xs,
-                    color: out ? 'rgba(255,255,255,.6)' : theme.color.textFaint,
+                    color: out ? theme.color.onInkFaint : theme.color.textFaint,
                   }}>
                     翻译中…
                   </div>
@@ -76,7 +79,7 @@ export function MessageList() {
 
               <div style={{
                 marginTop: theme.space.xs, fontSize: theme.font.size.xs, textAlign: 'right',
-                color: out ? 'rgba(255,255,255,.55)' : theme.color.textFaint,
+                color: out ? theme.color.onInkFaint : theme.color.textFaint,
               }}>
                 {clockTime(m.sent_at)}
               </div>

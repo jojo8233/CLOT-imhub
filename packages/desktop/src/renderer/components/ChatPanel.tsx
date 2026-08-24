@@ -19,7 +19,7 @@ export function ChatPanel() {
       flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: theme.color.surface,
     }}>
       <div style={{
-        height: 60, flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.md,
+        height: 68, flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.md,
         padding: `0 ${theme.space.xl}px`, background: theme.color.bg,
         borderBottom: `1px solid ${theme.color.border}`,
       }}>
@@ -28,7 +28,7 @@ export function ChatPanel() {
             <Avatar name={name} seed={conv.contact_external_id} size={36} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{
-                fontSize: theme.font.size.md, fontWeight: 700,
+                fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
                 {name}

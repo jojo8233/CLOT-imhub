@@ -39,24 +39,25 @@ export function LoginPage({ onLoginSuccess }: Props) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: theme.color.surface,
+      background: theme.color.page,
       fontFamily: theme.font.sans,
     }}>
       <form
         onSubmit={(e) => void handleSubmit(e)}
         style={{
-          width: 360,
+          width: 380,
           background: theme.color.bg,
-          border: `1px solid ${theme.color.border}`,
-          borderRadius: theme.radius.lg,
-          boxShadow: theme.shadow.lg,
+          border: 'none',
+          borderRadius: theme.radius.xxl,
+          boxShadow: theme.shadow.app,
           padding: theme.space.xxl,
           boxSizing: 'border-box',
         }}
       >
         <div style={{
-          fontSize: theme.font.size.xl,
-          fontWeight: 700,
+          fontSize: theme.font.size.xxl,
+          fontWeight: theme.font.weight.heavy,
+          letterSpacing: -1,
           color: theme.color.text,
           marginBottom: theme.space.xs,
         }}>
@@ -87,10 +88,10 @@ export function LoginPage({ onLoginSuccess }: Props) {
           placeholder="you@example.com"
           style={{
             width: '100%',
-            padding: '8px 10px',
+            padding: '11px 14px',
             fontSize: theme.font.size.md,
             border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.sm,
+            borderRadius: theme.radius.lg,
             boxSizing: 'border-box',
             marginBottom: theme.space.md,
             color: theme.color.text,
@@ -114,10 +115,10 @@ export function LoginPage({ onLoginSuccess }: Props) {
           placeholder="••••••••"
           style={{
             width: '100%',
-            padding: '8px 10px',
+            padding: '11px 14px',
             fontSize: theme.font.size.md,
             border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.sm,
+            borderRadius: theme.radius.lg,
             boxSizing: 'border-box',
             marginBottom: theme.space.lg,
             color: theme.color.text,
@@ -143,13 +144,13 @@ export function LoginPage({ onLoginSuccess }: Props) {
           disabled={submitting || email.trim() === '' || password === ''}
           style={{
             width: '100%',
-            padding: '10px 0',
+            padding: '13px 0',
             fontSize: theme.font.size.md,
-            fontWeight: 600,
-            color: '#ffffff',
-            background: submitting ? theme.color.accentHover : theme.color.accent,
+            fontWeight: theme.font.weight.heavy,
+            color: theme.color.lime,
+            background: submitting ? theme.color.accentHover : theme.color.ink,
             border: 'none',
-            borderRadius: theme.radius.sm,
+            borderRadius: theme.radius.pill,
             cursor: submitting ? 'default' : 'pointer',
           }}
         >

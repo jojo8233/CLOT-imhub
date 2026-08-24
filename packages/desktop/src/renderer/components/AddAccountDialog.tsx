@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PLATFORM_COLOR, PLATFORM_LABEL, theme } from '../theme.js'
+import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip, PlatformIcon } from './ui.js'
 
 /** 各平台目前的接入程度。写在这里而不是散在文案里，将来接完一个改一行。 */
@@ -24,7 +24,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(13,20,32,.42)',
+        position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(13,13,13,.45)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
@@ -33,7 +33,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
         onClick={e => e.stopPropagation()}
         style={{
           width: 620, maxWidth: '90vw', background: theme.color.bg,
-          borderRadius: theme.radius.xl, boxShadow: theme.shadow.lg, overflow: 'hidden',
+          borderRadius: theme.radius.xxl, boxShadow: theme.shadow.lg, overflow: 'hidden',
         }}
       >
         <div style={{
@@ -42,7 +42,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
           borderBottom: `1px solid ${theme.color.border}`,
         }}>
           <div>
-            <div style={{ fontSize: theme.font.size.lg, fontWeight: 700 }}>添加账号</div>
+            <div style={{ fontSize: theme.font.size.xl, fontWeight: theme.font.weight.heavy, letterSpacing: -.5 }}>添加账号</div>
             <div style={{ fontSize: theme.font.size.sm, color: theme.color.textMuted, marginTop: 2 }}>
               选择平台，创建一个独立登录的账号
             </div>
@@ -50,7 +50,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
           <button
             onClick={onClose}
             style={{
-              width: 30, height: 30, borderRadius: theme.radius.sm,
+              width: 34, height: 34, borderRadius: '50%',
               border: `1px solid ${theme.color.border}`, background: theme.color.bg,
               color: theme.color.textMuted, fontSize: 15,
             }}
@@ -71,13 +71,13 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
                 onClick={() => setSelected(p.key)}
                 style={{
                   textAlign: 'left', padding: theme.space.md, borderRadius: theme.radius.lg,
-                  border: `1.5px solid ${on ? theme.color.accent : theme.color.border}`,
-                  background: on ? theme.color.accentSoft : theme.color.bg,
+                  border: `1.5px solid ${on ? theme.color.limeDeep : theme.color.border}`,
+                  background: on ? theme.color.limeSoft : theme.color.bg,
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: theme.space.sm, marginBottom: 6 }}>
                   <PlatformIcon platform={p.key} size={26} />
-                  <span style={{ fontSize: theme.font.size.md, fontWeight: 700 }}>
+                  <span style={{ fontSize: theme.font.size.md, fontWeight: theme.font.weight.heavy }}>
                     {PLATFORM_LABEL[p.key] ?? p.key}
                   </span>
                 </div>
@@ -116,9 +116,9 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
             onClick={onClose}
             className="ih-btn"
             style={{
-              padding: '9px 18px', borderRadius: theme.radius.md,
-              border: `1px solid ${theme.color.border}`, background: theme.color.bg,
-              fontSize: theme.font.size.md, fontWeight: 600, color: theme.color.text,
+              padding: '10px 22px', borderRadius: theme.radius.pill,
+              border: `1px solid ${theme.color.borderStrong}`, background: theme.color.bg,
+              fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold, color: theme.color.text,
             }}
           >
             关闭
@@ -128,9 +128,9 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
             title="等服务端提供创建账号接口"
             className="ih-btn"
             style={{
-              padding: '9px 18px', borderRadius: theme.radius.md, border: 'none',
-              background: PLATFORM_COLOR[selected] ?? theme.color.accent,
-              color: '#fff', fontSize: theme.font.size.md, fontWeight: 600,
+              padding: '10px 22px', borderRadius: theme.radius.pill, border: 'none',
+              background: theme.color.ink, color: theme.color.lime,
+              fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
             }}
           >
             创建账号
