@@ -8,6 +8,7 @@ import type {
   AuthChallengeHandler,
   CredentialsHandler,
   MessageHandler,
+  MessageIdRemapHandler,
   PlatformAdapter,
   StatusHandler,
 } from '../types.js'
@@ -30,6 +31,7 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly statusHandlers: StatusHandler[] = []
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
+  private readonly idRemapHandlers: MessageIdRemapHandler[] = []
 
   constructor(private readonly opts: TelegramAdapterOptions) {}
 
@@ -40,6 +42,7 @@ export class TelegramAdapter implements PlatformAdapter {
   // Signal 的扫码关联（P1）会真正用到它们。
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
+  onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) h(accountId, status)
@@ -56,6 +59,21 @@ export class TelegramAdapter implements PlatformAdapter {
     })
 
     client.on('update', (update: unknown) => {
+      // 发送成功后 TDLib 用最终 id 替换先前回显的临时 id。库里存的是临时 id，
+      // 必须就地改写，否则这条消息经其他路径再到达时会被当成新消息存第二遍。
+      const u = update as { _?: string; old_message_id?: number; message?: { id: number } }
+      if (u._ === 'updateMessageSendSucceeded' && u.old_message_id != null && u.message) {
+        const oldId = String(u.old_message_id)
+        const newId = String(u.message.id)
+        for (const h of this.idRemapHandlers) {
+          try {
+            h(account.id, oldId, newId)
+          } catch (err) {
+            console.error(`[telegram] 账号 ${account.id} 的 id 重映射处理器抛出异常，已隔离:`, err)
+          }
+        }
+      }
+
       const msg = normalizeTelegramMessage(update, account.id)
       if (!msg) return
       for (const h of this.messageHandlers) {

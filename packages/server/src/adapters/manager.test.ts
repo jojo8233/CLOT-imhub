@@ -13,6 +13,7 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     onStatusChange: vi.fn(),
     onAuthChallenge: vi.fn(),
     onCredentialsUpdated: vi.fn(),
+    onMessageIdRemapped: vi.fn(),
   }
 }
 
@@ -105,6 +106,19 @@ describe('AdapterManager', () => {
 
     handlers[0]!('a1', 'new-creds')
     expect(seen).toEqual([['a1', 'new-creds']])
+  })
+
+  it('把消息 id 重映射汇聚到统一回调', () => {
+    const tg = fakeAdapter('telegram')
+    const handlers: ((id: string, o: string, n: string) => void)[] = []
+    tg.onMessageIdRemapped = vi.fn((h) => { handlers.push(h as never) })
+
+    const seen: [string, string, string][] = []
+    const mgr = new AdapterManager([tg])
+    mgr.onMessageIdRemapped((id, o, n) => seen.push([id, o, n]))
+
+    handlers[0]!('a1', '3575644161', '3576692736')
+    expect(seen).toEqual([['a1', '3575644161', '3576692736']])
   })
 
   it('disconnect 后账号不再可发送', async () => {

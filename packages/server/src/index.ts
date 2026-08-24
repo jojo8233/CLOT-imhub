@@ -79,6 +79,20 @@ adapters.onMessage((msg) => {
   })()
 })
 
+adapters.onMessageIdRemapped((accountId, oldId, newId) => {
+  void (async () => {
+    const r = await db
+      .updateTable('messages')
+      .set({ platform_message_id: newId })
+      .where('account_id', '=', accountId)
+      .where('platform_message_id', '=', oldId)
+      .executeTakeFirst()
+    if ((r.numUpdatedRows ?? 0n) > 0n) {
+      console.log(`[server] 消息 id 已换成最终值 ${oldId} -> ${newId}`)
+    }
+  })()
+})
+
 adapters.onStatusChange((accountId, status) => {
   void (async () => {
     await db.updateTable('accounts').set({ status }).where('id', '=', accountId).execute()
