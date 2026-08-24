@@ -8,8 +8,8 @@ import { Chip, PlatformIcon } from './ui.js'
 /** 各平台目前的接入程度。写在这里而不是散在文案里，将来接完一个改一行。 */
 const PLATFORMS: { key: string; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
+  { key: 'signal', blurb: '关联为次要设备，手机仍是主设备', ready: true },
   { key: 'whatsapp', blurb: '需要网页版壳 + 扫码登录', ready: false },
-  { key: 'signal', blurb: '需要 signal-cli + 关联设备扫码', ready: false },
   { key: 'zoom', blurb: 'Team Chat，需走官方 OAuth', ready: false },
 ]
 
@@ -27,6 +27,8 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
   const [name, setName] = useState('')
   const [step, setStep] = useState<Step>('pick')
   const [accountId, setAccountId] = useState<string | null>(null)
+  // 单独记一份：进入扫码步骤后上面的平台选择器就不该再影响指引文案了
+  const [linkingPlatform, setLinkingPlatform] = useState('telegram')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,6 +51,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
     try {
       const account = await api.createAccount({ platform, displayName: name.trim() })
       setAccountId(account.id)
+      setLinkingPlatform(platform)
       setStep('linking')
       // 新账号此刻还不在列表里，补一次
       setAccounts((await api.listAccounts()).accounts)
@@ -199,6 +202,7 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
         ) : (
           <LinkingStep
             accountId={accountId!}
+            platform={linkingPlatform}
             challenge={mine}
             done={mineDone}
             onClose={onClose}
@@ -209,8 +213,9 @@ export function AddAccountDialog({ onClose }: { onClose(): void }) {
   )
 }
 
-function LinkingStep({ accountId, challenge, done, onClose }: {
+function LinkingStep({ accountId, platform, challenge, done, onClose }: {
   accountId: string
+  platform: string
   challenge: { kind: string; payload: string } | null
   done: { ok: boolean; reason: string | null } | null
   onClose(): void
@@ -238,16 +243,47 @@ function LinkingStep({ accountId, challenge, done, onClose }: {
     return <AnswerStep accountId={accountId} kind={challenge.kind} hint={challenge.payload} onClose={onClose} />
   }
 
-  return <QrStep accountId={accountId} link={challenge?.kind === 'qr' ? challenge.payload : null} onClose={onClose} />
+  return (
+    <QrStep
+      accountId={accountId}
+      platform={platform}
+      link={challenge?.kind === 'qr' ? challenge.payload : null}
+      onClose={onClose}
+    />
+  )
 }
 
-function QrStep({ accountId, link, onClose }: {
+/** 各平台关联入口的路径不一样，写死一套会把人带到找不到的菜单里 */
+const SCAN_GUIDE: Record<string, {
+  title: string
+  steps: string[]
+  note: string
+  /** 过期后平台会不会自己下发新码。Telegram 会，Signal 的链接是一次性的 */
+  autoRefresh: boolean
+}> = {
+  telegram: {
+    title: '用手机上的 Telegram 扫这个码',
+    steps: ['打开手机上的 Telegram', '设置 → 设备 → 关联桌面设备', '扫描左边这个二维码'],
+    note: '如果账号开了二次验证，扫码后还会让你输一次密码。',
+    autoRefresh: true,
+  },
+  signal: {
+    title: '用手机上的 Signal 扫这个码',
+    steps: ['打开手机上的 Signal', '设置 → 已关联设备 → 关联新设备', '扫描左边这个二维码'],
+    note: '关联后手机仍是主设备，这里是次要设备；你在手机上发的消息也会同步过来。',
+    autoRefresh: false,
+  },
+}
+
+function QrStep({ accountId, platform, link, onClose }: {
   accountId: string
+  platform: string
   link: string | null
   onClose(): void
 }) {
   const [svg, setSvg] = useState<string | null>(null)
   const [relinking, setRelinking] = useState(false)
+  const guide = SCAN_GUIDE[platform] ?? SCAN_GUIDE.telegram!
 
   useEffect(() => {
     if (link === null) { setSvg(null); return }
@@ -287,23 +323,21 @@ function QrStep({ accountId, link, onClose }: {
 
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: theme.font.size.md, fontWeight: theme.font.weight.heavy, marginBottom: theme.space.sm }}>
-            用手机上的 Telegram 扫这个码
+            {guide.title}
           </div>
           <ol style={{
             margin: 0, paddingLeft: 18, fontSize: theme.font.size.sm,
             color: theme.color.textMuted, lineHeight: 2,
           }}>
-            <li>打开手机上的 Telegram</li>
-            <li>设置 → 设备 → 关联桌面设备</li>
-            <li>扫描左边这个二维码</li>
+            {guide.steps.map(step => <li key={step}>{step}</li>)}
           </ol>
           <div style={{
             marginTop: theme.space.md, fontSize: theme.font.size.xs,
             color: theme.color.textFaint, lineHeight: 1.7,
           }}>
-            二维码过期会自动换新的，不用手动刷新。
+            {guide.autoRefresh ? '二维码过期会自动换新的，不用管。' : '二维码过期后点「重新生成」再扫。'}
             <br />
-            如果账号开了二次验证，扫码后还会让你输一次密码。
+            {guide.note}
           </div>
         </div>
       </div>

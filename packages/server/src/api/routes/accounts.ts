@@ -4,8 +4,8 @@ import { PLATFORMS } from '@im-hub/shared'
 import { db } from '../../db/client.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 
-/** 目前只有 Telegram 有可用的适配器实现，其余平台建了也连不上，直接挡在门口 */
-const IMPLEMENTED = new Set(['telegram'])
+/** 已经有可用适配器实现的平台。没实现的平台建了也连不上，直接挡在门口 */
+const IMPLEMENTED = new Set(['telegram', 'signal'])
 
 const createBody = z.object({
   platform: z.enum(PLATFORMS),

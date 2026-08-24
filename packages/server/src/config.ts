@@ -14,6 +14,13 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().default(''),
   DEFAULT_TRANSLATION_PROVIDER: z.enum(['deepl', 'openai', 'claude']).default('deepl'),
   TDLIB_DATA_DIR: z.string().default('./data/tdlib'),
+  /**
+   * signal-cli 可执行文件。装在别处（或用容器里的那份）时覆盖它。
+   * Signal 没有官方 Node 库、也没有网页版可包，signal-cli 是唯一可行路径。
+   */
+  SIGNAL_CLI_BINARY: z.string().default('signal-cli'),
+  /** signal-cli 的数据目录。跟 TDLib session 放一起，备份和重置才好统一处理 */
+  SIGNAL_DATA_DIR: z.string().default('./data/signal'),
   TELEGRAM_API_ID: z.coerce.number().default(0),
   TELEGRAM_API_HASH: z.string().default(''),
   PORT: z.coerce.number().default(4000),

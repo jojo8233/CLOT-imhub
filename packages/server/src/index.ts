@@ -3,6 +3,7 @@ import Redis from 'ioredis'
 import { config } from './config.js'
 import { db } from './db/client.js'
 import { AdapterManager } from './adapters/manager.js'
+import { SignalAdapter } from './adapters/signal/adapter.js'
 import { TelegramAdapter } from './adapters/telegram/adapter.js'
 import { KyselyMessageRepo } from './ingest/repo.js'
 import { MessageIngestor } from './ingest/ingestor.js'
@@ -33,6 +34,10 @@ const adapters = new AdapterManager([
     apiId: config.TELEGRAM_API_ID,
     apiHash: config.TELEGRAM_API_HASH,
     dataDir: config.TDLIB_DATA_DIR,
+  }),
+  new SignalAdapter({
+    binary: config.SIGNAL_CLI_BINARY,
+    dataDir: config.SIGNAL_DATA_DIR,
   }),
 ])
 
@@ -218,27 +223,25 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 /**
  * 启动后连接数据库里已登记的平台账号。
  *
- * 不 await：TelegramAdapter 的 login() 会阻塞在 stdin 等手机号和验证码，
- * awaiting 会让 HTTP 端口一直起不来。连接失败也不能让进程退出——
- * 一个账号连不上不该拖垮整个服务端。
+ * 连接失败不能让进程退出——一个账号连不上不该拖垮整个服务端。
  */
 async function connectRegisteredAccounts(): Promise<void> {
-  if (!config.TELEGRAM_API_ID || !config.TELEGRAM_API_HASH) {
+  const telegramReady = Boolean(config.TELEGRAM_API_ID) && Boolean(config.TELEGRAM_API_HASH)
+  if (!telegramReady) {
     console.warn(
       '[server] TELEGRAM_API_ID / TELEGRAM_API_HASH 未配置，跳过 Telegram 账号连接。\n' +
         '         去 https://my.telegram.org 申请后填进 .env 即可启用。',
     )
-    return
   }
 
-  const all = await db
+  const all = (await db
     .selectFrom('accounts')
     .select(['id', 'platform', 'display_name', 'credentials_ref', 'status'])
-    .where('platform', '=', 'telegram')
     .execute()
+  ).filter((a) => a.platform !== 'telegram' || telegramReady)
 
   if (all.length === 0) {
-    console.log('[server] 数据库里没有 Telegram 账号，先跑 pnpm --filter @im-hub/server seed')
+    console.log('[server] 数据库里没有可连接的账号，先跑 pnpm --filter @im-hub/server seed')
     return
   }
 
