@@ -1,6 +1,15 @@
 import type { WsServerEvent } from '@im-hub/shared'
 
-const BASE = (window as unknown as { imHub: { serverUrl: string } }).imHub.serverUrl
+/**
+ * preload 注入的配置。取不到时降级到默认值而不是抛异常——
+ * 这一行跑在模块顶层，抛出去会让 React 连挂载都来不及，
+ * 结果是一片白屏加零提示，排查起来极其痛苦。
+ */
+const injected = (globalThis as { imHub?: { serverUrl?: string } }).imHub
+if (!injected?.serverUrl) {
+  console.error('[client] preload 未注入 window.imHub，降级使用 http://localhost:4000。检查 sandbox 与 preload 路径。')
+}
+const BASE = injected?.serverUrl ?? 'http://localhost:4000'
 
 // P0: 模块级变量存 token。connectWs 必须在 login 成功之后调用——
 // App.tsx 里严格按 login -> listAccounts/listConversations -> connectWs 的顺序 await，

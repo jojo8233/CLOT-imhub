@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import type { Actor } from '@im-hub/shared'
 import { config } from '../config.js'
@@ -50,6 +51,20 @@ export async function buildServer(
 ): Promise<FastifyInstance> {
   const actorRepo = options.actorRepo ?? defaultActorRepo
   const app = Fastify({ logger: true })
+
+  // Electron 渲染进程在开发模式下从 http://localhost:<vite端口> 加载，
+  // 打包后从 file:// 加载（origin 为 null）——两种情况都是跨源，
+  // 不开 CORS 的话客户端连登录接口都调不通，且浏览器只报 CORS 不报业务错误。
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      // 无 origin：打包后的 file:// 页面、curl、以及同源请求
+      if (!origin) return cb(null, true)
+      const ok = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+      cb(null, ok)
+    },
+    credentials: true,
+  })
+
   await app.register(websocket)
 
   app.addHook('onRequest', async (req, reply) => {
