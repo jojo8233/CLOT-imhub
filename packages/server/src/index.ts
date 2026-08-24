@@ -93,6 +93,46 @@ adapters.onMessageIdRemapped((accountId, oldId, newId) => {
   })()
 })
 
+/**
+ * 鉴权挑战只推给账号 owner 本人。
+ *
+ * 二维码等价于一次登录授权——扫了就是把这个 Telegram 账号接进本系统。
+ * 广播给同组其他人等于把授权入口发给了所有人。
+ */
+adapters.onAuthChallenge((accountId, challenge) => {
+  void (async () => {
+    const owner = await db.selectFrom('accounts')
+      .select('owner_user_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (!owner) return
+    hub.publishTo(owner.owner_user_id, {
+      type: 'auth_challenge',
+      accountId,
+      kind: challenge.kind,
+      payload: challenge.payload,
+    })
+  })()
+})
+
+/**
+ * 鉴权成功后把「本机有可用 session」这件事落库，重启时据此自动重连。
+ *
+ * 同时推一条 auth_done，客户端收到就把二维码弹窗关掉——不然扫完码界面
+ * 还停在二维码上，员工不知道成没成功。
+ */
+adapters.onCredentialsUpdated((accountId, credentialsRef) => {
+  void (async () => {
+    const owner = await db.updateTable('accounts')
+      .set({ credentials_ref: credentialsRef })
+      .where('id', '=', accountId)
+      .returning('owner_user_id')
+      .executeTakeFirst()
+    if (!owner) return
+    hub.publishTo(owner.owner_user_id, { type: 'auth_done', accountId, ok: true, reason: null })
+  })()
+})
+
 adapters.onStatusChange((accountId, status) => {
   void (async () => {
     await db.updateTable('accounts').set({ status }).where('id', '=', accountId).execute()
@@ -202,56 +242,44 @@ async function connectRegisteredAccounts(): Promise<void> {
     return
   }
 
-  // 只自动连接「上次成功连上过」的账号，判据是数据库里持久化的 status。
+  // 只自动连接「本机确实有可用 session」的账号，判据是 credentials_ref。
   //
-  // 不能用「TDLib 数据目录是否存在」来判断：TDLib 在认证完成之前就会把 db 目录
-  // 建好，没登录过的账号一样有这个目录（实测 348K vs 已登录的 7.2M），
-  // 按目录判断会误认为已登录，重启时照样卡在 stdin 上。
+  // 这一栏由适配器在 authorizationStateReady 时写入，所以它精确表示
+  // 「这个账号在这台机器上鉴权成功过」。
   //
-  // 没登录过的账号调 login() 会永久阻塞在 stdin 等手机号——无脑遍历全部账号
-  // 会让服务端一旦重启就再也起不来（卡在第一个没登录过的账号上），
-  // 而且日志里只有一行「正在连接…」，看不出为什么不动。
-  // 首次登录必须显式指定：IM_HUB_LOGIN_ACCOUNT=<账号id 或 名称片段>
-  const wanted = process.env.IM_HUB_LOGIN_ACCOUNT?.trim()
+  // 不能用 TDLib 数据目录是否存在来判断：TDLib 在认证完成之前就会把 db 目录
+  // 建好，没登录过的账号一样有这个目录（实测 348K vs 已登录的 7.2M）。
+  // 也不该只看 status：员工在手机上解除了这台设备的授权后 status 仍是
+  // connected，而那时 session 早就失效了。
+  const accounts = all.filter((a) => a.credentials_ref !== null)
 
-  const accounts = all.filter((a) => {
-    // 注意：如果员工在手机上主动解除了这台设备的授权，status 仍是 connected，
-    // 重连时会退回登录流程并再次阻塞。那种情况需要人工介入，把它改回 pending_auth。
-    if (a.status === 'connected') return true
-    if (!wanted) return false
-    return a.id === wanted || a.display_name.includes(wanted)
-  })
-
-  const skipped = all.filter((a) => !accounts.includes(a))
+  const skipped = all.filter((a) => a.credentials_ref === null)
   if (skipped.length > 0) {
     console.log(
-      `[server] 跳过 ${skipped.length} 个尚未登录的账号：${skipped.map((a) => a.display_name).join('、')}\n` +
-        `         首次登录请指定：IM_HUB_LOGIN_ACCOUNT="${skipped[0]!.display_name}" pnpm --filter @im-hub/server exec tsx src/index.ts`,
+      `[server] 跳过 ${skipped.length} 个尚未关联的账号：${skipped.map((a) => a.display_name).join('、')}\n` +
+        '         在客户端点「添加账号」扫码关联即可，不需要在这里操作。',
     )
   }
 
   if (accounts.length === 0) {
-    console.log('[server] 没有可自动连接的账号，服务端已就绪但没有平台账号在线')
+    console.log('[server] 没有已关联的账号，服务端已就绪但没有平台账号在线')
     return
   }
 
-  for (const account of accounts) {
+  // connect() 现在建完 client 就返回，鉴权全程异步，所以这里可以并发发起，
+  // 也不会再出现「卡在第一个没登录过的账号上导致服务端起不来」。
+  await Promise.all(accounts.map(async (account) => {
     try {
-      console.log(
-        account.status !== 'connected'
-          ? `[server] 正在首次登录「${account.display_name}」，按提示输入手机号与验证码…`
-          : `[server] 正在恢复「${account.display_name}」的已有会话…`,
-      )
+      console.log(`[server] 正在恢复「${account.display_name}」的已有会话…`)
       await adapters.connect(account.platform, {
         id: account.id,
         displayName: account.display_name,
         credentialsRef: account.credentials_ref,
       })
-      console.log(`[server] 「${account.display_name}」已连接`)
     } catch (err) {
       console.error(`[server] 「${account.display_name}」连接失败:`, err)
     }
-  }
+  }))
 }
 
 void connectRegisteredAccounts()

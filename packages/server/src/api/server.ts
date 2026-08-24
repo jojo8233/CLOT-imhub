@@ -86,7 +86,7 @@ export async function buildServer(
   })
 
   await app.register(authRoutes)
-  await app.register(accountRoutes)
+  await app.register(async (instance) => { await accountRoutes(instance, deps) })
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
 

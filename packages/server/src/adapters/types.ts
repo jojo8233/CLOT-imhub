@@ -1,4 +1,6 @@
-import type { AccountStatus, NormalizedMessage, OutboundContent, Platform } from '@im-hub/shared'
+import type {
+  AccountStatus, AuthChallengeKind, NormalizedMessage, OutboundContent, Platform,
+} from '@im-hub/shared'
 
 export interface AdapterAccount {
   id: string
@@ -8,11 +10,14 @@ export interface AdapterAccount {
 
 /**
  * 需要人工干预才能完成的鉴权挑战。
- * qr: 内容直接渲染成二维码给人扫（Signal 的 sgnl://linkdevice、WhatsApp Web 的配对串）
- * code: 需要人工把这串码输入到别处，或把收到的验证码填回来（Telegram 的短信验证码）
+ * qr:       内容直接渲染成二维码给人扫（Telegram 扫码登录、Signal 关联设备、WhatsApp Web）
+ * code:     需要把收到的验证码填回来
+ * password: 二次验证密码
+ *
+ * code 和 password 都要等人把答案送回来，走 submitAuthAnswer。
  */
 export interface AuthChallenge {
-  kind: 'qr' | 'code'
+  kind: AuthChallengeKind
   payload: string
   expiresAt?: Date
 }
@@ -59,4 +64,12 @@ export interface PlatformAdapter {
 
   /** 临时消息 id 被平台换成最终 id 时通知上层改写已落库的记录 */
   onMessageIdRemapped(handler: MessageIdRemapHandler): void
+
+  /**
+   * 把人工输入的验证码或二次验证密码交回给正在等待的鉴权流程。
+   *
+   * value 是敏感值：实现方不得写日志、不得落库、不得放进错误信息，
+   * 用完立即丢弃。没有流程在等时抛错，不要静默吞掉——那会让前端一直转圈。
+   */
+  submitAuthAnswer(accountId: string, value: string): Promise<void>
 }

@@ -137,7 +137,7 @@ curl -s -X POST http://localhost:4000/api/auth/login \
 pnpm dev:desktop
 ```
 
-客户端 P0 阶段**没有登录页**，`packages/desktop/src/renderer/App.tsx` 里硬编码了 `api.login('agent@example.com', 'dev-password')`——所以桌面端启动后会自动以 `agent@example.com` 身份登录，看到的是 seed 建的那 1 个"TG 组内号"账号。桌面端连的服务端地址默认是 `http://localhost:4000`（见 `packages/desktop/src/preload/index.ts`，可用环境变量 `IM_HUB_SERVER_URL` 覆盖）。
+客户端有登录页（`components/LoginPage.tsx`），用第 4 节的任一演示账号登录即可；登录态经 Electron `safeStorage` 加密存盘，下次启动自动恢复。以 `agent@example.com` 登录看到的是 seed 建的那 1 个"TG 组内号"账号。桌面端连的服务端地址默认是 `http://localhost:4000`（见 `packages/desktop/src/preload/index.ts`，可用环境变量 `IM_HUB_SERVER_URL` 覆盖）。
 
 ---
 
@@ -208,7 +208,13 @@ DEFAULT_TRANSLATION_PROVIDER=claude
 Telegram：
 
 - [ ] 填好 `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`，重启 `pnpm dev:server`
-- [ ] 用 `owner@example.com` 或 `agent@example.com` 登录，通过账号管理界面（或直接调后端）触发 Telegram 账号的登录流程（扫码/验证码——P1 之后应该有 UI，P0 阶段可能要直接调 adapter 层）
+- [ ] 在客户端登录，点顶栏「+」→ 选 Telegram → 填个名称 → 「创建并扫码」
+- [ ] 用手机上的 Telegram（设置 → 设备 → 关联桌面设备）扫弹出的二维码
+- [ ] 开了二次验证的号会再弹一次密码输入，填完即可
+
+> 登录不再走服务端终端。`IM_HUB_LOGIN_ACCOUNT` 这个环境变量从 P1 起已废弃——
+> 适配器不再调 tdl 的 `login()`（它会从 stdin 读手机号，没有 TTY 时永久挂起），
+> 改成自己驱动鉴权状态机，二维码经 WebSocket 推给发起人。
 - [ ] 账号状态从 `pending_auth` 变成 `connected`（可以 `select status from accounts;` 确认）
 - [ ] 找一个真实 Telegram 联系人发一条消息给这个号，确认消息出现在 `messages` 表里、且能在客户端会话列表里看到
 - [ ] 在客户端里回一条消息，确认对方 Telegram 能收到

@@ -106,6 +106,20 @@ export function App() {
         setAccountStatus(event.accountId, event.status)
         return
       }
+      if (event.type === 'auth_challenge') {
+        useStore.getState().setAuthChallenge({
+          accountId: event.accountId, kind: event.kind, payload: event.payload,
+        })
+        return
+      }
+      if (event.type === 'auth_done') {
+        useStore.getState().setAuthDone({
+          accountId: event.accountId, ok: event.ok, reason: event.reason,
+        })
+        // 关联成功的账号此刻才带上最终状态，整表重拉最省事
+        void api.listAccounts().then((r) => setAccounts(r.accounts)).catch(() => {})
+        return
+      }
       if (event.type === 'message') {
         // 会话列表可能因为这条消息新增了会话，或需要重排——整体重拉最省事，
         // 上限 200 行，开销可以忽略。401 会由全局兜底处理，这里只吞掉不重复处理。

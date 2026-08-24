@@ -1,5 +1,19 @@
 import { create } from 'zustand'
+import type { AuthChallengeKind } from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
+
+/** 正在进行的鉴权挑战。payload 是二维码链接或提示语，都不是敏感值 */
+export interface AuthChallengeState {
+  accountId: string
+  kind: AuthChallengeKind
+  payload: string
+}
+
+export interface AuthDoneState {
+  accountId: string
+  ok: boolean
+  reason: string | null
+}
 
 interface State {
   accounts: AccountRow[]
@@ -8,6 +22,8 @@ interface State {
   activeConversationId: string | null
   /** null = 不按账号过滤，显示全部会话。顶部账号标签页切换的就是它。 */
   activeAccountId: string | null
+  authChallenge: AuthChallengeState | null
+  authDone: AuthDoneState | null
   /** 左侧功能中心是否展开。窗口窄的时候收起来给聊天区让位。 */
   panelOpen: boolean
   setAccounts(a: AccountRow[]): void
@@ -15,6 +31,9 @@ interface State {
   setMessages(m: MessageRow[]): void
   setActiveConversation(id: string): void
   setActiveAccount(id: string | null): void
+  setAuthChallenge(c: AuthChallengeState): void
+  setAuthDone(d: AuthDoneState): void
+  clearAuth(): void
   togglePanel(): void
   applyTranslation(messageId: string, text: string): void
   appendMessage(m: MessageRow): void
@@ -34,6 +53,8 @@ export const useStore = create<State>((set) => ({
   messages: [],
   activeConversationId: null,
   activeAccountId: null,
+  authChallenge: null,
+  authDone: null,
   panelOpen: true,
   setAccounts: (accounts) => set({ accounts }),
   setConversations: (conversations) => set({ conversations }),
@@ -43,6 +64,9 @@ export const useStore = create<State>((set) => ({
   // 和聊天区显示一个在新过滤条件下根本看不见的会话。
   setActiveAccount: (activeAccountId) => set({ activeAccountId, activeConversationId: null, messages: [] }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  setAuthChallenge: (authChallenge) => set({ authChallenge, authDone: null }),
+  setAuthDone: (authDone) => set({ authDone, authChallenge: null }),
+  clearAuth: () => set({ authChallenge: null, authDone: null }),
   applyTranslation: (messageId, text) => set((s) => ({
     messages: s.messages.map(m => m.id === messageId ? { ...m, translated_text: text } : m),
   })),
@@ -63,5 +87,7 @@ export const useStore = create<State>((set) => ({
     messages: [],
     activeConversationId: null,
     activeAccountId: null,
+    authChallenge: null,
+    authDone: null,
   }),
 }))

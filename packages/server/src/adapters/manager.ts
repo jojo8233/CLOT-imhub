@@ -77,6 +77,17 @@ export class AdapterManager {
     this.accountPlatform.delete(accountId)
   }
 
+  /**
+   * 把人工输入的验证码 / 二次验证密码转交给对应适配器。
+   *
+   * value 是敏感值：这一层不记日志、不做任何缓存，只做转发。
+   */
+  async submitAuthAnswer(accountId: string, value: string): Promise<void> {
+    const platform = this.accountPlatform.get(accountId)
+    if (!platform) throw new Error(`account ${accountId} is not connected`)
+    await this.require(platform).submitAuthAnswer(accountId, value)
+  }
+
   async send(accountId: string, conversationId: string, content: OutboundContent): Promise<string> {
     const platform = this.accountPlatform.get(accountId)
     if (!platform) throw new Error(`account ${accountId} is not connected`)

@@ -5,6 +5,7 @@ import type { Update } from 'tdlib-types'
 import type { AccountStatus, OutboundContent } from '@im-hub/shared'
 import type {
   AdapterAccount,
+  AuthChallenge,
   AuthChallengeHandler,
   CredentialsHandler,
   MessageHandler,
@@ -33,19 +34,60 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
 
+  /**
+   * 正在等人填验证码 / 二次验证密码的账号。
+   * value 是敏感值，只在 resolve 的那一瞬间存在于内存里，不留副本。
+   */
+  private readonly pendingAnswers = new Map<string, (value: string) => void>()
+
   constructor(private readonly opts: TelegramAdapterOptions) {}
 
   onMessage(handler: MessageHandler): void { this.messageHandlers.push(handler) }
   onStatusChange(handler: StatusHandler): void { this.statusHandlers.push(handler) }
 
-  // P0 的 Telegram 登录在终端交互完成（见 Task 15），这两个通道登记但不触发。
-  // Signal 的扫码关联（P1）会真正用到它们。
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
   onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) h(accountId, status)
+  }
+
+  /** 每个 handler 单独隔离：一个订阅方抛异常不能让其余订阅方收不到 */
+  private emitChallenge(accountId: string, challenge: AuthChallenge): void {
+    for (const h of this.authChallengeHandlers) {
+      try {
+        h(accountId, challenge)
+      } catch (err) {
+        console.error(`[telegram] 账号 ${accountId} 的鉴权挑战 handler 出错:`, err)
+      }
+    }
+  }
+
+  private emitCredentials(accountId: string, ref: string): void {
+    for (const h of this.credentialsHandlers) {
+      try {
+        h(accountId, ref)
+      } catch (err) {
+        console.error(`[telegram] 账号 ${accountId} 的凭据 handler 出错:`, err)
+      }
+    }
+  }
+
+  /**
+   * 挂起等待人工输入。上一个等待会被顶掉——TDLib 输错密码时会重新下发
+   * WaitPassword，旧的那个 promise 永远不会有人来 resolve 了。
+   */
+  private waitForAnswer(accountId: string): Promise<string> {
+    this.pendingAnswers.get(accountId)?.('')
+    return new Promise<string>((resolve) => { this.pendingAnswers.set(accountId, resolve) })
+  }
+
+  async submitAuthAnswer(accountId: string, value: string): Promise<void> {
+    const resolve = this.pendingAnswers.get(accountId)
+    if (!resolve) throw new Error(`账号 ${accountId} 当前没有在等待鉴权输入`)
+    this.pendingAnswers.delete(accountId)
+    resolve(value)
   }
 
   async connect(account: AdapterAccount): Promise<void> {
@@ -59,6 +101,12 @@ export class TelegramAdapter implements PlatformAdapter {
     })
 
     client.on('update', (update: unknown) => {
+      const au = update as { _?: string; authorization_state?: { _: string; link?: string } }
+      if (au._ === 'updateAuthorizationState' && au.authorization_state) {
+        // 不 await：鉴权要等人扫码/输密码，可能挂几分钟，绝不能卡住 update 分发
+        void this.driveAuth(account.id, client, au.authorization_state)
+      }
+
       // 发送成功后 TDLib 用最终 id 替换先前回显的临时 id。库里存的是临时 id，
       // 必须就地改写，否则这条消息经其他路径再到达时会被当成新消息存第二遍。
       const u = update as { _?: string; old_message_id?: number; message?: { id: number } }
@@ -95,12 +143,86 @@ export class TelegramAdapter implements PlatformAdapter {
 
     this.clients.set(account.id, client)
     this.emitStatus(account.id, 'pending_auth')
-    // 注意：login() 默认通过 readline 从真实 stdin 读手机号和验证码。
-    // 在没有 TTY 的守护进程里它会永远挂起，既不超时也不报错。
-    // P0 阶段登录由人在终端完成（见 Task 15）；将来要 daemonize 必须先改成
-    // 传入自定义的 getPhoneNumber / getAuthCode 回调，并接到 onAuthChallenge 上。
-    await client.login()
-    this.emitStatus(account.id, 'connected')
+
+    // 刻意不调 client.login()。它在 WaitPhoneNumber 里写死了发
+    // setAuthenticationPhoneNumber，没有扫码入口；而且默认的 getPhoneNumber
+    // 从真实 stdin 读，没有 TTY 时会永远挂起，既不超时也不报错。
+    // 鉴权改由 driveAuth 自己驱动，全程异步——connect() 建完 client 就返回，
+    // 一个待登录账号不会再把整个服务端启动流程卡住。
+    //
+    // createClient() 自身仍会处理 WaitTdlibParameters（tdl 把它放在 update
+    // 分发里，不依赖 login()），所以跳过 login() 是安全的。
+    await Promise.resolve()
+  }
+
+  /**
+   * Telegram 鉴权状态机。
+   *
+   * 走扫码而不是手机号+短信：员工不用把手机号交给公司，也不用有人守在服务端
+   * 终端里转发验证码。TDLib 的二维码 token 过期后会自己再下发一次
+   * WaitOtherDeviceConfirmation，所以这里不需要计时，跟着事件走就行。
+   */
+  private async driveAuth(
+    accountId: string,
+    client: tdl.Client,
+    authState: { _: string; link?: string },
+  ): Promise<void> {
+    try {
+      switch (authState._) {
+        case 'authorizationStateWaitPhoneNumber':
+          await client.invoke({ _: 'requestQrCodeAuthentication', other_user_ids: [] })
+          return
+
+        case 'authorizationStateWaitOtherDeviceConfirmation': {
+          const link = authState.link ?? ''
+          if (link === '') {
+            console.error(`[telegram] 账号 ${accountId} 收到空的扫码链接`)
+            return
+          }
+          this.emitChallenge(accountId, { kind: 'qr', payload: link })
+          return
+        }
+
+        case 'authorizationStateWaitCode': {
+          this.emitChallenge(accountId, { kind: 'code', payload: '验证码已发送到你的 Telegram' })
+          const code = await this.waitForAnswer(accountId)
+          if (code === '') return
+          // 输错时 TDLib 会重新下发 WaitCode，本方法会被再调一次，自然形成重试
+          await client.invoke({ _: 'checkAuthenticationCode', code })
+          return
+        }
+
+        case 'authorizationStateWaitPassword': {
+          const hint = (authState as { password_hint?: string }).password_hint ?? ''
+          this.emitChallenge(accountId, { kind: 'password', payload: hint })
+          const password = await this.waitForAnswer(accountId)
+          if (password === '') return
+          // password 只在这一行的作用域里存在：不打日志、不落库、不进错误信息
+          await client.invoke({ _: 'checkAuthenticationPassword', password })
+          return
+        }
+
+        case 'authorizationStateReady':
+          this.emitStatus(accountId, 'connected')
+          // 记一笔"这个账号在本机有可用 session"。启动时据此判断该不该自动重连——
+          // 比看 status 准，也比看 session 目录存不存在准（TDLib 在鉴权完成前
+          // 就会把目录建出来，拿目录判断会把没登录成功的账号也算进去）。
+          this.emitCredentials(accountId, 'tdlib-session')
+          return
+
+        case 'authorizationStateClosed':
+          this.emitStatus(accountId, 'disconnected')
+          return
+
+        default:
+          return
+      }
+    } catch (err) {
+      // 这里的 err 可能来自 checkAuthenticationPassword，TDLib 的报错文本里
+      // 不含密码本身（只有 PASSWORD_HASH_INVALID 这类常量），可以安全打印
+      console.error(`[telegram] 账号 ${accountId} 鉴权失败（${authState._}）:`, err)
+      this.emitStatus(accountId, 'pending_auth')
+    }
   }
 
   async disconnect(accountId: string): Promise<void> {

@@ -142,6 +142,11 @@ export interface AccountRow {
   history_available_from: string | null
 }
 
+export interface CreateAccountInput {
+  platform: string
+  displayName: string
+}
+
 export interface ConversationRow {
   id: string
   account_id: string
@@ -219,6 +224,33 @@ export const api = {
    * 可以手动刷新（切换会话会重新拉取），但翻译结果的实时推送会从此收不到，
    * 界面上不会有任何提示。这是已知的 P0 局限，留给后续任务补重连与断线提示。
    */
+  /** 建账号并立即开始鉴权。二维码随后经 WebSocket 的 auth_challenge 推过来。 */
+  async createAccount(input: CreateAccountInput): Promise<AccountRow> {
+    const res = await request<{ account: AccountRow }>('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+    return res.account
+  },
+
+  /** 二维码过期或中途放弃后重新发起关联 */
+  async relinkAccount(accountId: string): Promise<void> {
+    await request(`/api/accounts/${accountId}/relink`, { method: 'POST' })
+  },
+
+  /**
+   * 提交验证码或二次验证密码。
+   *
+   * value 是敏感值：不要放进 URL、不要打 console、不要存进 store。
+   * 从输入框直接送到这里，发完就随组件状态一起消失。
+   */
+  async submitAuthAnswer(accountId: string, value: string): Promise<void> {
+    await request(`/api/accounts/${accountId}/auth-answer`, {
+      method: 'POST',
+      body: JSON.stringify({ value }),
+    })
+  },
+
   connectWs(onEvent: (e: WsServerEvent) => void): WebSocket {
     const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws`)
     ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }))
