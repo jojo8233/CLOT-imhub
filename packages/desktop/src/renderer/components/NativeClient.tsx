@@ -38,6 +38,24 @@ export function nativeClientSupported(platform: string): boolean {
   return platform in WEB_CLIENT
 }
 
+/**
+ * 当前宿主是否支持 <webview>。
+ *
+ * 这是 Electron 独有的元素，浏览器里 document.createElement('webview') 会得到
+ * 一个普通的未知元素——不报错、不渲染、dom-ready 永远不触发。不检测的话界面
+ * 会永远停在"正在打开原生界面…"，而没有任何线索说明为什么。
+ */
+function webviewSupported(): boolean {
+  try {
+    return 'getWebContentsId' in document.createElement('webview')
+  } catch {
+    return false
+  }
+}
+
+/** dom-ready 的等待上限。超过这个时间基本可以断定不是"慢"，是"不会来了" */
+const READY_TIMEOUT_MS = 20_000
+
 export function NativeClient() {
   const accounts = useStore(s => s.accounts)
   const activeAccountId = useStore(s => s.activeAccountId)
@@ -51,6 +69,22 @@ export function NativeClient() {
     if (!active || !nativeClientSupported(active.platform)) return
     setMounted(prev => prev.includes(active.id) ? prev : [...prev, active.id])
   }, [active])
+
+  if (!webviewSupported()) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.color.chat }}>
+        <EmptyHint>
+          原生界面只能在桌面客户端里打开。
+          <br />
+          当前这个窗口是浏览器，浏览器里没有 webview 这个东西。
+          <br />
+          <span style={{ color: theme.color.textMuted }}>
+            请切换到 im-hub 应用窗口（Cmd+Tab），或点 Dock 里的图标。
+          </span>
+        </EmptyHint>
+      </div>
+    )
+  }
 
   if (!active) {
     return (
@@ -97,6 +131,16 @@ function WebviewPane({ accountId, src, visible }: {
   tokenRef.current = getSessionToken() ?? ''
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [detail, setDetail] = useState<string>('')
+
+  // 超时兜底：转圈转到天荒地老是最没用的状态，用户不知道该等还是该重来
+  useEffect(() => {
+    if (state !== 'loading') return
+    const timer = setTimeout(() => {
+      setState('failed')
+      setDetail('等了 20 秒还没加载出来。确认 telegram-tt 的开发服务器在跑（代码/telegram-tt 目录下 npm run dev），然后点右下角 ⌘ 看控制台')
+    }, READY_TIMEOUT_MS)
+    return () => { clearTimeout(timer) }
+  }, [state])
 
   useEffect(() => {
     const el = ref.current
