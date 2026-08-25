@@ -11,6 +11,7 @@ function sample(overrides: Partial<NormalizedMessage> = {}): NormalizedMessage {
     direction: 'in',
     senderExternalId: '777000',
     senderDisplayName: 'Jane',
+    conversationDisplayName: null,
     body: 'hello',
     mediaRefs: [],
     sentAt: new Date('2026-08-24T00:00:00Z'),

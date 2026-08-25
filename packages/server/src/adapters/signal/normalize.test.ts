@@ -138,3 +138,30 @@ describe('normalizeSignalMessage：应当忽略的通知', () => {
     })
   }
 })
+
+describe('normalizeSignalMessage：会话名区分群与私聊', () => {
+  it('私聊会话名就是对方（发言人）的名字', () => {
+    const m = normalizeSignalMessage(incoming(), ACCOUNT_ID)
+    expect(m?.conversationDisplayName).toBe('Alice')
+  })
+
+  it('群会话名用群名，不是发言人名——这正是"群显示成发言人"的修复点', () => {
+    const m = normalizeSignalMessage(
+      incoming({ groupInfo: { groupId: 'Z3JvdXA=' } }),
+      ACCOUNT_ID,
+      (gid) => (gid === 'Z3JvdXA=' ? '客服群' : undefined),
+    )
+    expect(m?.conversationDisplayName).toBe('客服群')
+    // 发言人仍然是那个人
+    expect(m?.senderDisplayName).toBe('Alice')
+  })
+
+  it('群名还没查到时会话名为 null，由仓储层保持已有值不动', () => {
+    const m = normalizeSignalMessage(
+      incoming({ groupInfo: { groupId: 'Z3JvdXA=' } }),
+      ACCOUNT_ID,
+      () => undefined,
+    )
+    expect(m?.conversationDisplayName).toBeNull()
+  })
+})

@@ -62,6 +62,16 @@ export class SignalAdapter implements PlatformAdapter {
   /** signal-cli 用手机号寻址账号；我们用自己的 accounts.id。两边都要能查 */
   private readonly numberByAccount = new Map<string, string>()
   private readonly accountByNumber = new Map<string, string>()
+
+  /**
+   * 群 id → 群名 的缓存，按账号号码分开存。
+   *
+   * 群名不在每条消息里，得单独 listGroups 查。一条条消息去查会打爆 signal-cli，
+   * 所以账号一上线就整批拉一次、之后遇到没见过的群再补查，查到就缓存。
+   */
+  private readonly groupNames = new Map<string, Map<string, string>>()
+  /** 正在补查的群，避免同一个群的多条消息并发查很多次 */
+  private readonly groupFetchInFlight = new Set<string>()
   /** 已经警告过的陌生号码。同一个号每条消息都刷一行会把日志淹掉 */
   private readonly warnedUnknownAccounts = new Set<string>()
 
@@ -218,7 +228,7 @@ export class SignalAdapter implements PlatformAdapter {
       return
     }
 
-    const normalized = normalizeSignalMessage(m.params, accountId)
+    const normalized = normalizeSignalMessage(m.params, accountId, (groupId) => this.groupNameFor(account, groupId))
     if (!normalized) return
     for (const h of this.messageHandlers) {
       try { h(normalized) } catch (err) {
@@ -240,6 +250,40 @@ export class SignalAdapter implements PlatformAdapter {
     })
   }
 
+  /**
+   * 拉某账号的全部群，填进群名缓存。账号上线时调一次。
+   *
+   * 失败不抛：群名拿不到只是显示成群 id，不该让整个上线流程失败。
+   */
+  private async loadGroupNames(number: string): Promise<void> {
+    try {
+      const groups = await this.request('listGroups', { account: number }) as Array<{
+        id?: string
+        name?: string
+      }>
+      const byId = this.groupNames.get(number) ?? new Map<string, string>()
+      for (const g of groups) {
+        if (g.id && g.name) byId.set(g.id, g.name)
+      }
+      this.groupNames.set(number, byId)
+    } catch (err) {
+      console.warn(`[signal] 账号 ${number} 拉取群列表失败，群名暂时显示为群 id:`, err)
+    }
+  }
+
+  /** 从缓存取群名；没有就后台补查一次，本次先返回 undefined */
+  private groupNameFor(number: string, groupId: string): string | undefined {
+    const cached = this.groupNames.get(number)?.get(groupId)
+    if (cached) return cached
+
+    const key = `${number}:${groupId}`
+    if (!this.groupFetchInFlight.has(key)) {
+      this.groupFetchInFlight.add(key)
+      void this.loadGroupNames(number).finally(() => this.groupFetchInFlight.delete(key))
+    }
+    return undefined
+  }
+
   // ── PlatformAdapter ───────────────────────────────────────────
 
   async connect(account: AdapterAccount): Promise<void> {
@@ -251,6 +295,7 @@ export class SignalAdapter implements PlatformAdapter {
       this.numberByAccount.set(account.id, account.credentialsRef)
       this.accountByNumber.set(account.credentialsRef, account.id)
       this.emitStatus(account.id, 'connected')
+      void this.loadGroupNames(account.credentialsRef)
       return
     }
 
@@ -284,6 +329,7 @@ export class SignalAdapter implements PlatformAdapter {
 
       this.numberByAccount.set(account.id, number)
       this.accountByNumber.set(number, account.id)
+      void this.loadGroupNames(number)
       // 号码就是 signal-cli 的账号寻址方式，存进 credentials_ref 供重启后自动恢复
       this.emitCredentials(account.id, number)
 

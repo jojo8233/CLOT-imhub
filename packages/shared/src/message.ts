@@ -18,7 +18,15 @@ export interface NormalizedMessage {
   platformMessageId: string
   direction: Direction
   senderExternalId: string
+  /** 发这条消息的人的名字。群里是发言人，私聊里就是对方 */
   senderDisplayName: string | null
+  /**
+   * 这条消息所属**会话**的名字。群会话是群名，私聊是对方的名字。
+   *
+   * 与 senderDisplayName 分开：群里发言人 ≠ 会话名，混用会让群显示成
+   * 某个发言人的名字。拿不到时为 null，由仓储层保持已有值不动。
+   */
+  conversationDisplayName: string | null
   body: string
   mediaRefs: MediaRef[]
   sentAt: Date

@@ -61,7 +61,11 @@ export class MessageIngestor {
       accountId: msg.accountId,
       platformConversationId: msg.platformConversationId,
       contactExternalId: isInbound ? msg.senderExternalId : null,
-      contactDisplayName: isInbound ? msg.senderDisplayName : null,
+      // 会话名优先用 conversationDisplayName（群名 / 私聊对方名）。它区分了
+      // 会话与发言人——群里不再显示成某个发言人的名字。
+      // 出站消息也可能带群名（我方在群里发言），所以不再用 isInbound 卡它。
+      contactDisplayName: msg.conversationDisplayName
+        ?? (isInbound ? msg.senderDisplayName : null),
     })
 
     const { id: messageId, isNew } = await this.repo.insertMessage({

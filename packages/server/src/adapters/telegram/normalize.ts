@@ -47,6 +47,8 @@ export function normalizeTelegramMessage(update: unknown, accountId: string): No
     direction: m.is_outgoing ? 'out' : 'in',
     senderExternalId: sender,
     senderDisplayName: null,
+    // Telegram 的群名/联系人名解析后续单独做，现在先按会话 id 显示
+    conversationDisplayName: null,
     body: m.content.text.text,
     mediaRefs: [],
     sentAt: new Date(m.date * 1000),

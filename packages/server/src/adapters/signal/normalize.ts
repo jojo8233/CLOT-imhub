@@ -103,6 +103,8 @@ function mediaOf(attachments: SignalAttachment[] | undefined): NormalizedMessage
 export function normalizeSignalMessage(
   params: unknown,
   accountId: string,
+  /** 群 id → 群名。私聊传不传都行，只在群消息里用得上 */
+  resolveGroupName?: (groupId: string) => string | undefined,
 ): NormalizedMessage | null {
   if (typeof params !== 'object' || params === null) return null
   const { envelope } = params as SignalReceiveParams
@@ -140,6 +142,8 @@ export function normalizeSignalMessage(
       direction: 'out',
       senderExternalId: self,
       senderDisplayName: envelope.sourceName ?? null,
+      // 群会话名用群名；私聊我方发出的消息不带对方名，会话名保持不动（null）
+      conversationDisplayName: groupId ? (resolveGroupName?.(groupId) ?? null) : null,
       body,
       mediaRefs: mediaOf(sent.attachments),
       sentAt: new Date(timestamp),
@@ -163,6 +167,10 @@ export function normalizeSignalMessage(
       direction: 'in',
       senderExternalId,
       senderDisplayName: envelope.sourceName ?? null,
+      // 群会话名用群名；私聊会话名就是对方（发言人）的名字
+      conversationDisplayName: groupId
+        ? (resolveGroupName?.(groupId) ?? null)
+        : (envelope.sourceName ?? null),
       body,
       mediaRefs: mediaOf(data.attachments),
       sentAt: new Date(timestamp),
