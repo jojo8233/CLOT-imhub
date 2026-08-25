@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getServerUrl, getSessionToken } from '../api/client.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
-import { EmptyHint } from './ui.js'
+import { EmptyHint, IconButton } from './ui.js'
 
 /**
  * 套壳原生客户端。
@@ -120,13 +120,30 @@ function WebviewPane({ accountId, src, visible }: {
       setState('failed')
       setDetail(`${err.errorDescription ?? '未知错误'}（${String(err.errorCode ?? '')}）`)
     }
+    // webview 是独立的渲染进程，它的 console 不会出现在外层 DevTools 里。
+    // 不转发的话，里面报什么错在外面完全看不见——只能靠猜。
+    const onConsole = (e: Event): void => {
+      const m = e as Event & { level?: number; message?: string; line?: number; sourceId?: string }
+      const tag = `[tg:${accountId.slice(0, 8)}]`
+      const where = m.sourceId ? ` (${m.sourceId}:${String(m.line ?? '')})` : ''
+      // level 2=warning 3=error，只把这两类抬到 error，其余保持 log 免得刷屏
+      if ((m.level ?? 0) >= 2) console.error(tag, m.message, where)
+      else console.log(tag, m.message)
+    }
     el.addEventListener('dom-ready', onReady)
     el.addEventListener('did-fail-load', onFail)
+    el.addEventListener('console-message', onConsole)
     return () => {
       el.removeEventListener('dom-ready', onReady)
       el.removeEventListener('did-fail-load', onFail)
+      el.removeEventListener('console-message', onConsole)
     }
-  }, [])
+  }, [accountId])
+
+  function openDevTools(): void {
+    const el = ref.current as unknown as { openDevTools?(): void } | null
+    el?.openDevTools?.()
+  }
 
   return (
     <div style={{
@@ -152,6 +169,10 @@ function WebviewPane({ accountId, src, visible }: {
           </span>
         </div>
       )}
+      {/* 调试入口。webview 出问题时这是唯一能看到里面发生什么的地方 */}
+      <div style={{ position: 'absolute', right: 10, bottom: 10, zIndex: 3, opacity: .85 }}>
+        <IconButton onClick={openDevTools} label="打开这个账号的调试控制台">⌘</IconButton>
+      </div>
       <webview
         ref={ref as never}
         src={src}
