@@ -20,6 +20,10 @@ const batchBody = z.object({
   sourceLang: z.string().min(2).max(12).optional(),
 })
 
+const detectBody = z.object({
+  text: z.string().trim().min(1).max(4000),
+})
+
 export interface TranslateRouteDeps {
   gateway: TranslationGateway
 }
@@ -57,5 +61,33 @@ export async function translateRoutes(app: FastifyInstance, deps: TranslateRoute
 
     // 顺序与入参严格一一对应，客户端靠下标配回自己的消息 id
     return { results }
+  })
+
+  /**
+   * 识别一段文字是什么语言。
+   *
+   * 发送前校对要知道「该翻成什么语言」，依据是客户最近一条消息用的语言。
+   * 借翻译引擎顺带做检测——DeepL 每次翻译都会返回 detectedLang，所以这里
+   * 翻成英文只是为了拿那个附带结果，译文本身丢掉。
+   *
+   * 命中缓存时不产生任何外部调用，所以同一个会话反复问也不费额度。
+   */
+  app.post('/api/translate/detect', async (req, reply) => {
+    const parsed = detectBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: '参数不合法' })
+
+    try {
+      const r = await deps.gateway.translate({
+        text: parsed.data.text,
+        from: 'auto',
+        to: 'en',
+        config: { global: config.DEFAULT_TRANSLATION_PROVIDER },
+      })
+      return { detectedLang: r.detectedLang }
+    } catch (err) {
+      console.error('[translate-detect] 识别失败:', err instanceof Error ? err.message : err)
+      // 识别不出来不是错误，是"不知道"。调用方据此退回默认目标语言
+      return { detectedLang: null }
+    }
   })
 }
