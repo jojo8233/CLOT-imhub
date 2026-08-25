@@ -153,8 +153,14 @@ function WebviewPane({ accountId, src, visible }: {
       // 构建配置，而这里注入的时机（dom-ready）远早于用户点开会话触发翻译，
       // 够用。将来要在页面脚本之前注入别的东西时再改成 preload。
       const cfg = JSON.stringify({ serverUrl: serverUrlRef.current, token: tokenRef.current })
+      // 写完立刻回读一次确认。注入是整条翻译链路的第一环，
+      // 它悄悄失败的话，后面所有开关看起来都是对的，就是没有译文。
       void (el as unknown as { executeJavaScript(code: string): Promise<unknown> })
-        .executeJavaScript(`window.__IM_HUB__ = ${cfg}`)
+        .executeJavaScript(`window.__IM_HUB__ = ${cfg}; Boolean(window.__IM_HUB__ && window.__IM_HUB__.token)`)
+        .then((ok: unknown) => {
+          if (ok === true) console.log('[native] im-hub 配置已注入', serverUrlRef.current)
+          else console.error('[native] im-hub 配置注入后回读失败，翻译不会生效')
+        })
         .catch((err: unknown) => { console.error('[native] 注入 im-hub 配置失败', err) })
     }
     const onFail = (e: Event): void => {
