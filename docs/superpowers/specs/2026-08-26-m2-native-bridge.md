@@ -3,6 +3,9 @@
 日期：2026-08-26
 状态：通用协议与宿主已实现；Telegram/Signal/WhatsApp 平台接线分别属于 M3/M5/M6
 
+跨对话恢复与当前 Git/PR 状态见
+`../plans/2026-08-26-m2-native-bridge-handoff.md`。
+
 ## 1. 范围
 
 M2 只建立平台无关基础，不宣称任何一个平台已经完成原生闭环：
