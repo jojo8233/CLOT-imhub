@@ -8,7 +8,7 @@ describe('normalizeTelegramMessage', () => {
       platform: 'telegram',
       accountId: 'acc-1',
       platformConversationId: '-1001234567890',
-      platformMessageId: '1048576',
+      platformMessageId: '-1001234567890:1',
       direction: 'in',
       senderExternalId: '777000',
       body: 'Hello, is this still available?',
@@ -62,6 +62,19 @@ describe('normalizeTelegramMessage', () => {
     const m = normalizeTelegramMessage(fixture, 'acc-1')!
     expect(typeof m.platformMessageId).toBe('string')
     expect(typeof m.platformConversationId).toBe('string')
+  })
+
+  it('TDLib 尚未确认的本地 id 进入临时命名空间', () => {
+    const localId = 1_048_578
+    const local = { ...fixture, message: { ...fixture.message, id: localId } }
+
+    expect(normalizeTelegramMessage(local, 'acc-1')?.platformMessageId)
+      .toBe(`-1001234567890:temp:tdlib:${localId}`)
+  })
+
+  it('无效 TDLib message id 返回 null，不让异常逃出 update 回调', () => {
+    const invalid = { ...fixture, message: { ...fixture.message, id: 0 } }
+    expect(normalizeTelegramMessage(invalid, 'acc-1')).toBeNull()
   })
 
   it('未知的发送者类型返回 null，不产生 undefined 字符串', () => {

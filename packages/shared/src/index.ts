@@ -1,5 +1,6 @@
 export * from './platform.js'
 export * from './message.js'
+export * from './telegram-message-id.js'
 export * from './native-bridge.js'
 export * from './rbac.js'
 export * from './ws.js'

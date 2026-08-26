@@ -121,6 +121,7 @@ beforeEach(async () => {
     translatedBody: null,
     sentAt: new Date('2026-08-26T00:00:00.000Z'),
     editedAt: null,
+    editVersion: null,
     deletedAt: null,
   }
 
@@ -151,8 +152,10 @@ function auth(token: string) {
   return { authorization: `Bearer ${token}` }
 }
 
+const telegramChatId = '-1001234567890'
+const canonicalMessageId = `${telegramChatId}:1`
 const context = {
-  platformConversationId: 'chat-1', contactExternalId: 'contact-1', contactDisplayName: 'Jane',
+  platformConversationId: telegramChatId, contactExternalId: '777000', contactDisplayName: 'Jane',
 }
 
 function upsertEvent() {
@@ -161,10 +164,10 @@ function upsertEvent() {
     type: 'message.upsert',
     eventId: 'event-1',
     message: {
-      platformConversationId: 'chat-1', platformMessageId: 'message-1', direction: 'in',
-      senderExternalId: 'contact-1', senderDisplayName: 'Jane', conversationDisplayName: 'Jane',
+      platformConversationId: telegramChatId, platformMessageId: canonicalMessageId, direction: 'in',
+      senderExternalId: '777000', senderDisplayName: 'Jane', conversationDisplayName: 'Jane',
       body: 'hello', mediaRefs: [], replyToPlatformMessageId: null,
-      sentAt: '2026-08-26T00:00:00.000Z', editedAt: null, raw: {},
+      sentAt: '2026-08-26T00:00:00.000Z', editedAt: null, editVersion: null, raw: {},
     },
   }
 }
@@ -177,6 +180,15 @@ describe('native bridge routes', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(upsertConversation).toHaveBeenCalledWith({ accountId, ...context })
+  })
+
+  it('Telegram 会话拒绝旧式非数字 chat id', async () => {
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: auth(agentToken),
+      payload: { accountId, context: { ...context, platformConversationId: 'chat-1' } },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(upsertConversation).not.toHaveBeenCalled()
   })
 
   it('manager 虽然能看见组员账号，也不能冒用原生桥接', async () => {
@@ -217,23 +229,39 @@ describe('native bridge routes', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(ingestDetailed).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: 'telegram', accountId, platformMessageId: 'message-1' }),
+      expect.objectContaining({ platform: 'telegram', accountId, platformMessageId: canonicalMessageId }),
       expect.any(Function),
     )
     expect(publish).toHaveBeenCalledWith(agentId, expect.objectContaining({ type: 'message' }))
+  })
+
+  it('Telegram 消息拒绝未带 chat 前缀的 TDLib 旧 id', async () => {
+    const base = upsertEvent()
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      payload: {
+        accountId,
+        event: { ...base, message: { ...base.message, platformMessageId: '1048576' } },
+      },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(ingestDetailed).not.toHaveBeenCalled()
   })
 
   it('首次见到的编辑版本在 message 事件中保留 editedAt revision', async () => {
     const base = upsertEvent()
     const event = {
       ...base,
-      message: { ...base.message, editedAt: '2026-08-26T08:00:00+07:00' },
+      message: {
+        ...base.message, editedAt: '2026-08-26T08:00:00+07:00', editVersion: 10,
+      },
     }
     publicationSnapshot = {
       ...publicationSnapshot,
       body: 'canonical edited body',
       translatedBody: '规范译文',
       editedAt: new Date('2026-08-26T01:00:00.000Z'),
+      editVersion: 10,
     }
     const response = await app.inject({
       method: 'POST', url: '/api/native/events', headers: auth(agentToken),
@@ -254,6 +282,7 @@ describe('native bridge routes', () => {
       body: 'edited body',
       translatedBody: '已完成译文',
       editedAt: new Date('2026-08-26T01:00:00.000Z'),
+      editVersion: 11,
     }
     const base = upsertEvent()
     const response = await app.inject({
@@ -262,7 +291,12 @@ describe('native bridge routes', () => {
         accountId,
         event: {
           ...base,
-          message: { ...base.message, body: 'edited body', editedAt: '2026-08-26T01:00:00Z' },
+          message: {
+            ...base.message,
+            body: 'edited body',
+            editedAt: '2026-08-26T01:00:00Z',
+            editVersion: 11,
+          },
         },
       },
     })
@@ -314,7 +348,8 @@ describe('native bridge routes', () => {
         event: {
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'message.id-remapped', eventId: 'remap-1',
-          oldPlatformMessageId: 'temp-1', newPlatformMessageId: 'final-1',
+          oldPlatformMessageId: `${telegramChatId}:temp:telegram-tt:1.000001`,
+          newPlatformMessageId: canonicalMessageId,
         },
       },
     })
@@ -337,11 +372,12 @@ describe('native bridge routes', () => {
         event: {
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'message.id-remapped', eventId: 'remap-cross',
-          oldPlatformMessageId: 'chat-a:1', newPlatformMessageId: 'chat-b:1',
+          oldPlatformMessageId: '-100111:1', newPlatformMessageId: '-100222:1',
         },
       },
     })
     expect(response.statusCode).toBe(422)
+    expect(remapMessageId).not.toHaveBeenCalled()
     expect(publish).not.toHaveBeenCalled()
   })
 

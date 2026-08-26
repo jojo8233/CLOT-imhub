@@ -1,10 +1,11 @@
 import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../db/types.js'
-import type {
-  InsertMessageInput,
-  InsertMessageResult,
-  MessageRepo,
-  UpsertConversationInput,
+import {
+  messageRevision,
+  type InsertMessageInput,
+  type InsertMessageResult,
+  type MessageRepo,
+  type UpsertConversationInput,
 } from './ingestor.js'
 
 export interface SaveTranslationIfCurrentInput {
@@ -37,6 +38,7 @@ export interface MessagePublicationSnapshot {
   translatedBody: string | null
   sentAt: Date
   editedAt: Date | null
+  editVersion: number | null
   deletedAt: Date | null
 }
 
@@ -47,6 +49,7 @@ interface StoredMessageIdentity {
   body: string
   body_lang: string | null
   edited_at: Date | null
+  edit_version: number | null
   deleted_at: Date | null
 }
 
@@ -57,6 +60,11 @@ function laterDate(left: Date | null, right: Date | null): Date | null {
 }
 
 function firstHasNewerEdit(first: StoredMessageIdentity, second: StoredMessageIdentity): boolean {
+  if (first.edit_version !== null || second.edit_version !== null) {
+    if (first.edit_version === null) return false
+    if (second.edit_version === null) return true
+    return first.edit_version > second.edit_version
+  }
   return first.edited_at !== null
     && (second.edited_at === null || first.edited_at > second.edited_at)
 }
@@ -184,6 +192,7 @@ export class KyselyMessageRepo implements MessageRepo {
           media_refs: JSON.stringify(input.mediaRefs) as never,
           reply_to_platform_message_id: input.replyToPlatformMessageId,
           edited_at: input.editedAt,
+          edit_version: input.editVersion,
           deleted_at: null,
           sent_at: input.sentAt,
           raw: JSON.stringify(input.raw) as never,
@@ -205,11 +214,12 @@ export class KyselyMessageRepo implements MessageRepo {
       // 与编辑更新争用同一行锁：谁先拿到都能得到确定结果。旧任务若先写，随后
       // 的编辑会删除译文；编辑若先完成，这里会看到新 revision 并拒绝旧结果。
       const message = await trx.selectFrom('messages')
-        .select('edited_at')
+        .select(['edited_at', 'edit_version'])
         .where('id', '=', input.messageId)
         .forUpdate()
         .executeTakeFirst()
-      if (!message || (message.edited_at?.toISOString() ?? 'initial') !== input.revision) return false
+      if (!message
+        || messageRevision(message.edit_version, message.edited_at) !== input.revision) return false
 
       await trx.insertInto('message_translations').values({
         message_id: input.messageId,
@@ -240,7 +250,7 @@ export class KyselyMessageRepo implements MessageRepo {
       const row = await trx.selectFrom('messages')
         .select([
           'id', 'conversation_id', 'account_id', 'platform', 'direction', 'body',
-          'sent_at', 'edited_at', 'deleted_at',
+          'sent_at', 'edited_at', 'edit_version', 'deleted_at',
         ])
         .where('id', '=', messageId)
         .forShare()
@@ -270,6 +280,7 @@ export class KyselyMessageRepo implements MessageRepo {
         translatedBody: translation?.translated_text ?? null,
         sentAt: row.sent_at,
         editedAt: row.edited_at,
+        editVersion: row.edit_version,
         deletedAt: row.deleted_at,
       })
       return true
@@ -284,7 +295,7 @@ export class KyselyMessageRepo implements MessageRepo {
     const direct = await executor.selectFrom('messages')
       .select([
         'id', 'conversation_id', 'platform_message_id', 'body', 'body_lang',
-        'edited_at', 'deleted_at',
+        'edited_at', 'edit_version', 'deleted_at',
       ])
       .where('account_id', '=', accountId)
       .where('platform_message_id', '=', platformMessageId)
@@ -300,6 +311,7 @@ export class KyselyMessageRepo implements MessageRepo {
         'messages.body as body',
         'messages.body_lang as body_lang',
         'messages.edited_at as edited_at',
+        'messages.edit_version as edit_version',
         'messages.deleted_at as deleted_at',
       ])
       .where('message_id_aliases.account_id', '=', accountId)
@@ -309,10 +321,17 @@ export class KyselyMessageRepo implements MessageRepo {
 
   private async updateExistingMessage(
     trx: Transaction<Database>,
-    existing: { id: string; edited_at: Date | null },
+    existing: { id: string; edited_at: Date | null; edit_version: number | null },
     input: InsertMessageInput,
   ): Promise<InsertMessageResult> {
-    if (!input.editedAt) return { id: existing.id, isNew: false, contentChanged: false }
+    if (!input.editedAt && input.editVersion === null) {
+      return { id: existing.id, isNew: false, contentChanged: false }
+    }
+
+    const isNewerEdit = input.editVersion === null
+      ? sql<boolean>`edit_version is null
+          and (edited_at is null or edited_at < ${input.editedAt})`
+      : sql<boolean>`(edit_version is null or edit_version < ${input.editVersion})`
 
     const updated = await trx.updateTable('messages')
       .set({
@@ -320,11 +339,12 @@ export class KyselyMessageRepo implements MessageRepo {
         body_lang: null,
         media_refs: JSON.stringify(input.mediaRefs) as never,
         reply_to_platform_message_id: input.replyToPlatformMessageId,
-        edited_at: input.editedAt,
+        edited_at: input.editedAt ?? existing.edited_at,
+        edit_version: input.editVersion,
         raw: JSON.stringify(input.raw) as never,
       })
       .where('id', '=', existing.id)
-      .where(sql<boolean>`(edited_at is null or edited_at < ${input.editedAt})`)
+      .where(isNewerEdit)
       .executeTakeFirst()
     const contentChanged = (updated.numUpdatedRows ?? 0n) > 0n
 

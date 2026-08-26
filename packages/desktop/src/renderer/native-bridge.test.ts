@@ -31,6 +31,14 @@ describe('parseNativeGuestEvent', () => {
     })).toMatchObject({ type: 'context.changed', contextRevision: 2 })
   })
 
+  it('接受平台客户端报告的稳定账号身份', () => {
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'account.identity',
+      platformAccountExternalId: '778899',
+    })).toMatchObject({ type: 'account.identity', platformAccountExternalId: '778899' })
+  })
+
   it('拒绝缺平台消息 id 的回传事件', () => {
     expect(parseNativeGuestEvent({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
@@ -43,7 +51,7 @@ describe('parseNativeGuestEvent', () => {
       platformConversationId: 'c-1', platformMessageId: 'm-1', direction: 'in',
       senderExternalId: 'u-1', senderDisplayName: null, conversationDisplayName: null,
       body: '', replyToPlatformMessageId: null, sentAt: '2026-08-26T00:00:00Z',
-      editedAt: null, raw: {},
+      editedAt: null, editVersion: null, raw: {},
     }
     expect(parseNativeGuestEvent({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
@@ -65,8 +73,26 @@ describe('parseNativeGuestEvent', () => {
         platformConversationId: 'c-1', platformMessageId: 'm-1', direction: 'in',
         senderExternalId: 'u-1', senderDisplayName: null, conversationDisplayName: null,
         body: '', mediaRefs: [], replyToPlatformMessageId: null,
-        sentAt: '2026-08-26T00:00:00Z', editedAt: null, raw: { unsupported: 1n },
+        sentAt: '2026-08-26T00:00:00Z', editedAt: null, editVersion: null,
+        raw: { unsupported: 1n },
       },
+    })).toBeNull()
+  })
+
+  it('拒绝缺失或非法的单调编辑版本', () => {
+    const message = {
+      platformConversationId: '-100123', platformMessageId: '-100123:1', direction: 'in',
+      senderExternalId: 'u-1', senderDisplayName: null, conversationDisplayName: null,
+      body: '', mediaRefs: [], replyToPlatformMessageId: null,
+      sentAt: '2026-08-26T00:00:00Z', editedAt: null, raw: {},
+    }
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.upsert', eventId: 'e-1', message,
+    })).toBeNull()
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.upsert', eventId: 'e-1', message: { ...message, editVersion: -1 },
     })).toBeNull()
   })
 
@@ -106,12 +132,13 @@ describe('nativeComposerBridge', () => {
       send: (_channel, command) => { sent = command as NativeComposerCommand },
     })
 
-    const pending = nativeComposerBridge.send(context)
+    const pending = nativeComposerBridge.send(context, 'attempt-1')
     const command = sent!
+    expect(command).toMatchObject({ type: 'composer.send', attemptId: 'attempt-1' })
     handleNativeCommandResult(context.accountId, {
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'command.result', requestId: command.requestId, command: command.type,
-      contextRevision: 8, ok: true, platformMessageId: 'm-1',
+      contextRevision: 8, ok: true, attemptId: 'attempt-1', platformMessageId: 'm-1',
     })
     await expect(pending).rejects.toThrow('过期或不匹配')
     unregister()

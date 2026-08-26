@@ -1,5 +1,6 @@
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
+  NATIVE_EDIT_VERSION_MAX,
   type NativeCommandName,
   type NativeComposerCommand,
   type NativeCommandResultEvent,
@@ -21,6 +22,7 @@ interface PendingCommand {
   accountId: string
   command: NativeCommandName
   contextRevision: number
+  attemptId: string | null
   timer: ReturnType<typeof setTimeout>
   resolve(event: NativeCommandResultEvent): void
   reject(error: Error): void
@@ -66,6 +68,10 @@ export function handleNativeCommandResult(accountId: string, event: NativeComman
     command.reject(new NativeBridgeCommandError('原生客户端返回了过期或不匹配的命令结果'))
     return true
   }
+  if (command.command === 'composer.send' && event.attemptId !== command.attemptId) {
+    command.reject(new NativeBridgeCommandError('原生客户端返回了不匹配的发送 attemptId'))
+    return true
+  }
   if (!event.ok) {
     command.reject(new NativeBridgeCommandError(event.error?.message ?? '原生客户端命令执行失败'))
     return true
@@ -90,6 +96,7 @@ async function sendCommand(
       accountId: context.accountId,
       command: command.type,
       contextRevision: context.contextRevision,
+      attemptId: command.type === 'composer.send' ? command.attemptId : null,
       timer,
       resolve,
       reject,
@@ -124,8 +131,13 @@ export const nativeComposerBridge = {
     return result.draft
   },
 
-  async send(context: NativeCommandContext): Promise<string> {
-    const result = await sendCommand(context, { ...baseCommand(context), type: 'composer.send' })
+  async send(context: NativeCommandContext, attemptId: string = crypto.randomUUID()): Promise<string> {
+    if (attemptId.trim() === '' || attemptId.length > 128) {
+      throw new NativeBridgeCommandError('发送 attemptId 无效')
+    }
+    const result = await sendCommand(context, {
+      ...baseCommand(context), type: 'composer.send', attemptId,
+    })
     if (!result.platformMessageId) throw new NativeBridgeCommandError('原生客户端没有返回最终消息 ID')
     return result.platformMessageId
   },
@@ -182,6 +194,9 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
   switch (value.type) {
     case 'bridge.ready':
       return value as unknown as NativeGuestEvent
+    case 'account.identity':
+      if (!nonEmptyString(value.platformAccountExternalId, 512)) return null
+      return value as unknown as NativeGuestEvent
     case 'context.changed': {
       if (!Number.isSafeInteger(value.contextRevision) || (value.contextRevision as number) < 0) return null
       if (value.context === null) return value as unknown as NativeGuestEvent
@@ -202,6 +217,9 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
         || !['composer.set-draft', 'composer.get-draft', 'composer.send'].includes(String(value.command))
         || !Number.isSafeInteger(value.contextRevision)
         || typeof value.ok !== 'boolean'
+        || (value.command === 'composer.send'
+          ? !nonEmptyString(value.attemptId, 128)
+          : value.attemptId !== undefined)
         || (value.draft !== undefined && !string(value.draft))
         || (value.platformMessageId !== undefined && !nonEmptyString(value.platformMessageId, 512))
         || (value.error !== undefined && (!record(value.error)
@@ -226,6 +244,11 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
         || !nullableString(message.replyToPlatformMessageId, 512)
         || !string(message.sentAt, 64)
         || !nullableString(message.editedAt, 64)
+        || (message.editVersion !== null
+          && (!Number.isSafeInteger(message.editVersion)
+            || (message.editVersion as number) < 0
+            || (message.editVersion as number) > NATIVE_EDIT_VERSION_MAX))
+        || (message.editVersion !== null && message.editedAt === null)
         || !jsonRecord(message.raw)) return null
       return value as unknown as NativeGuestEvent
     }

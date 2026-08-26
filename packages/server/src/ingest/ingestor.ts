@@ -19,6 +19,7 @@ export interface InsertMessageInput {
   mediaRefs: MediaRef[]
   replyToPlatformMessageId: string | null
   editedAt: Date | null
+  editVersion: number | null
   sentAt: Date
   raw: unknown
 }
@@ -51,6 +52,12 @@ export interface MessageRepo {
 
 export interface TranslateQueue {
   enqueueTranslate(job: { messageId: string; conversationId: string; revision?: string }): Promise<void>
+}
+
+export function messageRevision(editVersion: number | null, editedAt: Date | null): string {
+  return editVersion === null
+    ? editedAt?.toISOString() ?? 'initial'
+    : `version:${editVersion}`
 }
 
 /**
@@ -93,6 +100,7 @@ export class MessageIngestor {
       mediaRefs: msg.mediaRefs,
       replyToPlatformMessageId: msg.replyToPlatformMessageId ?? null,
       editedAt: msg.editedAt ?? null,
+      editVersion: msg.editVersion ?? null,
       sentAt: msg.sentAt,
       raw: msg.raw,
     })
@@ -112,7 +120,7 @@ export class MessageIngestor {
       await this.queue.enqueueTranslate({
         messageId,
         conversationId,
-        revision: msg.editedAt?.toISOString() ?? 'initial',
+        revision: messageRevision(msg.editVersion ?? null, msg.editedAt ?? null),
       })
     }
 

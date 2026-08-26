@@ -34,6 +34,8 @@ export interface NativeConversationState extends NativeConversationContext {
 export interface NativeAccountBridgeState {
   connection: NativeBridgeConnection
   error: string | null
+  /** guest 报告的实际平台登录账号；M3 control grant 用它做身份绑定。 */
+  platformAccountExternalId: string | null
   context: NativeConversationState | null
   /** 原生客户端对当前 revision 的实时可发送状态。 */
   composerCanSend: boolean
@@ -89,6 +91,7 @@ interface State {
   setAccountStatus(accountId: string, status: string): void
   updateConversationTargetLang(id: string, targetLang: string | null): void
   setNativeBridgeConnection(accountId: string, connection: NativeBridgeConnection, error?: string | null): void
+  setNativeAccountIdentity(accountId: string, platformAccountExternalId: string | null): void
   setNativeContext(accountId: string, context: NativeConversationState | null): void
   resolveNativeConversation(
     accountId: string,
@@ -192,10 +195,24 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection,
         error,
+        platformAccountExternalId:
+          s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context: s.nativeBridgeByAccount[accountId]?.context ?? null,
         composerCanSend: connection === 'ready'
           ? s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false
           : false,
+      },
+    },
+  })),
+  setNativeAccountIdentity: (accountId, platformAccountExternalId) => set((s) => ({
+    nativeBridgeByAccount: {
+      ...s.nativeBridgeByAccount,
+      [accountId]: {
+        connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
+        error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        platformAccountExternalId,
+        context: s.nativeBridgeByAccount[accountId]?.context ?? null,
+        composerCanSend: s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false,
       },
     },
   })),
@@ -205,6 +222,8 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
         error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        platformAccountExternalId:
+          s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context,
         composerCanSend: false,
       },

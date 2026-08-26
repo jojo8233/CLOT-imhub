@@ -23,11 +23,14 @@ Telegram fork 在 M3 实现协议适配并做真实多开、媒体、发送和�
 
 ## 2. 协议
 
-协议定义集中在 `packages/shared/src/native-bridge.ts`，当前版本为 `1`。
+协议定义集中在 `packages/shared/src/native-bridge.ts`。M2 初始版本为 1；M3-1 已升级到
+版本 2，canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调
+`editVersion` 的详细规则见 `2026-08-26-m3-telegram-message-identity.md`。
 
 guest → host：
 
 - `bridge.ready`
+- `account.identity`（v2）
 - `context.changed`
 - `composer.state`
 - `command.result`
@@ -43,7 +46,8 @@ host → guest：
 - `composer.send`
 - `event.ack`
 
-草稿命令带 `requestId` 与 `contextRevision`。会话改变后旧 revision 的结果必须拒绝，
+草稿命令带 `requestId` 与 `contextRevision`；v2 的 `composer.send` 另带稳定
+`attemptId`。会话改变后旧 revision 的结果必须拒绝，
 避免异步翻译或发送落到后来打开的会话。消息事件带稳定 `eventId`；服务端失败时
 外壳回 `event.ack { accepted: false, retryable: true }`，补丁客户端以同一 eventId 重试。
 
@@ -61,8 +65,9 @@ host 按事件所属常驻 webview 绑定 accountId，guest 只上报 `platformC
 `platformMessageId`、reply id、delete id 和 remap 两端都是**账号范围内稳定且唯一**的
 规范消息键。平台原始 id 若只在会话内唯一，必须把规范 conversation/chat id 编入键中，
 所有消息来源必须使用同一算法。Telegram 当前 TDLib `message.id` 与 telegram-tt MTP id
-编码不同且都带 chat-local 语义；M3 必须用真实 fixture 统一为同一
-`chatId:serverMessageId` 形式并迁移历史数据。alias 只处理同一规范体系内的临时/最终 id，
+编码不同且都带 chat-local 语义；M3-1 已实现同一 `chatId:serverMessageId` 算法与
+`0005` 历史迁移，真实账号 fixture 和 shadow 对账仍是后续验收项。alias 只处理同一规范
+体系内的临时/最终 id，
 不能替代跨来源规范化。
 
 ## 3. Electron 安全边界
@@ -108,8 +113,9 @@ renderer owner/auditor 门禁不是安全边界。`bridge.ready` 也尚未绑定
 transaction advisory lock 覆盖多实例；发布前在行锁内重读规范消息与当前译文，避免旧
 事件覆盖新编辑。纯媒体消息存档但不派发空正文翻译。
 
-当前编辑 revision 只能使用平台 `editedAt`。如果平台时间精度内出现多次编辑，无法可靠
-区分先后；M3 平台事件应补充单调 edit/version 序号后再宣称快速连续编辑闭环。
+v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只接受更大的版本；旧适配器
+仍可传 null 并回退到 `editedAt`。telegram-tt outbox 尚未实际产生该序号，所以真实快速
+连续编辑仍要在 M3-4/M3-5 验收后才能宣称闭环。
 
 ## 5. 输入坞状态与隔离
 
@@ -144,8 +150,8 @@ Telegram fork 需要：
 - 收发、编辑、删除和最终 id 事件进入带重试的 outbox
 - 收到 `event.ack` 后才能从 outbox 移除事件
 - 外壳桥接 ready 后隐藏/停用 fork 内部旧 `ImHubComposer`，避免双入口
-- 在开始 shadow 前统一 TDLib/fork 的 `chatId:serverMessageId` 规范键并迁移历史数据；
-  用真实 fixture 和账号验证同一消息只落一行，再决定旧后台链路退出时机
+- M3-1 已统一 TDLib/fork 的 `chatId:serverMessageId` 规范键并提供历史迁移；开始
+  shadow 前仍要用真实 fixture 和账号验证同一消息只落一行，再决定旧后台链路退出时机
 - 用稳定 attempt id 解决发送超时的结果未知；对 outbox 做同账号 single-flight/限流
 - 以短时 account-control grant 把 owner/auditor 门禁移到主进程，并绑定实际平台账号身份
 - 移除 guest JWT 注入；账号删除时退出并清理对应持久化 partition

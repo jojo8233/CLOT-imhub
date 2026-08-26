@@ -6,7 +6,7 @@ import { AdapterManager } from './adapters/manager.js'
 import { SignalAdapter } from './adapters/signal/adapter.js'
 import { TelegramAdapter } from './adapters/telegram/adapter.js'
 import { KyselyMessageRepo } from './ingest/repo.js'
-import { MessageIngestor } from './ingest/ingestor.js'
+import { MessageIngestor, messageRevision } from './ingest/ingestor.js'
 import { BullTranslateQueue, TRANSLATE_QUEUE, type TranslateJobData } from './pipeline/queue.js'
 import { runTranslateJob } from './pipeline/translate-job.js'
 import { TranslationCache } from './translation/cache.js'
@@ -49,7 +49,7 @@ const ingestor = new MessageIngestor(messageRepo, queue)
 adapters.onMessage((msg) => {
   void (async () => {
     await ingestor.ingestDetailed(msg, async result => {
-      if (!result.isNew && !msg.editedAt) return
+      if (!result.isNew && !msg.editedAt && msg.editVersion == null) return
 
       // 必须在翻译任务入队前推新消息。否则极快的 worker 可能先发 translation，
       // 客户端还没有对应消息行，只能丢掉这条实时译文。
@@ -69,11 +69,15 @@ adapters.onMessage((msg) => {
             sentAt: message.sentAt.toISOString(),
             editedAt: message.editedAt?.toISOString() ?? null,
           })
-        } else if (message.editedAt
-          && msg.editedAt
-          && message.editedAt.toISOString() === msg.editedAt.toISOString()) {
+        } else if ((msg.editVersion != null && message.editVersion === msg.editVersion)
+          || (msg.editVersion == null
+            && message.editVersion === null
+            && message.editedAt
+            && msg.editedAt
+            && message.editedAt.toISOString() === msg.editedAt.toISOString())) {
           // shadow/fallback 适配器与原生回传可能竞争同一编辑。哪条链路先
           // 落库，哪条就负责发 update；后到的重放会被 revision 去重。
+          if (!message.editedAt) return
           hub.publishTo(message.ownerUserId, {
             type: 'message_updated',
             messageId: message.id,
@@ -169,7 +173,7 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
   await runTranslateJob(job.data, {
     loadMessage: async (id) => {
       const row = await db.selectFrom('messages')
-        .select(['id', 'body', 'direction', 'conversation_id', 'edited_at'])
+        .select(['id', 'body', 'direction', 'conversation_id', 'edited_at', 'edit_version'])
         .where('id', '=', id)
         .executeTakeFirst()
       return row
@@ -178,7 +182,7 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
             body: row.body,
             direction: row.direction,
             conversationId: row.conversation_id,
-            revision: row.edited_at?.toISOString() ?? 'initial',
+            revision: messageRevision(row.edit_version, row.edited_at),
           }
         : null
     },

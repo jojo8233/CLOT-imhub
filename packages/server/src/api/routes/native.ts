@@ -7,7 +7,12 @@ import type {
   Platform,
   WsServerEvent,
 } from '@im-hub/shared'
-import { NATIVE_BRIDGE_PROTOCOL_VERSION } from '@im-hub/shared'
+import {
+  NATIVE_BRIDGE_PROTOCOL_VERSION,
+  NATIVE_EDIT_VERSION_MAX,
+  normalizeTelegramChatId,
+  parseTelegramMessageKey,
+} from '@im-hub/shared'
 import { z } from 'zod'
 import type { MessageIngestor, UpsertConversationInput } from '../../ingest/ingestor.js'
 import type { MessageIdRemapResult, MessagePublicationSnapshot } from '../../ingest/repo.js'
@@ -41,7 +46,10 @@ const messageSnapshotSchema = z.object({
   replyToPlatformMessageId: id.nullable(),
   sentAt: timestamp,
   editedAt: timestamp.nullable(),
+  editVersion: z.number().int().min(0).max(NATIVE_EDIT_VERSION_MAX).nullable(),
   raw: z.record(z.unknown()),
+}).refine(message => message.editVersion === null || message.editedAt !== null, {
+  message: 'editVersion requires editedAt',
 })
 
 const eventSchema = z.discriminatedUnion('type', [
@@ -112,6 +120,10 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
 
     const account = await requireOwnedNativeAccount(req, parsed.data.accountId)
     if (!account) return reply.code(404).send({ error: 'not found' })
+    if (account.platform === 'telegram'
+      && !isCanonicalTelegramChatId(parsed.data.context.platformConversationId)) {
+      return reply.code(422).send({ error: 'invalid canonical Telegram chat id' })
+    }
 
     const conversation = await deps.repo.upsertConversation({
       accountId: account.id,
@@ -130,6 +142,10 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     if (!account) return reply.code(404).send({ error: 'not found' })
 
     const event = parsed.data.event
+    if (account.platform === 'telegram') {
+      const canonicalError = validateCanonicalTelegramEvent(event)
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
+    }
     if (event.type === 'message.upsert') {
       const result = await ingestNativeMessage(
         deps.ingestor,
@@ -156,11 +172,10 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
                 sentAt: message.sentAt.toISOString(),
                 editedAt: message.editedAt?.toISOString() ?? null,
               })
-            } else if (message.editedAt
-              && event.message.editedAt
-              && message.editedAt.toISOString() === new Date(event.message.editedAt).toISOString()) {
+            } else if (sameEditRevision(message, event)) {
               // 不只看本次 contentChanged：首次编辑已落库但在发布前失败时，
               // 同 revision 重试必须重发规范快照，否则客户端会永久留在旧正文。
+              if (!message.editedAt) return
               deps.publish(req.actor.userId, {
                 type: 'message_updated',
                 messageId: message.id,
@@ -227,6 +242,7 @@ async function ingestNativeMessage(
     mediaRefs: event.message.mediaRefs,
     replyToPlatformMessageId: event.message.replyToPlatformMessageId,
     editedAt: event.message.editedAt ? new Date(event.message.editedAt) : null,
+    editVersion: event.message.editVersion,
     sentAt: new Date(event.message.sentAt),
     raw: event.message.raw,
   }
@@ -239,4 +255,59 @@ function deleteNativeMessage(repo: NativeEventRepo, accountId: string, event: Na
 
 function remapNativeMessage(repo: NativeEventRepo, accountId: string, event: NativeMessageIdRemappedEvent) {
   return repo.remapMessageId(accountId, event.oldPlatformMessageId, event.newPlatformMessageId)
+}
+
+function isCanonicalTelegramChatId(chatId: string): boolean {
+  try {
+    return normalizeTelegramChatId(chatId) === chatId
+  } catch {
+    return false
+  }
+}
+
+function validateCanonicalTelegramEvent(
+  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent | NativeMessageIdRemappedEvent,
+): string | null {
+  if (event.type === 'message.upsert') {
+    if (!isCanonicalTelegramChatId(event.message.platformConversationId)) {
+      return 'invalid canonical Telegram chat id'
+    }
+    const message = parseTelegramMessageKey(event.message.platformMessageId)
+    if (!message || message.chatId !== event.message.platformConversationId) {
+      return 'Telegram message id does not match its chat id'
+    }
+    if (event.message.replyToPlatformMessageId) {
+      const reply = parseTelegramMessageKey(event.message.replyToPlatformMessageId)
+      if (!reply || reply.chatId !== message.chatId) {
+        return 'Telegram reply id does not match its chat id'
+      }
+    }
+    return null
+  }
+
+  if (event.type === 'message.deleted') {
+    return parseTelegramMessageKey(event.platformMessageId)
+      ? null
+      : 'invalid canonical Telegram message id'
+  }
+
+  const oldMessage = parseTelegramMessageKey(event.oldPlatformMessageId)
+  const newMessage = parseTelegramMessageKey(event.newPlatformMessageId)
+  if (!oldMessage || !newMessage) return 'invalid canonical Telegram message id'
+  return oldMessage.chatId === newMessage.chatId
+    ? null
+    : 'Telegram message remap crosses chats'
+}
+
+function sameEditRevision(
+  message: MessagePublicationSnapshot,
+  event: NativeMessageUpsertEvent,
+): boolean {
+  if (event.message.editVersion !== null) {
+    return message.editVersion === event.message.editVersion
+  }
+  return message.editVersion === null
+    && message.editedAt !== null
+    && event.message.editedAt !== null
+    && message.editedAt.toISOString() === new Date(event.message.editedAt).toISOString()
 }
