@@ -6,6 +6,7 @@ function account(id: string, platform: string): AccountRow {
   return {
     id,
     platform,
+    owner_user_id: id,
     display_name: id,
     status: 'connected',
     history_available_from: null,
@@ -42,7 +43,8 @@ describe('platform-scoped Zustand navigation', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setActiveAccount('tg-2')
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'hello', sent_at: '2026-08-26T00:00:00Z', translated_text: null,
+      id: 'm1', direction: 'in', body: 'hello', sent_at: '2026-08-26T00:00:00Z',
+      edited_at: null, translated_text: null,
     }])
 
     useStore.getState().setAccounts(accounts.filter(item => item.id !== 'tg-2'))
@@ -74,4 +76,133 @@ describe('platform-scoped Zustand navigation', () => {
       lastActiveAccountByPlatform: {},
     })
   })
+
+  it('原生会话解析只接受当前 revision，迟到响应不能覆盖新会话', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeContext('tg-1', {
+      platformConversationId: 'chat-old', contactExternalId: 'u-old', contactDisplayName: null,
+      contextRevision: 1, conversationId: null,
+    })
+    useStore.getState().setNativeContext('tg-1', {
+      platformConversationId: 'chat-new', contactExternalId: 'u-new', contactDisplayName: null,
+      contextRevision: 2, conversationId: null,
+    })
+    useStore.getState().resolveNativeConversation('tg-1', 1, 'chat-old', 'server-old')
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.context).toMatchObject({
+      platformConversationId: 'chat-new', contextRevision: 2, conversationId: null,
+    })
+  })
+
+  it('新 guest 复用 revision 时，旧进程响应不能把会话 UUID 串到新会话', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeContext('tg-1', {
+      platformConversationId: 'chat-new', contactExternalId: 'u-new', contactDisplayName: null,
+      contextRevision: 1, conversationId: null,
+    })
+    useStore.getState().resolveNativeConversation('tg-1', 1, 'chat-old', 'server-old')
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.context).toMatchObject({
+      platformConversationId: 'chat-new', contextRevision: 1, conversationId: null,
+    })
+  })
+
+  it('草稿按账号和服务端会话隔离', () => {
+    useStore.getState().updateNativeDraft('tg-1:conv-1', { sourceText: '甲' })
+    useStore.getState().updateNativeDraft('tg-1:conv-2', { sourceText: '乙' })
+    useStore.getState().updateNativeDraft('tg-2:conv-1', { sourceText: '丙' })
+    expect(useStore.getState().nativeDrafts).toMatchObject({
+      'tg-1:conv-1': { sourceText: '甲' },
+      'tg-1:conv-2': { sourceText: '乙' },
+      'tg-2:conv-1': { sourceText: '丙' },
+    })
+  })
+
+  it('只接受当前会话 revision 的 composer 状态，并以原生框可发送性为准', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeContext('tg-1', {
+      platformConversationId: 'chat-1', contactExternalId: 'u-1', contactDisplayName: null,
+      contextRevision: 3, conversationId: 'conv-1',
+    })
+    useStore.getState().applyNativeComposerState('tg-1', 2, 'chat-old', '迟到草稿', true)
+    expect(useStore.getState().nativeDrafts['tg-1:conv-1']).toBeUndefined()
+
+    useStore.getState().updateNativeDraft('tg-1:conv-1', {
+      sourceText: '你好', translatedText: 'hello', status: 'ready',
+    })
+    useStore.getState().applyNativeComposerState('tg-1', 3, 'chat-1', 'employee edited', true)
+    expect(useStore.getState()).toMatchObject({
+      nativeBridgeByAccount: { 'tg-1': { composerCanSend: true } },
+      nativeDrafts: {
+        'tg-1:conv-1': { translatedText: 'hello', status: 'ready' },
+      },
+    })
+
+    useStore.getState().applyNativeComposerState('tg-1', 3, 'chat-1', '', false)
+    expect(useStore.getState()).toMatchObject({
+      nativeBridgeByAccount: { 'tg-1': { composerCanSend: false } },
+      nativeDrafts: { 'tg-1:conv-1': { translatedText: '', status: 'idle' } },
+    })
+  })
+
+  it('首次 composer 状态到达时没有本地草稿也不会抛错或伪造 ready', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeContext('tg-1', {
+      platformConversationId: 'chat-1', contactExternalId: 'u-1', contactDisplayName: null,
+      contextRevision: 1, conversationId: 'conv-1',
+    })
+
+    expect(() => {
+      useStore.getState().applyNativeComposerState('tg-1', 1, 'chat-1', 'native draft', true)
+    }).not.toThrow()
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.composerCanSend).toBe(true)
+    expect(useStore.getState().nativeDrafts['tg-1:conv-1']).toBeUndefined()
+  })
+
+  it('改变回复语言后，原生框旧译文不能自行重建 ready 状态', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeContext('tg-1', {
+      platformConversationId: 'chat-1', contactExternalId: 'u-1', contactDisplayName: null,
+      contextRevision: 3, conversationId: 'conv-1',
+    })
+    useStore.getState().updateNativeDraft('tg-1:conv-1', {
+      sourceText: '你好', translatedText: '', status: 'idle',
+    })
+    useStore.getState().applyNativeComposerState('tg-1', 3, 'chat-1', 'old English', true)
+    expect(useStore.getState().nativeDrafts['tg-1:conv-1']).toMatchObject({
+      translatedText: '', status: 'idle',
+    })
+  })
+
+  it('只把译文应用到同一正文 revision', () => {
+    useStore.getState().setMessages([{
+      id: 'm1', direction: 'in', body: 'edited', sent_at: '2026-08-26T00:00:00Z',
+      edited_at: '2026-08-26T01:00:00.000Z', translated_text: null,
+    }])
+    useStore.getState().applyTranslation('m1', '旧译文', 'initial')
+    expect(useStore.getState().messages[0]?.translated_text).toBeNull()
+    useStore.getState().applyTranslation('m1', '新译文', '2026-08-26T01:00:00.000Z')
+    expect(useStore.getState().messages[0]?.translated_text).toBe('新译文')
+  })
+
+  it('编辑更新原子带入已有译文，且迟到旧 revision 不能回退正文', () => {
+    useStore.getState().setMessages([{
+      id: 'm1', direction: 'in', body: 'v2', sent_at: '2026-08-26T00:00:00Z',
+      edited_at: '2026-08-26T02:00:00.000Z', translated_text: '译文 v2',
+    }])
+    useStore.getState().updateMessage(
+      'm1', 'v1', '2026-08-26T01:00:00.000Z', '译文 v1',
+    )
+    expect(useStore.getState().messages[0]).toMatchObject({
+      body: 'v2', translated_text: '译文 v2',
+    })
+    useStore.getState().updateMessage(
+      'm1', 'v3', '2026-08-26T03:00:00.000Z', '译文 v3',
+    )
+    expect(useStore.getState().messages[0]).toMatchObject({
+      body: 'v3', edited_at: '2026-08-26T03:00:00.000Z', translated_text: '译文 v3',
+    })
+  })
+
 })

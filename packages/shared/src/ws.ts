@@ -18,6 +18,32 @@ export interface WsMessageEvent {
   body: string
   translatedBody: string | null
   sentAt: string
+  /** 首次见到的事件也可能已经是编辑版本，不能默认成 initial。 */
+  editedAt: string | null
+}
+
+export interface WsMessageUpdatedEvent {
+  type: 'message_updated'
+  messageId: string
+  conversationId: string
+  body: string
+  editedAt: string
+  /** worker 若已先完成当前编辑版本，更新事件直接携带已有译文。 */
+  translatedBody: string | null
+}
+
+export interface WsMessageDeletedEvent {
+  type: 'message_deleted'
+  messageId: string
+  conversationId: string
+  deletedAt: string
+}
+
+export interface WsMessageMergedEvent {
+  type: 'message_merged'
+  conversationId: string
+  removedMessageId: string
+  canonicalMessageId: string
 }
 
 export interface WsAccountStatusEvent {
@@ -29,9 +55,12 @@ export interface WsAccountStatusEvent {
 export interface WsTranslationEvent {
   type: 'translation'
   messageId: string
+  conversationId: string
   targetLang: string
   translatedText: string
   provider: string
+  /** `initial` 或 messages.edited_at ISO；客户端据此拒绝迟到的旧正文译文。 */
+  revision: string
 }
 
 /**
@@ -63,6 +92,9 @@ export interface WsAuthDoneEvent {
 
 export type WsServerEvent =
   | WsMessageEvent
+  | WsMessageUpdatedEvent
+  | WsMessageDeletedEvent
+  | WsMessageMergedEvent
   | WsAccountStatusEvent
   | WsTranslationEvent
   | WsAuthChallengeEvent

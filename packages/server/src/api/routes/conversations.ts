@@ -27,6 +27,9 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
 
   /** 按会话锁定/解锁目标语言。锁定后自动跟随客户语言的推断（resolveTargetLang）失效。 */
   app.patch('/api/conversations/:id/target-lang', async (req, reply) => {
+    if (req.actor.role === 'auditor') {
+      return reply.code(403).send({ error: '风控账号是只读的，不能修改回复语言' })
+    }
     const { id } = req.params as { id: string }
     const parsed = targetLangBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })

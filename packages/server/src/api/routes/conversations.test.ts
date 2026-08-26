@@ -21,12 +21,14 @@ const db = new Kysely<Database>({
 
 let OWNER_ID: string
 let OUTSIDER_ID: string
+let AUDITOR_ID: string
 
 function fakeActorRepo(): ActorRepo {
   return {
     findUser: async (userId) => {
       if (userId === OWNER_ID) return { id: OWNER_ID, role: 'owner' as Role, disabled_at: null }
       if (userId === OUTSIDER_ID) return { id: OUTSIDER_ID, role: 'agent' as Role, disabled_at: null }
+      if (userId === AUDITOR_ID) return { id: AUDITOR_ID, role: 'auditor' as Role, disabled_at: null }
       return null
     },
     findMemberships: async () => [],
@@ -36,6 +38,7 @@ function fakeActorRepo(): ActorRepo {
 let app: FastifyInstance
 let ownerToken: string
 let outsiderToken: string
+let auditorToken: string
 let conversationId: string
 
 beforeEach(async () => {
@@ -56,6 +59,11 @@ beforeEach(async () => {
   ).returning('id').executeTakeFirstOrThrow()
   OUTSIDER_ID = outsider.id
 
+  const auditor = await db.insertInto('users').values(
+    { email: 'auditor-conv-route@example.com', display_name: 'Audit', role: 'auditor', password_hash: 'x' },
+  ).returning('id').executeTakeFirstOrThrow()
+  AUDITOR_ID = auditor.id
+
   // 账号归 OWNER_ID 所有；outsider 是 agent 且不拥有它，所以在 self scope 下看不到这个会话
   const acc = await db.insertInto('accounts').values({
     platform: 'telegram', owner_user_id: OWNER_ID, display_name: 'TG', status: 'connected',
@@ -73,6 +81,7 @@ beforeEach(async () => {
   app = await buildServer(deps, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
   ownerToken = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
   outsiderToken = await signSession({ userId: OUTSIDER_ID }, process.env.JWT_SECRET!)
+  auditorToken = await signSession({ userId: AUDITOR_ID }, process.env.JWT_SECRET!)
 })
 
 afterAll(async () => {
@@ -122,6 +131,17 @@ describe('PATCH /api/conversations/:id/target-lang', () => {
     })
     expect(res.statusCode).toBe(404)
 
+    const row = await db.selectFrom('conversations').select('target_lang')
+      .where('id', '=', conversationId).executeTakeFirstOrThrow()
+    expect(row.target_lang).toBeNull()
+  })
+
+  it('auditor 即使全局可见也不能修改回复语言', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/conversations/${conversationId}/target-lang`,
+      headers: auth(auditorToken), payload: { targetLang: 'en' },
+    })
+    expect(res.statusCode).toBe(403)
     const row = await db.selectFrom('conversations').select('target_lang')
       .where('id', '=', conversationId).executeTakeFirstOrThrow()
     expect(row.target_lang).toBeNull()

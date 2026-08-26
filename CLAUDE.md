@@ -47,8 +47,9 @@ pnpm --filter @im-hub/server reset-account "<账号名>"  # 把某账号退回�
 `docs/superpowers/specs/2026-08-25-native-client-pivot.md`，**动这块之前先读它**。
 Telegram、Signal、WhatsApp 都保留；Zoom 延后。当前只有 Telegram 原生 webview
 骨架可运行，Signal 仍有 signal-cli 适配器，不能把“保留平台”写成“已经完成”。
-桌面端已经统一为单一“会话”入口与平台/账号两级导航；固定翻译输入坞和客户右栏
-已就位，但在 M2 原生会话与草稿桥接完成前必须保持明确禁用态/空态。
+桌面端已经统一为单一“会话”入口与平台/账号两级导航；M2 通用原生会话、草稿、
+发送和消息回传桥接已就位。telegram-tt 尚未在 M3 接入该协议，因此 Telegram
+运行态的固定翻译输入坞和客户右栏仍必须保持明确禁用态/空态。
 
 ## 架构
 
@@ -112,8 +113,9 @@ index.ts      组合根：把上面这些接在一起
   curl 不发 Origin、不触发预检，所以 curl 测试会给出假信号
 - **Electron `sandbox: false` 是必须的**。ESM preload（.mjs）在沙箱下静默不加载，
   表现是白屏且零提示
-- **敏感值不落地**。JWT 只在渲染进程的模块变量里，持久化走 `safeStorage`；
-  二次验证密码只活到 `checkAuthenticationPassword` 返回为止，不写库不打日志
+- **敏感值不落地**。外壳 JWT 只在渲染进程模块变量里，持久化走 `safeStorage`；
+  telegram-tt 仍有 M3 待移除的 guest 内存注入，绝不能进日志/错误。二次验证密码
+  只活到 `checkAuthenticationPassword` 返回为止，不写库不打日志
 - **静默丢弃是最坏的失败方式**。收到未登记账号的消息、注入配置失败、webview
   加载不出来——这几处都必须留下明确日志或界面提示，不要静默
 

@@ -87,6 +87,17 @@ describe('buildServer 鉴权钩子', () => {
     expect(res.json()).toHaveProperty('accounts')
   })
 
+  it('/api/session/me 返回服务端实时加载的用户角色', async () => {
+    const token = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ user: { id: OWNER_ID, role: 'owner' } })
+  })
+
   it('token 合法但用户已停用时返回 401', async () => {
     const token = await signSession({ userId: DISABLED_ID }, process.env.JWT_SECRET!)
     const res = await app.inject({

@@ -14,6 +14,7 @@ import { accountRoutes } from './routes/accounts.js'
 import { conversationRoutes } from './routes/conversations.js'
 import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
 import { translateRoutes } from './routes/translate.js'
+import { nativeRoutes, type NativeRouteDeps } from './routes/native.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -45,8 +46,12 @@ export interface BuildServerOptions {
   actorRepo?: ActorRepo
 }
 
+export interface BuildServerDeps extends MessageRouteDeps {
+  native?: NativeRouteDeps
+}
+
 export async function buildServer(
-  deps: MessageRouteDeps,
+  deps: BuildServerDeps,
   hub: WsHub,
   options: BuildServerOptions = {},
 ): Promise<FastifyInstance> {
@@ -87,10 +92,20 @@ export async function buildServer(
   })
 
   await app.register(authRoutes)
+  // safeStorage 中的 user.role 只是上次登录快照。原生客户端控制门禁必须
+  // 在恢复会话后用服务端每请求实时加载的 actor 刷新，避免已改为 auditor
+  // 的用户继续按旧 agent 快照挂载平台会话。
+  app.get('/api/session/me', async (req) => ({
+    user: { id: req.actor.userId, role: req.actor.role },
+  }))
   await app.register(async (instance) => { await accountRoutes(instance, deps) })
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
   await app.register(async (instance) => { await translateRoutes(instance, deps) })
+  const native = deps.native
+  if (native) {
+    await app.register(async (instance) => { await nativeRoutes(instance, native) })
+  }
 
   /**
    * 鉴权走首帧消息，不走 query string —— URL 里的 token 会落进反向代理和服务端

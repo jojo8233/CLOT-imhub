@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AuthChallengeKind } from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
+import type { NativeConversationContext } from '@im-hub/shared'
 import {
   initialNavigation,
   reconcileNavigation,
@@ -22,6 +23,38 @@ export interface AuthDoneState {
   reason: string | null
 }
 
+export type NativeBridgeConnection = 'loading' | 'waiting' | 'ready' | 'failed'
+
+export interface NativeConversationState extends NativeConversationContext {
+  contextRevision: number
+  /** 服务端解析出的 conversations.id；解析完成前为 null。 */
+  conversationId: string | null
+}
+
+export interface NativeAccountBridgeState {
+  connection: NativeBridgeConnection
+  error: string | null
+  context: NativeConversationState | null
+  /** 原生客户端对当前 revision 的实时可发送状态。 */
+  composerCanSend: boolean
+}
+
+export type NativeDraftStatus = 'idle' | 'configuring' | 'translating' | 'ready' | 'sending' | 'failed'
+
+export interface NativeDraftState {
+  sourceText: string
+  translatedText: string
+  backTranslated: string | null
+  targetLang: string | null
+  status: NativeDraftStatus
+  error: string | null
+}
+
+const EMPTY_DRAFT: NativeDraftState = {
+  sourceText: '', translatedText: '', backTranslated: null,
+  targetLang: null, status: 'idle', error: null,
+}
+
 interface State {
   accounts: AccountRow[]
   conversations: ConversationRow[]
@@ -33,6 +66,8 @@ interface State {
   activeAccountId: string | null
   /** 每个平台分别记住最后一次激活账号，切回来时恢复。 */
   lastActiveAccountByPlatform: Partial<Record<ChatPlatform, string>>
+  nativeBridgeByAccount: Record<string, NativeAccountBridgeState>
+  nativeDrafts: Record<string, NativeDraftState>
   authChallenge: AuthChallengeState | null
   authDone: AuthDoneState | null
   /** 左侧功能中心是否展开。窗口窄的时候收起来给聊天区让位。 */
@@ -40,17 +75,36 @@ interface State {
   setAccounts(a: AccountRow[]): void
   setConversations(c: ConversationRow[]): void
   setMessages(m: MessageRow[]): void
-  setActiveConversation(id: string): void
+  setActiveConversation(id: string | null): void
   setActivePlatform(platform: ChatPlatform): void
   setActiveAccount(id: string): void
   setAuthChallenge(c: AuthChallengeState): void
   setAuthDone(d: AuthDoneState): void
   clearAuth(): void
   togglePanel(): void
-  applyTranslation(messageId: string, text: string): void
+  applyTranslation(messageId: string, text: string, revision: string): void
   appendMessage(m: MessageRow): void
+  updateMessage(messageId: string, body: string, editedAt: string, translatedBody: string | null): void
+  removeMessage(messageId: string): void
   setAccountStatus(accountId: string, status: string): void
   updateConversationTargetLang(id: string, targetLang: string | null): void
+  setNativeBridgeConnection(accountId: string, connection: NativeBridgeConnection, error?: string | null): void
+  setNativeContext(accountId: string, context: NativeConversationState | null): void
+  resolveNativeConversation(
+    accountId: string,
+    contextRevision: number,
+    platformConversationId: string,
+    conversationId: string,
+  ): void
+  applyNativeComposerState(
+    accountId: string,
+    contextRevision: number,
+    platformConversationId: string,
+    draft: string,
+    canSend: boolean,
+  ): void
+  updateNativeDraft(key: string, patch: Partial<NativeDraftState>): void
+  clearNativeDraft(key: string): void
   /**
    * 登出 / 401 被踢下线时调用：清空上一个账号的账号列表、会话列表、消息、当前
    * 选中会话——不然换个人登录，上一个人能看到的客户数据会在界面上闪一下,或者
@@ -67,6 +121,8 @@ export const useStore = create<State>((set) => ({
   activePlatform: 'telegram',
   activeAccountId: null,
   lastActiveAccountByPlatform: {},
+  nativeBridgeByAccount: {},
+  nativeDrafts: {},
   authChallenge: null,
   authDone: null,
   panelOpen: true,
@@ -104,13 +160,25 @@ export const useStore = create<State>((set) => ({
   setAuthChallenge: (authChallenge) => set({ authChallenge, authDone: null }),
   setAuthDone: (authDone) => set({ authDone, authChallenge: null }),
   clearAuth: () => set({ authChallenge: null, authDone: null }),
-  applyTranslation: (messageId, text) => set((s) => ({
-    messages: s.messages.map(m => m.id === messageId ? { ...m, translated_text: text } : m),
+  applyTranslation: (messageId, text, revision) => set((s) => ({
+    messages: s.messages.map(m => m.id === messageId
+      && (m.edited_at ?? 'initial') === revision
+      ? { ...m, translated_text: text }
+      : m),
   })),
   // 去重：同一条消息可能既走 WS 推送又走列表拉取，两边都到时不能显示两遍
   appendMessage: (m) => set((s) =>
     s.messages.some((x) => x.id === m.id) ? {} : { messages: [...s.messages, m] },
   ),
+  updateMessage: (messageId, body, editedAt, translatedBody) => set((s) => ({
+    messages: s.messages.map(message => message.id === messageId
+      && (message.edited_at === null || message.edited_at <= editedAt)
+      ? { ...message, body, edited_at: editedAt, translated_text: translatedBody }
+      : message),
+  })),
+  removeMessage: (messageId) => set((s) => ({
+    messages: s.messages.filter(message => message.id !== messageId),
+  })),
   setAccountStatus: (accountId, status) => set((s) => ({
     accounts: s.accounts.map((a) => a.id === accountId ? { ...a, status } : a),
   })),
@@ -118,6 +186,114 @@ export const useStore = create<State>((set) => ({
   updateConversationTargetLang: (id, targetLang) => set((s) => ({
     conversations: s.conversations.map((c) => c.id === id ? { ...c, target_lang: targetLang } : c),
   })),
+  setNativeBridgeConnection: (accountId, connection, error = null) => set((s) => ({
+    nativeBridgeByAccount: {
+      ...s.nativeBridgeByAccount,
+      [accountId]: {
+        connection,
+        error,
+        context: s.nativeBridgeByAccount[accountId]?.context ?? null,
+        composerCanSend: connection === 'ready'
+          ? s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false
+          : false,
+      },
+    },
+  })),
+  setNativeContext: (accountId, context) => set((s) => ({
+    nativeBridgeByAccount: {
+      ...s.nativeBridgeByAccount,
+      [accountId]: {
+        connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
+        error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        context,
+        composerCanSend: false,
+      },
+    },
+    ...(s.activeAccountId === accountId ? {
+      activeConversationId: context?.conversationId ?? null,
+      messages: [],
+    } : {}),
+  })),
+  resolveNativeConversation: (
+    accountId,
+    contextRevision,
+    platformConversationId,
+    conversationId,
+  ) => set((s) => {
+    const current = s.nativeBridgeByAccount[accountId]
+    if (!current?.context
+      || current.context.contextRevision !== contextRevision
+      || current.context.platformConversationId !== platformConversationId) return {}
+    return {
+      nativeBridgeByAccount: {
+        ...s.nativeBridgeByAccount,
+        [accountId]: {
+          ...current,
+          context: { ...current.context, conversationId },
+        },
+      },
+      ...(s.activeAccountId === accountId ? { activeConversationId: conversationId } : {}),
+    }
+  }),
+  applyNativeComposerState: (
+    accountId,
+    contextRevision,
+    platformConversationId,
+    draft,
+    canSend,
+  ) => set((s) => {
+    const current = s.nativeBridgeByAccount[accountId]
+    if (!current?.context
+      || current.context.contextRevision !== contextRevision
+      || current.context.platformConversationId !== platformConversationId
+      || !current.context.conversationId) return {}
+
+    const key = `${accountId}:${current.context.conversationId}`
+    const existing = s.nativeDrafts[key]
+    const busy = existing?.status === 'configuring'
+      || existing?.status === 'translating'
+      || existing?.status === 'sending'
+    const hasDraft = draft.trim() !== ''
+    const nextDrafts = { ...s.nativeDrafts }
+    if (existing && !busy) {
+      if (existing.status === 'ready' && !hasDraft) {
+        // 原生框在 ready 后被清空，通常表示用户从原生端发送/删除了草稿。
+        // 清掉外壳的可发送门禁，避免再点一次发送重复消息。
+        nextDrafts[key] = {
+          ...existing,
+          translatedText: '',
+          backTranslated: null,
+          status: 'idle',
+          error: null,
+        }
+      } else if (existing.status === 'ready') {
+        nextDrafts[key] = {
+          ...existing,
+          error: canSend ? null : '原生输入框当前不可发送',
+        }
+      }
+    }
+    return {
+      nativeBridgeByAccount: {
+        ...s.nativeBridgeByAccount,
+        [accountId]: { ...current, composerCanSend: canSend && hasDraft },
+      },
+      // composer.state 只是原生框事实，不能自行创建“已翻译 ready”。
+      // 否则改回复语言后，原生框里的旧语言草稿会重新开启发送。
+      nativeDrafts: nextDrafts,
+    }
+  }),
+  updateNativeDraft: (key, patch) => set((s) => ({
+    nativeDrafts: {
+      ...s.nativeDrafts,
+      [key]: { ...(s.nativeDrafts[key] ?? EMPTY_DRAFT), ...patch },
+    },
+  })),
+  clearNativeDraft: (key) => set((s) => {
+    const next = { ...s.nativeDrafts }
+    delete next[key]
+    return { nativeDrafts: next }
+  }),
   reset: () => set({
     accounts: [],
     conversations: [],
@@ -126,6 +302,8 @@ export const useStore = create<State>((set) => ({
     activePlatform: 'telegram',
     activeAccountId: null,
     lastActiveAccountByPlatform: {},
+    nativeBridgeByAccount: {},
+    nativeDrafts: {},
     authChallenge: null,
     authDone: null,
   }),
