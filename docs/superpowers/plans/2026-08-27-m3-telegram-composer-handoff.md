@@ -54,7 +54,8 @@ PR，Issue #11 因尚未完成真实 Telegram 账号验证而保持开放；下�
 - 本阶段临时 worktree：`/private/tmp/telegram-tt-m3-composer.psbf7o`
 - 分支：`codex/m3-telegram-composer`
 - M3-3 提交：
-  `58ff7a13d8bf08f173a707e31d0c240625716c36 Composer / im-hub: Add typed bridge and stable send attempts`
+  - `58ff7a13d8bf08f173a707e31d0c240625716c36 Composer / im-hub: Add typed bridge and stable send attempts`
+  - `0c9adabe06fa9804083122c6354a2cf2b6c997fe fix: preserve paid Composer confirmation in im-hub bridge`
 - 基线：
   `9538b3ac072c0c7383080e4ddd64b664e93cd57d Composer / im-hub: Add account-control states and close gated views`
 - 保存本文前，本地 HEAD 与本地缓存的
@@ -72,9 +73,11 @@ telegram-tt 是独立仓库。进入后先读它自己的 `CLAUDE.md`/`AGENTS.md
 - im-hub shared protocol 增加 host 到 guest 的 `bridge.request-state`；NativeClient 在账号
   控制状态就绪后请求 telegram-tt 重放当前 context 和 Composer state。
 - telegram-tt 集中定义 typed host command/event；当前 Composer 注册 chat/topic context，
-  chat 或 topic 改变时递增 `contextRevision`，并在录音等异步步骤后再次校验上下文。
+  chat 或 topic 改变时递增 `contextRevision`，并在录音等异步步骤后再次校验上下文与发送门禁。
 - `composer.set-draft`/`composer.get-draft` 使用 telegram-tt 原生富文本编辑器；草稿和发送
   gate 改变时重放 Composer state。
+- typed bridge 的付费消息复用 Telegram 原生确认弹窗；取消或切换上下文会明确终止 attempt，
+  余额不足时保持不可发送并由原生 Composer 负责充值流程。
 - im-hub TranslationDock 为一次发送保留稳定的 `sendAttemptId` 和精确 native draft。
   结果未知时，用同一 attempt 查询/重试，不依赖已经清空的原生输入框；只有确认成功才清空
   外层草稿。
@@ -110,6 +113,14 @@ telegram-tt：
   M3-3 相对基线没有修改该文件；本阶段唯一 stylesheet 变化是删除旧
   `ImHubComposer.module.scss`，PR #16 正文已记录此基线问题。
 
+2026-08-27 恢复后的收尾复核：
+
+- 修复 typed bridge 绕过付费消息确认的风险，并补齐转发、临时回复、scheduled list、余额
+  等 Composer gate 变化后的 state 重放；录音等异步步骤结束后同时复核上下文与实时 gate。
+- telegram-tt `npm run check:ts` 通过，`git diff --check` 通过。
+- im-hub `pnpm typecheck` 通过；desktop 8 个测试文件、59 个测试通过；desktop build 通过；
+  `git diff --check` 通过。
+
 ## 7. 尚未完成与边界
 
 以下项目不能在恢复时误判为完成：
@@ -129,7 +140,7 @@ telegram-tt：
    - `docs/superpowers/specs/2026-08-25-native-client-pivot.md`
    - `docs/superpowers/specs/2026-08-26-m2-native-bridge.md`
    - `docs/superpowers/specs/2026-08-26-m3-telegram-message-identity.md`
-   - `docs/superpowers/specs/2026-08-26-m3-telegram-account-control.md`
+   - `docs/superpowers/specs/2026-08-26-m3-account-control.md`
    - `docs/superpowers/specs/2026-08-27-m3-telegram-composer-bridge.md`
 2. 重新核对 PR #16、Issue #11/#12、两个仓库 worktree、HEAD、upstream 和工作区是否干净。
 3. 如果 PR #16 尚未合并，先处理 review/CI；除非用户明确要求，不主动合并 PR。
@@ -159,7 +170,7 @@ gh issue view 12 --repo jojo8233/CLOT-imhub
 - docs/superpowers/specs/2026-08-25-native-client-pivot.md
 - docs/superpowers/specs/2026-08-26-m2-native-bridge.md
 - docs/superpowers/specs/2026-08-26-m3-telegram-message-identity.md
-- docs/superpowers/specs/2026-08-26-m3-telegram-account-control.md
+- docs/superpowers/specs/2026-08-26-m3-account-control.md
 - docs/superpowers/specs/2026-08-27-m3-telegram-composer-bridge.md
 - docs/superpowers/plans/2026-08-27-m3-telegram-composer-handoff.md
 

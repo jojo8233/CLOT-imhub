@@ -35,16 +35,22 @@ telegram-tt 只登记当前消息列表对应的 Composer：
 - 没有活跃 Composer 时发送 `context.changed { context: null }`。
 
 guest 在执行每个 set/get/send 命令前同时校验 revision、chat id 和当前 Composer 对象。录音
-停止等异步步骤结束后、真正进入原生发送前还会再校验一次，避免切换期间的旧命令继续发送。
+停止等异步步骤结束后、真正进入原生发送前还会再次校验上下文与实时发送门禁，避免切换、
+进入编辑模式或其他状态变化期间的旧命令继续发送。
 
 ## 4. 草稿与可发送状态
 
 `composer.set-draft` 使用原生 rich editor 的 `replaceValue`，`composer.get-draft` 从同一个
 editor 读取员工当前看到并可能修改过的最终文本。telegram-tt 在草稿或原生门禁变化时发送
-`composer.state`；编辑消息、scheduled list、账号冻结或原生文本禁发时 `canSend=false`。
+`composer.state`；编辑消息、scheduled list、转发、临时回复/命令、账号冻结、余额不足或
+原生文本禁发时 `canSend=false`。
 
 外层发送仍先 get draft，不把 TranslationDock 缓存的译文当作最终发送内容。切换账号、chat
 或 topic 后，迟到的 get/set/send 结果会被 context 校验丢弃。
+
+付费消息不会绕过 Telegram 原生确认。余额足够时 typed bridge 复用原生付费确认弹窗；用户
+取消或确认前切换 chat/topic 时，本次 attempt 明确以“未开始发送”结束。余额不足时 typed
+bridge 保持不可发送，用户仍从原生 Composer 进入充值流程，避免外壳复制余额与付费状态机。
 
 ## 5. 稳定发送 attempt 与最终结果
 
