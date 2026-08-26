@@ -43,8 +43,10 @@ pnpm --filter @im-hub/server reset-account "<账号名>"  # 把某账号退回�
 改了源码把翻译接到本仓库的翻译网关，构建产物由 Electron 的 `<webview>` 加载。
 群组、图片、语音、回复引用天生就有。
 
-转向的原因、代价与保留/替换清单见 `docs/superpowers/specs/2026-08-25-native-client-pivot.md`。
-**动这块之前先读它**，尤其是 Signal Desktop 构建 90 天过期那条约束。
+转向的原因、代价与保留/替换清单见
+`docs/superpowers/specs/2026-08-25-native-client-pivot.md`，**动这块之前先读它**。
+Telegram、Signal、WhatsApp 都保留；Zoom 延后。当前只有 Telegram 原生 webview
+骨架可运行，Signal 仍有 signal-cli 适配器，不能把“保留平台”写成“已经完成”。
 
 ## 架构
 
@@ -135,6 +137,7 @@ npx tsc --noEmit -p .    # 改完必须过，仓库要求零错误
 
 ## 文档
 
+- `docs/features/` — 按模块的功能对照:需求出处、实现状态、代码位置、取舍
 - `docs/RUNBOOK.md` — 从零环境到跑通真实链路
 - `docs/superpowers/specs/` — 设计决策与架构转向记录
 - `docs/superpowers/plans/` — 分阶段实现计划，与代码同步维护

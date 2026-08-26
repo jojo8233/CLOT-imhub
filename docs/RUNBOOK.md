@@ -10,6 +10,8 @@
 - **pnpm**（本机验证用的是 10.x；没有的话 `corepack enable` 或 `npm i -g pnpm`）
 - **PostgreSQL 16**
 - **Redis**（BullMQ 翻译队列、翻译结果缓存都依赖它）
+- **signal-cli**（仅在验证现有 Signal 适配器时需要；命令位置可用
+  `SIGNAL_CLI_BINARY` 配置）
 
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
@@ -104,9 +106,13 @@ pnpm --filter @im-hub/server seed
   auditor@example.com   auditor  应看到 2 个（全局只读）
 ```
 
-`seed.ts` 是幂等的：会先清空 `users`/`teams`/`team_members`/`accounts`/`conversations`/`messages`/`message_translations` 这几张表再重建，重复跑不会因为唯一约束报错，也不会被残留的测试数据影响。
+`seed.ts` 是保留已有主键的幂等 upsert：重复运行不会因为唯一约束报错，也不会更换
+已经存在的 `accounts.id`。账号 id 与平台会话目录绑定，开发时不要用 truncate/重建
+seed 代替 upsert，否则已登录会话会变成孤儿。
 
-**注意**：`pnpm test` 会往真实数据库里写测试数据并做 truncate（`server.test.ts`、`repo.test.ts` 都连真库），跑完一轮测试后种子数据会被清空，只剩测试用的 `repo-test@example.com`。**如果你跑过测试之后想继续用演示账号，重新跑一次 `pnpm --filter @im-hub/server seed` 就行**——这是预期行为，不是 bug。
+**注意**：数据库测试会从开发库 URL 派生 `<开发库名>_test`，并清理这个测试库。
+运行前必须确认测试库存在且 URL 确实指向隔离测试库；绝不能把测试指向开发库或
+生产库。正常配置下，`pnpm test` 不会清理开发库里的演示账号。
 
 ### 2.6 起服务端，验证能登录
 
@@ -133,6 +139,13 @@ curl -s -X POST http://localhost:4000/api/auth/login \
 
 ### 2.7 起桌面客户端
 
+如果要打开 Telegram 原生界面，先在另一个终端启动补丁版网页客户端：
+
+```bash
+cd ../telegram-tt
+npm run dev
+```
+
 ```bash
 pnpm dev:desktop
 ```
@@ -146,13 +159,14 @@ pnpm dev:desktop
 | 做什么 | 命令 |
 |---|---|
 | 起服务端（watch 模式） | `pnpm dev:server` |
-| 起桌面客户端 | `pnpm dev:desktop` |
+| 起桌面客户端 | `pnpm dev:desktop`（原生界面的前置进程见 2.7） |
 | 跑全部测试 | `pnpm test`（或 `pnpm test:watch` 跑 watch 模式） |
 | 跑类型检查 | `pnpm typecheck` |
 | 跑 migration | `pnpm db:migrate` |
 | 灌/重灌演示数据 | `pnpm --filter @im-hub/server seed` |
 
-以上除 `typecheck` 外都要连数据库或 Redis，运行前记得 `set -a; source .env; set +a`。
+服务端、migration、seed 和数据库测试需要先加载 `.env`；纯桌面构建、桌面开发和
+`typecheck` 不需要加载服务端密钥。
 
 ---
 
@@ -235,8 +249,12 @@ Telegram：
 这些是本次验收时明确留意到的、**P0 阶段刻意简化、上线前必须处理**的事项：
 
 1. **换 `JWT_SECRET`**：`.env` 里当前的值是本机开发用的随机值，上线前要单独生成一份不进代码仓库/不共享的生产密钥（`openssl rand -base64 32`），并且和开发环境的完全不同。
-2. **删除或修改默认账号密码**：`dev-password` 是所有 seed 账号共用的明文密码，上线前要么删掉这 5 个演示账号，要么强制它们首次登录改密码。**不要把 seed 脚本直接跑在生产库上**——它会先清空 `users`/`teams`/`accounts` 等表，对生产数据是破坏性操作。
-3. **客户端硬编码登录换成真登录页**：`packages/desktop/src/renderer/App.tsx` 里 `api.login('agent@example.com', 'dev-password')` 是 P0 阶段为了跳过登录 UI 打的桩，上线前必须换成真正的登录表单（邮箱+密码输入，走同一个 `/api/auth/login` 接口）。
+2. **删除或修改默认账号密码**：`dev-password` 是所有 seed 账号共用的明文密码，
+   上线前要么删掉这 5 个演示账号，要么强制它们首次登录改密码。**不要把 seed
+   脚本直接跑在生产库上**——当前 seed 虽然是保留主键的 upsert，不会清空已有数据，
+   但会把演示账号和已知密码写入目标库。
+3. **补丁版客户端分发**：开发期 Telegram 从同级 `telegram-tt` 源码仓库启动，尚未
+   纳入桌面安装包、自动更新及 GPL 源码交付流程。上线前必须完成这条供应链。
 
 ---
 
@@ -244,7 +262,12 @@ Telegram：
 
 P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的地方：
 
-- **平台覆盖**：P0 只接了 **Telegram** 一个平台。Signal / Zoom / WhatsApp 排在 P1–P3，`packages/shared/src/platform.ts` 里 `PLATFORMS` 常量已经预留了这几个值，但目前没有对应的 adapter 实现。
+- **两条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
+  仍在；Telegram 原生 webview 已进入开发态。Signal 原生路线计划 M5，WhatsApp
+  计划 M6，Zoom 延后到 M8。原生客户端消息回传和安装包分发尚未完成，不能当成
+  已上线能力。
+- **界面尚未统一**：当前仍有“会话工作台 / 原生界面”两个入口，顶部也会混排
+  不同平台账号；M1 将改为单一“会话”入口及平台/账号两级导航。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。

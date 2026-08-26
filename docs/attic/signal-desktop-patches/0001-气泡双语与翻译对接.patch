@@ -1,0 +1,308 @@
+From 8c87fe7bc3648c7f925feac3b70550aa71eb7030 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 25 Aug 2026 10:46:10 +0700
+Subject: [PATCH] =?UTF-8?q?im-hub=20=E8=A1=A5=E4=B8=81=EF=BC=9A=E6=B0=94?=
+ =?UTF-8?q?=E6=B3=A1=E5=86=85=E5=8F=8C=E8=AF=AD=E6=98=BE=E7=A4=BA=20+=20?=
+ =?UTF-8?q?=E7=BF=BB=E8=AF=91=E5=AF=B9=E6=8E=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+把 Signal Desktop 改造成 im-hub 的 Signal 前端，思路与 telegram-tt fork 一致：
+只注入翻译，其余原生能力（群、图片、贴纸、文件、回复引用）全部照用。
+
+- ts/util/imhub.dom.ts：与 im-hub 服务端对接。从 telegram-tt 同名模块移植，
+  零依赖。配置来源改为 window.ImHub（Signal 是独立 app，靠 preload 暴露，
+  不像 telegram-tt 那样由 webview 注入）
+- ImHubTranslation.dom.tsx：气泡内译文块，原文上、横线分隔、译文下。
+  Signal 没有任何内建翻译流水线，所以自带模块级缓存：同一条消息滚动进出
+  视口只翻一次，失败也记下来不重试
+- Message.dom.tsx：正文后插入译文块（包 fragment，因为插在 && 条件里）
+- start.preload.ts：IM_HUB_SERVER_URL / IM_HUB_TOKEN 环境变量 → window.ImHub。
+  没配就不暴露，翻译静默关闭，Signal 本体不受影响
+- 样式继承气泡文字色只压透明度，深浅主题与出入站气泡都不用单独适配
+
+验证：Node 22 下装依赖（11min，原生模块全过）、build:dev、带 im-hub 配置
+启动，主窗口成功显示，数据隔离在 Signal-development 目录。
+---
+ stylesheets/components/ImHubTranslation.scss  |  11 ++
+ stylesheets/manifest.scss                     |   1 +
+ .../conversation/ImHubTranslation.dom.tsx     |  75 +++++++++++++
+ ts/components/conversation/Message.dom.tsx    |   5 +
+ ts/util/imhub.dom.ts                          | 103 ++++++++++++++++++
+ ts/windows/main/start.preload.ts              |  10 ++
+ 6 files changed, 205 insertions(+)
+ create mode 100644 stylesheets/components/ImHubTranslation.scss
+ create mode 100644 ts/components/conversation/ImHubTranslation.dom.tsx
+ create mode 100644 ts/util/imhub.dom.ts
+
+diff --git a/stylesheets/components/ImHubTranslation.scss b/stylesheets/components/ImHubTranslation.scss
+new file mode 100644
+index 0000000..1bf0776
+--- /dev/null
++++ b/stylesheets/components/ImHubTranslation.scss
+@@ -0,0 +1,11 @@
++// im-hub 补丁：气泡内译文块。继承气泡文字色只压透明度，
++// 深浅主题、自己/对方的气泡底色都不用单独适配。
++.ImHubTranslation {
++  margin-top: 5px;
++  padding-top: 5px;
++  border-top: 1px solid light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.2));
++  opacity: 0.85;
++  white-space: pre-wrap;
++  word-break: break-word;
++  unicode-bidi: plaintext;
++}
+diff --git a/stylesheets/manifest.scss b/stylesheets/manifest.scss
+index cfa2291..0cdb75f 100644
+--- a/stylesheets/manifest.scss
++++ b/stylesheets/manifest.scss
+@@ -186,3 +186,4 @@ $is-storybook: false !default;
+ @use 'components/UsernameLinkEditor.scss';
+ @use 'components/UsernameMegaphone.scss';
+ @use 'components/WhatsNew.scss';
++@use 'components/ImHubTranslation.scss';
+diff --git a/ts/components/conversation/ImHubTranslation.dom.tsx b/ts/components/conversation/ImHubTranslation.dom.tsx
+new file mode 100644
+index 0000000..50eea73
+--- /dev/null
++++ b/ts/components/conversation/ImHubTranslation.dom.tsx
+@@ -0,0 +1,75 @@
++// im-hub 补丁：气泡内的译文块。原文在上、横线分隔、译文在下，出入站都渲染。
++//
++// Signal 没有任何内建翻译流水线（telegram-tt 有、我们只是换了译文来源），
++// 所以这里自带一个模块级缓存：同一条消息滚动进出视口、重渲染多少次，
++// 都只翻一次。缓存按消息 id + 文本联合键——消息被编辑后文本变了要重翻。
++
++import React, { useEffect, useState } from 'react';
++import { isImHubTranslationEnabled, translateOne } from '../../util/imhub.dom.ts';
++
++const TARGET_LANG = 'zh';
++
++/**
++ * value 为 null 表示「翻过了，译文与原文相同或失败」——同样不再重试。
++ * 失败也记下来是刻意的：一条消息翻不动就别每次重渲染都打一遍服务端。
++ */
++const cache = new Map<string, string | null>();
++const inFlight = new Map<string, Promise<string | null>>();
++
++async function translateCached(key: string, text: string): Promise<string | null> {
++  const hit = cache.get(key);
++  if (hit !== undefined) {
++    return hit;
++  }
++  const pending = inFlight.get(key);
++  if (pending) {
++    return pending;
++  }
++
++  const task = (async () => {
++    const translated = await translateOne(text, TARGET_LANG);
++    const result = translated && translated.trim() !== text.trim() ? translated : null;
++    cache.set(key, result);
++    inFlight.delete(key);
++    return result;
++  })();
++  inFlight.set(key, task);
++  return task;
++}
++
++export type PropsType = {
++  messageId: string;
++  text: string;
++};
++
++export function ImHubTranslation({ messageId, text }: PropsType): React.JSX.Element | null {
++  const [translated, setTranslated] = useState<string | null>(() => {
++    const hit = cache.get(`${messageId}:${text}`);
++    return hit ?? null;
++  });
++
++  useEffect(() => {
++    if (!isImHubTranslationEnabled() || !text.trim()) {
++      return undefined;
++    }
++    let cancelled = false;
++    void translateCached(`${messageId}:${text}`, text).then(result => {
++      if (!cancelled) {
++        setTranslated(result);
++      }
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, [messageId, text]);
++
++  if (!translated) {
++    return null;
++  }
++
++  return (
++    <div className="ImHubTranslation" dir="auto">
++      {translated}
++    </div>
++  );
++}
+diff --git a/ts/components/conversation/Message.dom.tsx b/ts/components/conversation/Message.dom.tsx
+index faad9c7..8643063 100644
+--- a/ts/components/conversation/Message.dom.tsx
++++ b/ts/components/conversation/Message.dom.tsx
+@@ -33,6 +33,7 @@ import { ReadStatus } from '../../messages/MessageReadStatus.std.ts';
+ import { Avatar, AvatarSize } from '../Avatar.dom.tsx';
+ import { AvatarSpacer } from '../AvatarSpacer.dom.tsx';
+ import { MessageBodyReadMore } from './MessageBodyReadMore.dom.tsx';
++import { ImHubTranslation } from './ImHubTranslation.dom.tsx';
+ import { MessageMetadata } from './MessageMetadata.dom.tsx';
+ import { MessageTextMetadataSpacer } from './MessageTextMetadataSpacer.dom.tsx';
+ import { ImageGrid } from './ImageGrid.dom.tsx';
+@@ -2497,6 +2498,7 @@ export class Message extends PureComponent<Props, State> {
+       >
+         {messageStatusContents != null && messageStatusContents}
+         {messageStatusContents == null && text != null && (
++          <>
+           <MessageBodyReadMore
+             bodyRanges={bodyRanges}
+             direction={direction}
+@@ -2523,6 +2525,9 @@ export class Message extends PureComponent<Props, State> {
+             text={text}
+             textAttachment={textAttachment}
+           />
++            {/* im-hub 补丁：原文下方渲染译文 */}
++            <ImHubTranslation messageId={id} text={text} />
++          </>
+         )}
+         {this.#getMetadataPlacement() === MetadataPlacement.InlineWithText && (
+           <MessageTextMetadataSpacer metadataWidth={metadataWidth} />
+diff --git a/ts/util/imhub.dom.ts b/ts/util/imhub.dom.ts
+new file mode 100644
+index 0000000..e46ad1a
+--- /dev/null
++++ b/ts/util/imhub.dom.ts
+@@ -0,0 +1,103 @@
++// im-hub 补丁：与 im-hub 服务端的对接层。
++//
++// 从 telegram-tt fork 的同名模块移植。配置来源不同：telegram-tt 是网页、由
++// webview 注入 window.__IM_HUB__；Signal 是独立 Electron 应用，配置由启动时的
++// 环境变量经 preload（contextBridge）暴露成 window.ImHub。
++//
++// 拿不到配置就静默降级成不翻译，绝不抛错——翻译挂了不该影响 Signal 本体。
++
++export interface ImHubConfig {
++  serverUrl: string;
++  token: string;
++}
++
++interface BatchResult {
++  translated: string;
++  detectedLang: string;
++  provider: string;
++  failed: boolean;
++}
++
++export function getImHubConfig(): ImHubConfig | undefined {
++  const cfg = (window as { ImHub?: ImHubConfig }).ImHub;
++  if (!cfg?.serverUrl || !cfg.token) {
++    return undefined;
++  }
++  return cfg;
++}
++
++export function isImHubTranslationEnabled(): boolean {
++  return getImHubConfig() !== undefined;
++}
++
++export async function translateBatch(
++  texts: ReadonlyArray<string>,
++  targetLang: string
++): Promise<ReadonlyArray<BatchResult> | undefined> {
++  const cfg = getImHubConfig();
++  if (!cfg) {
++    return undefined;
++  }
++
++  try {
++    const res = await fetch(`${cfg.serverUrl}/api/translate/batch`, {
++      method: 'POST',
++      headers: {
++        'Content-Type': 'application/json',
++        Authorization: `Bearer ${cfg.token}`,
++      },
++      body: JSON.stringify({ texts, targetLang }),
++      signal: AbortSignal.timeout(30_000),
++    });
++    if (!res.ok) {
++      return undefined;
++    }
++    const body = (await res.json()) as { results?: Array<BatchResult> };
++    return body.results;
++  } catch {
++    return undefined;
++  }
++}
++
++export async function translateOne(
++  text: string,
++  targetLang: string
++): Promise<string | undefined> {
++  const results = await translateBatch([text], targetLang);
++  const first = results?.[0];
++  if (!first || first.failed || !first.translated) {
++    return undefined;
++  }
++  return first.translated;
++}
++
++export async function detectLanguageViaImHub(
++  text: string
++): Promise<string | undefined> {
++  const cfg = getImHubConfig();
++  if (!cfg || !text.trim()) {
++    return undefined;
++  }
++  try {
++    const res = await fetch(`${cfg.serverUrl}/api/translate/detect`, {
++      method: 'POST',
++      headers: {
++        'Content-Type': 'application/json',
++        Authorization: `Bearer ${cfg.token}`,
++      },
++      body: JSON.stringify({ text }),
++      signal: AbortSignal.timeout(15_000),
++    });
++    if (!res.ok) {
++      return undefined;
++    }
++    const body = (await res.json()) as { detectedLang?: string | null };
++    const lang = body.detectedLang;
++    if (!lang || lang.toLowerCase() === 'und') {
++      return undefined;
++    }
++    return lang.toLowerCase();
++  } catch {
++    return undefined;
++  }
++}
+diff --git a/ts/windows/main/start.preload.ts b/ts/windows/main/start.preload.ts
+index 9c5140d..7dc40bb 100644
+--- a/ts/windows/main/start.preload.ts
++++ b/ts/windows/main/start.preload.ts
+@@ -181,6 +181,16 @@ if (window.SignalContext.config.ciMode === 'full') {
+   contextBridge.exposeInMainWorld('SignalCI', window.SignalCI);
+ }
+ 
++// im-hub 补丁：把翻译服务的地址与登录态暴露给渲染层。
++// 来源是启动 Signal 时传入的环境变量（由 im-hub 负责拉起进程时注入）。
++// 没配就不暴露，渲染层据此静默关闭翻译，Signal 本体完全不受影响。
++if (process.env.IM_HUB_SERVER_URL && process.env.IM_HUB_TOKEN) {
++  contextBridge.exposeInMainWorld('ImHub', {
++    serverUrl: process.env.IM_HUB_SERVER_URL,
++    token: process.env.IM_HUB_TOKEN,
++  });
++}
++
+ if (getEnvironment() !== Environment.Test) {
+   contextBridge.exposeInMainWorld('showDebugLog', window.IPC.showDebugLog);
+   contextBridge.exposeInMainWorld('startApp', window.startApp);
+-- 
+2.50.1 (Apple Git-155)
+
