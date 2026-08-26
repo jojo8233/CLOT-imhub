@@ -5,6 +5,7 @@ import type {
   CredentialsHandler,
   MessageHandler,
   MessageIdRemapHandler,
+  PlatformIdentityHandler,
   PlatformAdapter,
   StatusHandler,
 } from './types.js'
@@ -37,6 +38,7 @@ export class AdapterManager {
   private readonly statusHandlers: StatusHandler[] = []
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
+  private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
 
   constructor(adapters: PlatformAdapter[]) {
@@ -46,6 +48,9 @@ export class AdapterManager {
       a.onStatusChange((id, status) => fanOut(this.statusHandlers, id, status))
       a.onAuthChallenge((id, c) => fanOut(this.authChallengeHandlers, id, c))
       a.onCredentialsUpdated((id, ref) => fanOut(this.credentialsHandlers, id, ref))
+      a.onPlatformIdentityUpdated?.((id, externalId) => {
+        fanOut(this.platformIdentityHandlers, id, externalId)
+      })
       a.onMessageIdRemapped((id, oldId, newId) => fanOut(this.idRemapHandlers, id, oldId, newId))
     }
   }
@@ -54,6 +59,9 @@ export class AdapterManager {
   onStatusChange(handler: StatusHandler): void { this.statusHandlers.push(handler) }
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
+  onPlatformIdentityUpdated(handler: PlatformIdentityHandler): void {
+    this.platformIdentityHandlers.push(handler)
+  }
   onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
 
   private require(platform: Platform): PlatformAdapter {

@@ -15,6 +15,7 @@ import type {
   CredentialsHandler,
   MessageHandler,
   MessageIdRemapHandler,
+  PlatformIdentityHandler,
   PlatformAdapter,
   StatusHandler,
 } from '../types.js'
@@ -37,6 +38,7 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly statusHandlers: StatusHandler[] = []
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
+  private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
 
   /**
@@ -52,6 +54,9 @@ export class TelegramAdapter implements PlatformAdapter {
 
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
+  onPlatformIdentityUpdated(handler: PlatformIdentityHandler): void {
+    this.platformIdentityHandlers.push(handler)
+  }
   onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
@@ -75,6 +80,16 @@ export class TelegramAdapter implements PlatformAdapter {
         h(accountId, ref)
       } catch (err) {
         console.error(`[telegram] 账号 ${accountId} 的凭据 handler 出错:`, err)
+      }
+    }
+  }
+
+  private emitPlatformIdentity(accountId: string, externalId: string | null): void {
+    for (const handler of this.platformIdentityHandlers) {
+      try {
+        handler(accountId, externalId)
+      } catch (err) {
+        console.error(`[telegram] 账号 ${accountId} 的平台身份 handler 出错:`, err)
       }
     }
   }
@@ -215,15 +230,22 @@ export class TelegramAdapter implements PlatformAdapter {
           return
         }
 
-        case 'authorizationStateReady':
+        case 'authorizationStateReady': {
+          const self = await client.invoke({ _: 'getMe' })
+          if (!Number.isSafeInteger(self.id) || self.id <= 0) {
+            throw new Error('Telegram getMe 返回了无效 user id')
+          }
+          this.emitPlatformIdentity(accountId, String(self.id))
           this.emitStatus(accountId, 'connected')
           // 记一笔"这个账号在本机有可用 session"。启动时据此判断该不该自动重连——
           // 比看 status 准，也比看 session 目录存不存在准（TDLib 在鉴权完成前
           // 就会把目录建出来，拿目录判断会把没登录成功的账号也算进去）。
           this.emitCredentials(accountId, 'tdlib-session')
           return
+        }
 
         case 'authorizationStateClosed':
+          this.emitPlatformIdentity(accountId, null)
           this.emitStatus(accountId, 'disconnected')
           return
 

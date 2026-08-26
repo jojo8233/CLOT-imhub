@@ -26,6 +26,10 @@ export type MessageHandler = (msg: NormalizedMessage) => void
 export type StatusHandler = (accountId: string, status: AccountStatus) => void
 export type AuthChallengeHandler = (accountId: string, challenge: AuthChallenge) => void
 export type CredentialsHandler = (accountId: string, credentialsRef: string) => void
+export type PlatformIdentityHandler = (
+  accountId: string,
+  platformAccountExternalId: string | null,
+) => void
 
 /**
  * 平台把先前下发的临时消息 id 换成最终 id 时触发。
@@ -61,6 +65,9 @@ export interface PlatformAdapter {
    * 没有这个通道的话，扫码得到的设备凭据只存在于适配器内存里，进程一重启就丢了。
    */
   onCredentialsUpdated(handler: CredentialsHandler): void
+
+  /** 平台确认的当前登录身份发生变化时通知上层，用于撤销并重新绑定控制能力。 */
+  onPlatformIdentityUpdated?(handler: PlatformIdentityHandler): void
 
   /** 临时消息 id 被平台换成最终 id 时通知上层改写已落库的记录 */
   onMessageIdRemapped(handler: MessageIdRemapHandler): void

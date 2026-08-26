@@ -13,6 +13,7 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     onStatusChange: vi.fn(),
     onAuthChallenge: vi.fn(),
     onCredentialsUpdated: vi.fn(),
+    onPlatformIdentityUpdated: vi.fn(),
     onMessageIdRemapped: vi.fn(),
   submitAuthAnswer: vi.fn(),
   purge: vi.fn(),
@@ -108,6 +109,20 @@ describe('AdapterManager', () => {
 
     handlers[0]!('a1', 'new-creds')
     expect(seen).toEqual([['a1', 'new-creds']])
+  })
+
+  it('把平台登录身份变化汇聚到统一回调', () => {
+    const tg = fakeAdapter('telegram')
+    const handlers: ((id: string, externalId: string | null) => void)[] = []
+    tg.onPlatformIdentityUpdated = vi.fn((handler) => { handlers.push(handler) })
+
+    const seen: [string, string | null][] = []
+    const mgr = new AdapterManager([tg])
+    mgr.onPlatformIdentityUpdated((id, externalId) => seen.push([id, externalId]))
+
+    handlers[0]!('a1', '778899')
+    handlers[0]!('a1', null)
+    expect(seen).toEqual([['a1', '778899'], ['a1', null]])
   })
 
   it('把消息 id 重映射汇聚到统一回调', () => {

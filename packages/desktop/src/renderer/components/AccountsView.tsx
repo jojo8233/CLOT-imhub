@@ -272,9 +272,18 @@ function DeleteDialog({ account, onClose, onDeleted }: {
     setError(null)
     try {
       const res = await api.deleteAccount(account.id, typed)
-      if (res.manualCleanup) {
+      let nativeCleanup: string | null = null
+      try {
+        const nativeControl = window.imHub?.nativeControl
+        if (!nativeControl) throw new Error('native control unavailable')
+        await nativeControl.removeAccount(account.id)
+      } catch {
+        nativeCleanup = '本机原生客户端分区清理失败，请完全退出应用后联系管理员检查本机数据'
+      }
+      const cleanupSteps = [res.manualCleanup, nativeCleanup].filter((step): step is string => step !== null)
+      if (cleanupSteps.length > 0) {
         // 平台侧还留着一个已关联设备，必须让用户看到，不能默默关窗
-        setCleanup(res.manualCleanup)
+        setCleanup(cleanupSteps.join('；'))
         setBusy(false)
         return
       }

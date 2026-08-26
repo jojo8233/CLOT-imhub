@@ -1,5 +1,30 @@
 import type { DetailedHTMLProps, HTMLAttributes } from 'react'
-import type { NativeGuestEvent, NativeHostCommand } from '@im-hub/shared'
+import type {
+  NativeControlGrantResponse,
+  NativeControlStateUpdate,
+  NativeConversationContext,
+  NativeGuestEvent,
+  NativeHostCommand,
+  NativeTranslationBatchInput,
+  NativeTranslationBatchResult,
+} from '@im-hub/shared'
+
+interface NativeControlTarget {
+  accountId: string
+  guestWebContentsId: number
+}
+
+interface NativeControlBridge {
+  configure(target: NativeControlTarget, grant: NativeControlGrantResponse): Promise<NativeControlStateUpdate>
+  release(target: NativeControlTarget): Promise<void>
+  releaseAll(): Promise<void>
+  removeAccount(accountId: string): Promise<void>
+  sendCommand(target: NativeControlTarget, command: NativeHostCommand): Promise<void>
+  syncContext(target: NativeControlTarget, context: NativeConversationContext): Promise<{ conversationId: string }>
+  reportEvent(target: NativeControlTarget, event: NativeGuestEvent): Promise<{ accepted: boolean; duplicate?: boolean }>
+  onEvent(listener: (value: { accountId: string; event: NativeGuestEvent }) => void): () => void
+  onState(listener: (value: NativeControlStateUpdate) => void): () => void
+}
 
 /**
  * Electron 的 <webview> 不在 React 的 JSX 类型里，用到的属性在这里补齐。
@@ -9,10 +34,18 @@ import type { NativeGuestEvent, NativeHostCommand } from '@im-hub/shared'
  */
 declare global {
   interface Window {
+    imHub?: {
+      platform?: string
+      serverUrl?: string
+      nativeBridgePreload?: string
+      nativeControl?: NativeControlBridge
+    }
     imHubNativeBridge?: {
       protocolVersion: number
       emit(event: NativeGuestEvent): void
       onCommand(listener: (command: NativeHostCommand) => void): void
+      translateBatch(input: NativeTranslationBatchInput): Promise<NativeTranslationBatchResult[] | undefined>
+      detectLanguage(text: string): Promise<string | undefined>
     }
   }
   namespace JSX {

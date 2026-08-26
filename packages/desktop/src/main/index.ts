@@ -1,7 +1,18 @@
 import { join } from 'node:path'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from 'electron'
-import { nativeClientUrlAllowed, nativePartitionAllowed } from './native-host-policy.js'
+import {
+  nativeAccountIdFromPartition,
+  nativeClientUrlAllowed,
+  nativePartitionAllowed,
+} from './native-host-policy.js'
+import { NativeControlHost } from './native-control-host.js'
+
+const nativeControlHost = new NativeControlHost(
+  process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
+)
+nativeControlHost.install()
+const pendingNativeAccountsByHost = new Map<number, string[]>()
 
 const tokenFile = (): string => join(app.getPath('userData'), 'session.bin')
 
@@ -65,6 +76,7 @@ function createWindow(): void {
       webviewTag: true,
     },
   })
+  nativeControlHost.attachHost(win.webContents)
 
   // webview 属性来自渲染进程，不能直接信任。真正附着 guest WebContents 前，主进程
   // 再校验来源与 partition，并强制使用我们构建的受控 preload。
@@ -74,6 +86,15 @@ function createWindow(): void {
       console.error('[native-host] 已阻止非法 webview 来源或 partition')
       return
     }
+    const accountId = nativeAccountIdFromPartition(params.partition ?? '')
+    if (!accountId) {
+      event.preventDefault()
+      console.error('[native-host] 已阻止无法解析账号的 webview partition')
+      return
+    }
+    const pending = pendingNativeAccountsByHost.get(win.webContents.id) ?? []
+    pending.push(accountId)
+    pendingNativeAccountsByHost.set(win.webContents.id, pending)
     webPreferences.preload = join(import.meta.dirname, '../preload/native-bridge.mjs')
     webPreferences.nodeIntegration = false
     webPreferences.nodeIntegrationInSubFrames = false
@@ -84,6 +105,18 @@ function createWindow(): void {
     webPreferences.webviewTag = false
     // 与外壳 preload 相同：当前 ESM preload 在 sandbox 下不会加载。
     webPreferences.sandbox = false
+  })
+
+  win.webContents.on('did-attach-webview', (_event, contents) => {
+    const pending = pendingNativeAccountsByHost.get(win.webContents.id) ?? []
+    const accountId = pending.shift()
+    if (pending.length === 0) pendingNativeAccountsByHost.delete(win.webContents.id)
+    if (!accountId) {
+      contents.close()
+      console.error('[native-host] 已关闭缺少账号绑定的 webview')
+      return
+    }
+    nativeControlHost.registerGuest(contents, accountId, win.webContents.id)
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
