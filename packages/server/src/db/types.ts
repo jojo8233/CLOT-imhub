@@ -36,6 +36,10 @@ export interface AccountsTable {
   display_name: string
   status: AccountStatus
   credentials_ref: string | null
+  /** 由平台适配器确认的实际登录身份；Telegram 使用 self user id。 */
+  platform_account_external_id: NullableText
+  /** 每次签发或撤销 native control grant 都递增，使旧 grant 立即失效。 */
+  native_control_version: Generated<number>
   linked_at: Timestamp | null
   /** link 模式接入的平台（Signal）在此标注历史消息起点，null 表示历史完整 */
   history_available_from: Timestamp | null

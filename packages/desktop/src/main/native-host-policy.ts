@@ -12,3 +12,8 @@ export function nativeClientUrlAllowed(raw: string): boolean {
 export function nativePartitionAllowed(partition: string): boolean {
   return NATIVE_PARTITION.test(partition)
 }
+
+export function nativeAccountIdFromPartition(partition: string): string | null {
+  if (!nativePartitionAllowed(partition)) return null
+  return partition.slice('persist:native-'.length).toLowerCase()
+}

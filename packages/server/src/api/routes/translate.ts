@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { config } from '../../config.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
+import { authorizeNativeControl, isNativeControlAuthorization } from '../native-control.js'
 
 /**
  * 给打过补丁的原生客户端用的批量翻译接口。
@@ -30,6 +31,13 @@ export interface TranslateRouteDeps {
 
 export async function translateRoutes(app: FastifyInstance, deps: TranslateRouteDeps): Promise<void> {
   app.post('/api/translate/batch', async (req, reply) => {
+    if (isNativeControlAuthorization(req.headers.authorization)) {
+      try {
+        await authorizeNativeControl(req.headers.authorization)
+      } catch {
+        return reply.code(401).send({ error: 'native control unavailable' })
+      }
+    }
     const parsed = batchBody.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? '参数不合法' })
@@ -73,6 +81,13 @@ export async function translateRoutes(app: FastifyInstance, deps: TranslateRoute
    * 命中缓存时不产生任何外部调用，所以同一个会话反复问也不费额度。
    */
   app.post('/api/translate/detect', async (req, reply) => {
+    if (isNativeControlAuthorization(req.headers.authorization)) {
+      try {
+        await authorizeNativeControl(req.headers.authorization)
+      } catch {
+        return reply.code(401).send({ error: 'native control unavailable' })
+      }
+    }
     const parsed = detectBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: '参数不合法' })
 

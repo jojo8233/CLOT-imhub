@@ -94,6 +94,9 @@ export function App() {
     messageLoadGenerationRef.current += 1
     wsRef.current?.close()
     wsRef.current = null
+    void window.imHub?.nativeControl?.releaseAll().catch(() => {
+      console.error('[native-control] 登出时撤销账号控制授权失败；本地能力已随页面卸载')
+    })
     resetStore()
     setUser(null)
     setBootError(null)

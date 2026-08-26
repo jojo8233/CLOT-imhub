@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import type {
   NativeMessageDeletedEvent,
   NativeMessageIdRemappedEvent,
@@ -16,6 +16,7 @@ import {
 import { z } from 'zod'
 import type { MessageIngestor, UpsertConversationInput } from '../../ingest/ingestor.js'
 import type { MessageIdRemapResult, MessagePublicationSnapshot } from '../../ingest/repo.js'
+import { authorizeNativeControl } from '../native-control.js'
 
 const id = z.string().trim().min(1).max(512)
 const timestamp = z.string().datetime({ offset: true })
@@ -102,24 +103,13 @@ export interface NativeRouteDeps {
   publish(userId: string, event: WsServerEvent): void
 }
 
-async function requireOwnedNativeAccount(req: FastifyRequest, accountId: string) {
-  // “可见”不等于“可以操控平台账号”。auditor/manager 即使能读到该账号，也不能
-  // 冒用其本机会话上报消息或驱动发送；M2 按 M0 基线只接受实际 owner。
-  if (req.actor.role === 'auditor') return null
-  return req.scoped.accounts()
-    .select(['accounts.id as id', 'accounts.platform as platform'])
-    .where('accounts.id', '=', accountId)
-    .where('accounts.owner_user_id', '=', req.actor.userId)
-    .executeTakeFirst()
-}
-
 export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps): Promise<void> {
   app.post('/api/native/context', async (req, reply) => {
     const parsed = contextBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 
-    const account = await requireOwnedNativeAccount(req, parsed.data.accountId)
-    if (!account) return reply.code(404).send({ error: 'not found' })
+    const account = await authorizeNativeRequest(req.headers.authorization, parsed.data.accountId)
+    if (!account) return reply.code(401).send({ error: 'native control unavailable' })
     if (account.platform === 'telegram'
       && !isCanonicalTelegramChatId(parsed.data.context.platformConversationId)) {
       return reply.code(422).send({ error: 'invalid canonical Telegram chat id' })
@@ -138,8 +128,8 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     const parsed = eventBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 
-    const account = await requireOwnedNativeAccount(req, parsed.data.accountId)
-    if (!account) return reply.code(404).send({ error: 'not found' })
+    const account = await authorizeNativeRequest(req.headers.authorization, parsed.data.accountId)
+    if (!account) return reply.code(401).send({ error: 'native control unavailable' })
 
     const event = parsed.data.event
     if (account.platform === 'telegram') {
@@ -160,7 +150,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
             if (stored.isNew || !event.message.editedAt) {
               // 首次请求可能在消息提交后、WS 发布前失败。无 edit revision 的
               // outbox 重试仍重发规范 message；客户端按内部 messageId 去重。
-              deps.publish(req.actor.userId, {
+              deps.publish(account.userId, {
                 type: 'message',
                 messageId: message.id,
                 conversationId: message.conversationId,
@@ -176,7 +166,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
               // 不只看本次 contentChanged：首次编辑已落库但在发布前失败时，
               // 同 revision 重试必须重发规范快照，否则客户端会永久留在旧正文。
               if (!message.editedAt) return
-              deps.publish(req.actor.userId, {
+              deps.publish(account.userId, {
                 type: 'message_updated',
                 messageId: message.id,
                 conversationId: message.conversationId,
@@ -195,7 +185,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       const result = await deleteNativeMessage(deps.repo, account.id, event)
       if (!result) return reply.code(409).send({ error: 'message not found; retry event after upsert' })
       if (result.changed) {
-        deps.publish(req.actor.userId, {
+        deps.publish(account.userId, {
           type: 'message_deleted',
           messageId: result.messageId,
           conversationId: result.conversationId,
@@ -211,7 +201,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       return reply.code(422).send({ error: 'message remap crosses conversations' })
     }
     if (result.removedMessageId) {
-      deps.publish(req.actor.userId, {
+      deps.publish(account.userId, {
         type: 'message_merged',
         conversationId: result.conversationId,
         removedMessageId: result.removedMessageId,
@@ -220,6 +210,14 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     }
     return { accepted: true, duplicate: !result.changed }
   })
+}
+
+async function authorizeNativeRequest(authorization: string | undefined, accountId: string) {
+  try {
+    return await authorizeNativeControl(authorization, accountId)
+  } catch {
+    return null
+  }
 }
 
 async function ingestNativeMessage(

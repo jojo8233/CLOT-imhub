@@ -6,6 +6,7 @@ import {
   parseNativeGuestEvent,
   registerNativeCommandTarget,
 } from './native-bridge.js'
+import { parseNativeHostCommand } from '../native-bridge-runtime.js'
 
 const context = {
   accountId: 'acc-1',
@@ -37,6 +38,13 @@ describe('parseNativeGuestEvent', () => {
       type: 'account.identity',
       platformAccountExternalId: '778899',
     })).toMatchObject({ type: 'account.identity', platformAccountExternalId: '778899' })
+  })
+
+  it('接受平台客户端显式退出事件', () => {
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'account.signed-out',
+    })).toMatchObject({ type: 'account.signed-out' })
   })
 
   it('拒绝缺平台消息 id 的回传事件', () => {
@@ -106,6 +114,21 @@ describe('parseNativeGuestEvent', () => {
 })
 
 describe('nativeComposerBridge', () => {
+  it('主进程只转发结构完整的 typed command', () => {
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.send',
+      requestId: 'request-1',
+      contextRevision: 2,
+      platformConversationId: '-100123',
+      attemptId: 'attempt-1',
+    })).toMatchObject({ type: 'composer.send', attemptId: 'attempt-1' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'open-devtools',
+    })).toBeNull()
+  })
+
   it('命令携带 account 绑定之外的会话 revision，并按 requestId 收敛结果', async () => {
     let sent: NativeComposerCommand | null = null
     const unregister = registerNativeCommandTarget(context.accountId, {

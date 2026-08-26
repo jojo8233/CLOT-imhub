@@ -15,6 +15,8 @@ import { conversationRoutes } from './routes/conversations.js'
 import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
 import { translateRoutes } from './routes/translate.js'
 import { nativeRoutes, type NativeRouteDeps } from './routes/native.js'
+import { nativeControlRoutes } from './routes/native-control.js'
+import { isNativeControlAuthorization } from './native-control.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -81,6 +83,8 @@ export async function buildServer(
     // /api/auth/ 自己校验密码；/ws 自己在首帧里鉴权。两者都不走这个钩子。
     if (req.url.startsWith('/api/auth/') || req.url.startsWith('/ws')) return
     const header = req.headers.authorization
+    const nativeGrantPath = req.url.startsWith('/api/native/') || req.url.startsWith('/api/translate/')
+    if (nativeGrantPath && isNativeControlAuthorization(header)) return
     if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'unauthorized' })
     try {
       const claims = await verifySession(header.slice(7), config.JWT_SECRET)
@@ -99,6 +103,7 @@ export async function buildServer(
     user: { id: req.actor.userId, role: req.actor.role },
   }))
   await app.register(async (instance) => { await accountRoutes(instance, deps) })
+  await app.register(nativeControlRoutes)
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
   await app.register(async (instance) => { await translateRoutes(instance, deps) })

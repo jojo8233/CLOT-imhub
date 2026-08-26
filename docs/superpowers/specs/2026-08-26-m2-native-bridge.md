@@ -25,12 +25,14 @@ Telegram fork 在 M3 实现协议适配并做真实多开、媒体、发送和�
 
 协议定义集中在 `packages/shared/src/native-bridge.ts`。M2 初始版本为 1；M3-1 已升级到
 版本 2，canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调
-`editVersion` 的详细规则见 `2026-08-26-m3-telegram-message-identity.md`。
+  `editVersion` 的详细规则见 `2026-08-26-m3-telegram-message-identity.md`。M3-2 新增的
+  `account.signed-out`、短时控制授权和身份状态机见 `2026-08-26-m3-account-control.md`。
 
 guest → host：
 
 - `bridge.ready`
 - `account.identity`（v2）
+- `account.signed-out`（M3-2）
 - `context.changed`
 - `composer.state`
 - `command.result`
@@ -77,21 +79,16 @@ host 按事件所属常驻 webview 绑定 accountId，guest 只上报 `platformC
 - 主进程强制指定 `out/preload/native-bridge.mjs`，并保持 guest 的
   `nodeIntegration: false`、`contextIsolation: true`。
 - 新受控 preload 只新增 `window.imHubNativeBridge`，不通过该接口暴露 `ipcRenderer`、
-  Node.js、外壳 `window.imHub` 或 token；这不覆盖下述历史兼容注入。
-- guest 上报不包含 `accountId`。外壳根据事件来自哪个常驻 webview 绑定账号，服务端
-  再按 JWT 用户与 `accounts.owner_user_id` 复核。
+  Node.js、外壳 `window.imHub`、用户 JWT 或 control grant。
+- guest 上报不包含 `accountId`。主进程根据事件来自哪个常驻 webview 绑定账号，并用
+  服务端签发的五分钟 grant 实时复核 owner、账号撤销版本与 Telegram self user id。
 - manager/auditor 的“可见”范围不等于可操控平台账号。当前桥接只接受实际账号归属人。
 - 非白名单主框架导航被阻止；新窗口只允许交给系统打开 http/https 链接。
 
-Telegram fork 现有气泡翻译仍通过 `window.__IM_HUB__` 读取服务端配置；在 M3 把 fork
-接到新桥接时必须以宿主代理/窄权限短时能力替换。M2 不以破坏已有翻译为代价提前删除，
-所以当前 guest 仍能读取这枚 12 小时 JWT；只能宣称新的 typed bridge 不暴露 token，
-不能宣称整个 guest 已经无凭证。生产构建不显示 guest DevTools。
-
-主进程目前只能验证 partition 格式，尚不能独立证明当前用户有权操控该 account UUID；
-renderer owner/auditor 门禁不是安全边界。`bridge.ready` 也尚未绑定 guest 实际登录的平台
-账号 external id。两项都属于 M3 生产门槛：服务端签发、主进程验证短时 control grant，
-并在角色/归属变化时撤销；fork 同时上报并校验稳定平台账号身份。
+M3-2 已删除 Telegram fork 的 `window.__IM_HUB__` 和 `executeJavaScript` JWT 注入。气泡
+翻译与语言检测改由 guest preload → 主进程 → 服务端的窄代理完成。主进程在开放能力前
+核对短时 grant、partition/account 绑定和 guest 实际 Telegram self user id；过期、撤销、
+不匹配与退出都会阻断并显示明确状态。生产构建仍不显示 guest DevTools。
 
 ## 4. 服务端入口与存储
 
@@ -153,5 +150,5 @@ Telegram fork 需要：
 - M3-1 已统一 TDLib/fork 的 `chatId:serverMessageId` 规范键并提供历史迁移；开始
   shadow 前仍要用真实 fixture 和账号验证同一消息只落一行，再决定旧后台链路退出时机
 - 用稳定 attempt id 解决发送超时的结果未知；对 outbox 做同账号 single-flight/限流
-- 以短时 account-control grant 把 owner/auditor 门禁移到主进程，并绑定实际平台账号身份
-- 移除 guest JWT 注入；账号删除时退出并清理对应持久化 partition
+- M3-2 已完成短时 account-control grant、实际平台账号身份绑定与 guest JWT 移除
+- M3-2 已完成 Telegram 退出/账号删除时对应本地 partition 与 bridge 能力清理

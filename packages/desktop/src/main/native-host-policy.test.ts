@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { nativeClientUrlAllowed, nativePartitionAllowed } from './native-host-policy.js'
+import {
+  nativeAccountIdFromPartition,
+  nativeClientUrlAllowed,
+  nativePartitionAllowed,
+} from './native-host-policy.js'
 
 describe('native host policy', () => {
   it('只允许补丁客户端开发 origin', () => {
@@ -13,5 +17,8 @@ describe('native host policy', () => {
     expect(nativePartitionAllowed('persist:native-123e4567-e89b-42d3-a456-426614174000')).toBe(true)
     expect(nativePartitionAllowed('persist:native-account-1')).toBe(false)
     expect(nativePartitionAllowed('persist:other-123e4567-e89b-42d3-a456-426614174000')).toBe(false)
+    expect(nativeAccountIdFromPartition('persist:native-123E4567-E89B-42D3-A456-426614174000'))
+      .toBe('123e4567-e89b-42d3-a456-426614174000')
+    expect(nativeAccountIdFromPartition('persist:native-account-1')).toBeNull()
   })
 })

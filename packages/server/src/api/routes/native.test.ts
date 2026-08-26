@@ -28,6 +28,7 @@ let accountId: string
 let agentToken: string
 let managerToken: string
 let auditorToken: string
+let nativeGrant: string
 
 const upsertConversation = vi.fn().mockResolvedValue({ id: '00000000-0000-0000-0000-000000000099' })
 const ingestResult = {
@@ -51,6 +52,9 @@ const withMessageForPublish = vi.fn(async (
   return true
 })
 const publish = vi.fn()
+const translate = vi.fn().mockResolvedValue({
+  text: '你好', detectedLang: 'en', provider: 'deepl', cached: false, downgradedFrom: [],
+})
 
 function actorRepo(): ActorRepo {
   const roles = new Map<string, Role>([
@@ -85,6 +89,7 @@ beforeEach(async () => {
     return true
   })
   publish.mockClear()
+  translate.mockClear()
 
   await db.deleteFrom('message_translations').execute()
   await db.deleteFrom('messages').execute()
@@ -108,7 +113,7 @@ beforeEach(async () => {
   ]).execute()
   accountId = (await db.insertInto('accounts').values({
     platform: 'telegram', owner_user_id: agentId, team_id: teamId,
-    display_name: 'Native TG', status: 'connected',
+    display_name: 'Native TG', status: 'connected', platform_account_external_id: '778899',
   }).returning('id').executeTakeFirstOrThrow()).id
   publicationSnapshot = {
     id: 'message-1',
@@ -129,7 +134,7 @@ beforeEach(async () => {
   ;({ signSession } = await import('../../auth/session.js'))
   app = await buildServer({
     adapters: {} as never,
-    gateway: {} as never,
+    gateway: { translate } as never,
     native: {
       ingestor: { ingestDetailed } as never,
       repo: { upsertConversation, withMessageForPublish, markMessageDeleted, remapMessageId },
@@ -139,6 +144,13 @@ beforeEach(async () => {
   agentToken = await signSession({ userId: agentId }, process.env.JWT_SECRET!)
   managerToken = await signSession({ userId: managerId }, process.env.JWT_SECRET!)
   auditorToken = await signSession({ userId: auditorId }, process.env.JWT_SECRET!)
+  const grantResponse = await app.inject({
+    method: 'POST',
+    url: `/api/accounts/${accountId}/native-control-grant`,
+    headers: auth(agentToken),
+  })
+  expect(grantResponse.statusCode).toBe(200)
+  nativeGrant = grantResponse.json<{ grant: string }>().grant
 })
 
 afterAll(async () => {
@@ -150,6 +162,10 @@ afterAll(async () => {
 
 function auth(token: string) {
   return { authorization: `Bearer ${token}` }
+}
+
+function nativeAuth(grant: string = nativeGrant) {
+  return { authorization: `NativeGrant ${grant}` }
 }
 
 const telegramChatId = '-1001234567890'
@@ -173,9 +189,111 @@ function upsertEvent() {
 }
 
 describe('native bridge routes', () => {
-  it('账号归属人可以把平台会话解析成内部 UUID', async () => {
+  it('grant 验证只返回账号绑定与过期时间，不回显用户会话', async () => {
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/control-grant/verify', headers: nativeAuth(),
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      accountId,
+      platform: 'telegram',
+      expectedPlatformAccountExternalId: '778899',
+    })
+    expect(response.json()).not.toHaveProperty('userId')
+    expect(response.json()).not.toHaveProperty('grant')
+  })
+
+  it('长期用户 session 不能绕过主进程直接调用 native 路由', async () => {
     const response = await app.inject({
       method: 'POST', url: '/api/native/context', headers: auth(agentToken),
+      payload: { accountId, context },
+    })
+    expect(response.statusCode).toBe(401)
+    expect(upsertConversation).not.toHaveBeenCalled()
+  })
+
+  it('显式撤销后旧 grant 不能继续同步会话或代理翻译', async () => {
+    const revoke = await app.inject({
+      method: 'DELETE', url: '/api/native/control-grant', headers: nativeAuth(),
+    })
+    expect(revoke.statusCode).toBe(200)
+    const contextResponse = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(),
+      payload: { accountId, context },
+    })
+    expect(contextResponse.statusCode).toBe(401)
+    const translationResponse = await app.inject({
+      method: 'POST', url: '/api/translate/batch', headers: nativeAuth(),
+      payload: { texts: ['hello'], targetLang: 'zh' },
+    })
+    expect(translationResponse.statusCode).toBe(401)
+    expect(translate).not.toHaveBeenCalled()
+  })
+
+  it('服务端平台身份变化会立即使既有 grant 失效', async () => {
+    await db.updateTable('accounts')
+      .set({ platform_account_external_id: 'another-user' })
+      .where('id', '=', accountId)
+      .execute()
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(),
+      payload: { accountId, context },
+    })
+    expect(response.statusCode).toBe(401)
+  })
+
+  it('平台身份尚未就绪时不签发 grant', async () => {
+    await db.updateTable('accounts')
+      .set({ platform_account_external_id: null })
+      .where('id', '=', accountId)
+      .execute()
+    const response = await app.inject({
+      method: 'POST', url: `/api/accounts/${accountId}/native-control-grant`, headers: auth(agentToken),
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: expect.stringContaining('身份尚未就绪') })
+  })
+
+  it('owner 被改成 auditor 后既有 grant 立即失效', async () => {
+    await db.updateTable('users').set({ role: 'auditor' }).where('id', '=', agentId).execute()
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(),
+      payload: { accountId, context },
+    })
+    expect(response.statusCode).toBe(401)
+    expect(upsertConversation).not.toHaveBeenCalled()
+  })
+
+  it('一个账号的 grant 不能用于另一个账号或 partition', async () => {
+    const otherAccountId = (await db.insertInto('accounts').values({
+      platform: 'telegram', owner_user_id: agentId, team_id: teamId,
+      display_name: 'Other TG', status: 'connected', platform_account_external_id: '112233',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const grantResponse = await app.inject({
+      method: 'POST', url: `/api/accounts/${otherAccountId}/native-control-grant`, headers: auth(agentToken),
+    })
+    const otherGrant = grantResponse.json<{ grant: string }>().grant
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(otherGrant),
+      payload: { accountId, context },
+    })
+    expect(response.statusCode).toBe(401)
+    expect(upsertConversation).not.toHaveBeenCalled()
+  })
+
+  it('有效 grant 可以代理翻译且 guest 不需要用户 JWT', async () => {
+    const response = await app.inject({
+      method: 'POST', url: '/api/translate/batch', headers: nativeAuth(),
+      payload: { texts: ['hello'], targetLang: 'zh' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ results: [{ translated: '你好', failed: false }] })
+    expect(translate).toHaveBeenCalledOnce()
+  })
+
+  it('账号归属人可以把平台会话解析成内部 UUID', async () => {
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(),
       payload: { accountId, context },
     })
     expect(response.statusCode).toBe(200)
@@ -184,28 +302,26 @@ describe('native bridge routes', () => {
 
   it('Telegram 会话拒绝旧式非数字 chat id', async () => {
     const response = await app.inject({
-      method: 'POST', url: '/api/native/context', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(),
       payload: { accountId, context: { ...context, platformConversationId: 'chat-1' } },
     })
     expect(response.statusCode).toBe(422)
     expect(upsertConversation).not.toHaveBeenCalled()
   })
 
-  it('manager 虽然能看见组员账号，也不能冒用原生桥接', async () => {
+  it('manager 虽然能看见组员账号，也不能签发原生控制 grant', async () => {
     const response = await app.inject({
-      method: 'POST', url: '/api/native/context', headers: auth(managerToken),
-      payload: { accountId, context },
+      method: 'POST', url: `/api/accounts/${accountId}/native-control-grant`, headers: auth(managerToken),
     })
     expect(response.statusCode).toBe(404)
     expect(upsertConversation).not.toHaveBeenCalled()
   })
 
-  it('全局只读 auditor 不能上报消息', async () => {
+  it('全局只读 auditor 不能签发原生控制 grant', async () => {
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(auditorToken),
-      payload: { accountId, event: upsertEvent() },
+      method: 'POST', url: `/api/accounts/${accountId}/native-control-grant`, headers: auth(auditorToken),
     })
-    expect(response.statusCode).toBe(404)
+    expect(response.statusCode).toBe(403)
     expect(ingestDetailed).not.toHaveBeenCalled()
   })
 
@@ -215,16 +331,15 @@ describe('native bridge routes', () => {
       .where('id', '=', accountId)
       .execute()
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(auditorToken),
-      payload: { accountId, event: upsertEvent() },
+      method: 'POST', url: `/api/accounts/${accountId}/native-control-grant`, headers: auth(auditorToken),
     })
-    expect(response.statusCode).toBe(404)
+    expect(response.statusCode).toBe(403)
     expect(ingestDetailed).not.toHaveBeenCalled()
   })
 
   it('消息 platform 和 accountId 只取服务端已校验账号', async () => {
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: { accountId, event: upsertEvent() },
     })
     expect(response.statusCode).toBe(200)
@@ -238,7 +353,7 @@ describe('native bridge routes', () => {
   it('Telegram 消息拒绝未带 chat 前缀的 TDLib 旧 id', async () => {
     const base = upsertEvent()
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: {
         accountId,
         event: { ...base, message: { ...base.message, platformMessageId: '1048576' } },
@@ -264,7 +379,7 @@ describe('native bridge routes', () => {
       editVersion: 10,
     }
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: { accountId, event },
     })
     expect(response.statusCode).toBe(200)
@@ -286,7 +401,7 @@ describe('native bridge routes', () => {
     }
     const base = upsertEvent()
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: {
         accountId,
         event: {
@@ -316,7 +431,7 @@ describe('native bridge routes', () => {
     ingestResult.isNew = false
     ingestResult.contentChanged = false
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: { accountId, event: upsertEvent() },
     })
     expect(response.statusCode).toBe(200)
@@ -329,7 +444,7 @@ describe('native bridge routes', () => {
   it('remap 已合并删除内部行时不再发布迟到的幽灵 message', async () => {
     withMessageForPublish.mockResolvedValue(false)
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: { accountId, event: upsertEvent() },
     })
     expect(response.statusCode).toBe(200)
@@ -342,7 +457,7 @@ describe('native bridge routes', () => {
       changed: true, removedMessageId: 'removed-row',
     })
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: {
         accountId,
         event: {
@@ -366,7 +481,7 @@ describe('native bridge routes', () => {
       changed: false, removedMessageId: null, integrityViolation: 'cross_conversation',
     })
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: {
         accountId,
         event: {
@@ -384,7 +499,7 @@ describe('native bridge routes', () => {
   it('拒绝未知协议版本', async () => {
     const event = { ...upsertEvent(), protocolVersion: 99 }
     const response = await app.inject({
-      method: 'POST', url: '/api/native/events', headers: auth(agentToken),
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
       payload: { accountId, event },
     })
     expect(response.statusCode).toBe(400)

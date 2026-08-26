@@ -3,9 +3,15 @@ import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   type NativeGuestEvent,
   type NativeHostCommand,
+  type NativeTranslationBatchInput,
+  type NativeTranslationBatchResult,
 } from '@im-hub/shared'
+import {
+  NATIVE_GUEST_EVENT_CHANNEL,
+  NATIVE_TRANSLATE_BATCH_CHANNEL,
+  NATIVE_TRANSLATE_DETECT_CHANNEL,
+} from '../native-control-ipc.js'
 
-const HOST_EVENT_CHANNEL = 'imhub:native-event'
 const COMMAND_CHANNEL = 'imhub:native-command'
 const MAX_EVENT_BYTES = 900_000
 
@@ -21,10 +27,8 @@ ipcRenderer.on(COMMAND_CHANNEL, (_event, command: NativeHostCommand) => {
 /**
  * 运行在平台 webview 的隔离 preload 中。
  *
- * 这份 typed bridge 只能发送声明过的事件、接收声明过的命令；它不暴露外壳的
- * window.imHub、JWT、ipcRenderer 或 Node.js。Telegram 页面仍有 M3 待移除的
- * window.__IM_HUB__ 历史 JWT 通道，因此页面整体始终按不可信内容处理，外壳也会
- * 对所有入站值做运行时校验。
+ * 这份 typed bridge 只能发送声明过的事件、接收声明过的命令，并调用主进程提供的
+ * 窄翻译代理；它不暴露外壳的 window.imHub、grant、JWT、ipcRenderer 或 Node.js。
  */
 contextBridge.exposeInMainWorld('imHubNativeBridge', {
   protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
@@ -33,7 +37,7 @@ contextBridge.exposeInMainWorld('imHubNativeBridge', {
       const bytes = new TextEncoder().encode(JSON.stringify(event)).byteLength
       if (bytes > MAX_EVENT_BYTES) throw new Error('frame too large')
     } catch {
-      ipcRenderer.sendToHost(HOST_EVENT_CHANNEL, {
+      ipcRenderer.send(NATIVE_GUEST_EVENT_CHANNEL, {
         protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
         type: 'bridge.error',
         code: 'invalid_event_frame',
@@ -41,9 +45,29 @@ contextBridge.exposeInMainWorld('imHubNativeBridge', {
       } satisfies NativeGuestEvent)
       return
     }
-    ipcRenderer.sendToHost(HOST_EVENT_CHANNEL, event)
+    ipcRenderer.send(NATIVE_GUEST_EVENT_CHANNEL, event)
   },
   onCommand(listener: CommandListener): void {
     commandListener = listener
+  },
+  async translateBatch(input: NativeTranslationBatchInput): Promise<NativeTranslationBatchResult[] | undefined> {
+    try {
+      const result = await ipcRenderer.invoke(NATIVE_TRANSLATE_BATCH_CHANNEL, input) as {
+        results?: NativeTranslationBatchResult[]
+      }
+      return result.results
+    } catch {
+      return undefined
+    }
+  },
+  async detectLanguage(text: string): Promise<string | undefined> {
+    try {
+      const result = await ipcRenderer.invoke(NATIVE_TRANSLATE_DETECT_CHANNEL, { text }) as {
+        detectedLang?: string | null
+      }
+      return result.detectedLang ?? undefined
+    } catch {
+      return undefined
+    }
   },
 })

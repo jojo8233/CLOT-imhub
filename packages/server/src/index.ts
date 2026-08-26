@@ -1,5 +1,6 @@
 import { Worker } from 'bullmq'
 import Redis from 'ioredis'
+import { sql } from 'kysely'
 import { config } from './config.js'
 import { db } from './db/client.js'
 import { AdapterManager } from './adapters/manager.js'
@@ -153,6 +154,25 @@ adapters.onCredentialsUpdated((accountId, credentialsRef) => {
     if (!owner) return
     hub.publishTo(owner.owner_user_id, { type: 'auth_done', accountId, ok: true, reason: null })
   })()
+})
+
+adapters.onPlatformIdentityUpdated((accountId, externalId) => {
+  void (async () => {
+    const current = await db.selectFrom('accounts')
+      .select('platform_account_external_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (!current || current.platform_account_external_id === externalId) return
+    await db.updateTable('accounts')
+      .set({
+        platform_account_external_id: externalId,
+        native_control_version: sql<number>`native_control_version + 1`,
+      })
+      .where('id', '=', accountId)
+      .execute()
+  })().catch((err: unknown) => {
+    console.error(`[server] 账号 ${accountId} 更新平台身份失败:`, err)
+  })
 })
 
 adapters.onStatusChange((accountId, status) => {

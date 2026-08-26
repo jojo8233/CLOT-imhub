@@ -66,6 +66,10 @@ export interface NativeAccountIdentityEvent extends NativeBridgeFrame {
   platformAccountExternalId: string
 }
 
+export interface NativeAccountSignedOutEvent extends NativeBridgeFrame {
+  type: 'account.signed-out'
+}
+
 export interface NativeContextChangedEvent extends NativeBridgeFrame {
   type: 'context.changed'
   contextRevision: number
@@ -156,6 +160,7 @@ export interface NativeMessageIdRemappedEvent extends NativeMessageEventFrame {
 export type NativeGuestEvent =
   | NativeBridgeReadyEvent
   | NativeAccountIdentityEvent
+  | NativeAccountSignedOutEvent
   | NativeContextChangedEvent
   | NativeComposerStateEvent
   | NativeCommandResultEvent

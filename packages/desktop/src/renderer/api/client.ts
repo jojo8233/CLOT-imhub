@@ -1,10 +1,4 @@
-import type {
-  NativeConversationContext,
-  NativeMessageDeletedEvent,
-  NativeMessageIdRemappedEvent,
-  NativeMessageUpsertEvent,
-  WsServerEvent,
-} from '@im-hub/shared'
+import type { NativeControlGrantResponse, WsServerEvent } from '@im-hub/shared'
 
 interface SessionBridge {
   save(payload: { token: string; user: SessionUser }): Promise<boolean>
@@ -68,24 +62,8 @@ export class HttpError extends Error {
 
 // 外壳 token 只活在这个模块级变量里，绝不落 localStorage/sessionStorage，也不打印到
 // console。持久化只走 preload 的 session.save/load/clear（主进程 safeStorage）。
-// Telegram fork 仍有 M3 待移除的 guest 内存副本；不要把这里误解为整页已无 token。
 let token: string | null = null
 let currentUser: SessionUser | null = null
-
-/**
- * 仅供把登录态注入**我们自己构建的补丁版客户端**使用。
- *
- * token 刻意只活在模块变量里：不落 localStorage、不打 console、不进 URL。
- * 这两个导出是唯一的例外出口，调用点必须是 im-hub 自己的代码。
- * 绝不能把返回值交给任何第三方页面——那等于把 12 小时的可用凭证送出去。
- */
-export function getSessionToken(): string | null {
-  return token
-}
-
-export function getServerUrl(): string {
-  return BASE
-}
 
 export function hasToken(): boolean {
   return token !== null
@@ -206,11 +184,6 @@ export interface MessageRow {
   translated_text: string | null
 }
 
-export type NativeServerEvent =
-  | NativeMessageUpsertEvent
-  | NativeMessageDeletedEvent
-  | NativeMessageIdRemappedEvent
-
 export const api = {
   /**
    * 登录成功后立即尝试加密持久化（safeStorage 不可用时 persistSession 静默跳过，
@@ -238,6 +211,10 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
+  createNativeControlGrant: (accountId: string) =>
+    request<NativeControlGrantResponse>(`/api/accounts/${accountId}/native-control-grant`, {
+      method: 'POST',
+    }),
   /**
    * 只翻译，不发送。用来在发送前生成可编辑的预览 + 回译对照。
    * backTranslated 为 null 表示回译服务当次失败，translated/targetLang/provider 仍然可用。
@@ -263,18 +240,6 @@ export const api = {
       `/api/conversations/${conversationId}/target-lang`,
       { method: 'PATCH', body: JSON.stringify({ targetLang }) },
     ),
-  /**
-   * 把平台侧当前会话解析成服务端 conversations.id。accountId 只用于定位候选账号，
-   * 服务端会按当前 token 重新校验实际归属，不能把客户端传值当授权。
-   */
-  syncNativeContext: (accountId: string, context: NativeConversationContext) =>
-    request<{ conversationId: string }>('/api/native/context', {
-      method: 'POST', body: JSON.stringify({ accountId, context }),
-    }),
-  reportNativeEvent: (accountId: string, event: NativeServerEvent) =>
-    request<{ accepted: boolean; duplicate?: boolean }>('/api/native/events', {
-      method: 'POST', body: JSON.stringify({ accountId, event }),
-    }),
   /**
    * 鉴权走首帧消息，不走 query string —— token 有 12 小时有效期，
    * 出现在 URL 里会被反向代理/服务端访问日志记下来，query string 鉴权就是把这个

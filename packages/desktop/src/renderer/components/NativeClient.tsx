@@ -1,23 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { NativeCommandResultEvent } from '@im-hub/shared'
+import type {
+  NativeCommandResultEvent,
+  NativeControlStateUpdate,
+  NativeGuestEvent,
+  NativeHostCommand,
+} from '@im-hub/shared'
 import { NATIVE_BRIDGE_PROTOCOL_VERSION } from '@im-hub/shared'
 import {
   api,
   getCurrentUser,
-  getServerUrl,
-  getSessionToken,
-  HttpError,
-  NetworkError,
-  UnauthorizedError,
-  type NativeServerEvent,
   type AccountRow,
   type SessionUser,
 } from '../api/client.js'
 import {
-  NATIVE_COMMAND_CHANNEL,
-  NATIVE_EVENT_CHANNEL,
   handleNativeCommandResult,
-  parseNativeGuestEvent,
   registerNativeCommandTarget,
 } from '../native-bridge.js'
 import { useStore } from '../store.js'
@@ -35,8 +31,8 @@ import { EmptyHint, IconButton } from './ui.js'
  * 时会明显卡顿闪烁。常驻的代价是内存，但切换体验是这条路线的核心价值。
  *
  * 安全边界：webview 里跑的是第三方站点，一律当不可信内容。它拿不到
- * window.imHub，也没有 node 能力；将来注入翻译要走 webview 自己的 preload，
- * 只暴露最小接口。
+ * window.imHub、用户 JWT 或 control grant，也没有 node 能力；翻译和命令都经
+ * webview 自己的 preload 进入主进程按账号校验。
  */
 
 /**
@@ -176,27 +172,32 @@ export function NativeClient() {
   )
 }
 
+const GRANT_REFRESH_MARGIN_MS = 60_000
+const MIN_GRANT_REFRESH_MS = 30_000
+
+function nativeProxyStatus(error: unknown): number | null {
+  const message = error instanceof Error ? error.message : String(error)
+  const match = /原生代理请求失败（(\d{3})）/.exec(message)
+  return match ? Number(match[1]) : null
+}
+
 function WebviewPane({ accountId, src, visible }: {
   accountId: string
   src: string
   visible: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
-  // 放 ref 里：dom-ready 回调只绑定一次，不该因为 token 变化重新绑监听
-  const tokenRef = useRef(getSessionToken() ?? '')
-  const serverUrlRef = useRef(getServerUrl())
+  const guestWebContentsIdRef = useRef<number | null>(null)
   const lastContextRevisionRef = useRef(-1)
-  tokenRef.current = getSessionToken() ?? ''
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [detail, setDetail] = useState<string>('')
-  const nativePreload = (globalThis as {
-    imHub?: { nativeBridgePreload?: string }
-  }).imHub?.nativeBridgePreload
+  const [controlError, setControlError] = useState<string | null>(null)
+  const nativePreload = window.imHub?.nativeBridgePreload
 
-  // 超时兜底：转圈转到天荒地老是最没用的状态，用户不知道该等还是该重来
   useEffect(() => {
     if (state !== 'loading') return
     const timer = setTimeout(() => {
+      console.error(`[native-client:${accountId.slice(0, 8)}] 原生客户端页面加载超时`)
       setState('failed')
       setDetail(import.meta.env.DEV
         ? '等了 20 秒还没加载出来。确认 telegram-tt 的开发服务器在跑（代码/telegram-tt 目录下 npm run dev），然后点右下角 ⌘ 看控制台'
@@ -208,79 +209,138 @@ function WebviewPane({ accountId, src, visible }: {
 
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    const nativeControl = window.imHub?.nativeControl
+    if (!el || !nativeControl) {
+      setControlError('主进程账号控制桥接不可用')
+      useStore.getState().setNativeBridgeConnection(accountId, 'failed', '主进程账号控制桥接不可用')
+      return
+    }
     let disposed = false
+    let grantRefreshTimer: ReturnType<typeof setTimeout> | null = null
+    let provisionGeneration = 0
+
+    const currentTarget = () => {
+      const guestWebContentsId = guestWebContentsIdRef.current
+      return guestWebContentsId === null ? null : { accountId, guestWebContentsId }
+    }
+
+    const applyControlState = (control: NativeControlStateUpdate): void => {
+      if (disposed || control.accountId !== accountId) return
+      if (control.state === 'ready') {
+        setControlError(null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        return
+      }
+      const message = control.message ?? '账号控制尚未就绪'
+      setControlError(control.state === 'blocked' ? message : null)
+      useStore.getState().setNativeBridgeConnection(
+        accountId,
+        control.state === 'blocked' ? 'failed' : 'waiting',
+        message,
+      )
+    }
+
+    const scheduleGrantRefresh = (expiresAt: string): void => {
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      const delay = Math.max(
+        MIN_GRANT_REFRESH_MS,
+        Date.parse(expiresAt) - Date.now() - GRANT_REFRESH_MARGIN_MS,
+      )
+      grantRefreshTimer = setTimeout(() => { void provisionControl() }, delay)
+    }
+
+    const provisionControl = async (): Promise<void> => {
+      const target = currentTarget()
+      if (!target || disposed) return
+      const generation = ++provisionGeneration
+      try {
+        const grant = await api.createNativeControlGrant(accountId)
+        if (disposed || generation !== provisionGeneration) return
+        const control = await nativeControl.configure(target, grant)
+        if (disposed || generation !== provisionGeneration) return
+        applyControlState(control)
+        scheduleGrantRefresh(grant.expiresAt)
+      } catch {
+        if (disposed || generation !== provisionGeneration) return
+        setControlError('账号控制授权建立失败，请确认服务端账号已连接')
+        useStore.getState().setNativeBridgeConnection(
+          accountId,
+          'failed',
+          '账号控制授权建立失败，请确认服务端账号已连接',
+        )
+      }
+    }
+
     const onStartLoading = (): void => {
-      // guest 进程重新加载后，上一进程报告的会话 revision 已经失效。必须等新进程
-      // 重新发 context.changed，不能短暂复用旧会话去翻译或发送。
+      provisionGeneration += 1
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      const target = currentTarget()
+      if (target) void nativeControl.release(target).catch(() => {})
       setState('loading')
       setDetail('')
+      setControlError(null)
       lastContextRevisionRef.current = -1
       useStore.getState().setNativeAccountIdentity(accountId, null)
       useStore.getState().setNativeContext(accountId, null)
       useStore.getState().setNativeBridgeConnection(accountId, 'waiting')
     }
+
     const onReady = (): void => {
-      const currentUrl = (el as unknown as { getURL(): string }).getURL()
+      const webview = el as unknown as { getURL(): string; getWebContentsId(): number }
       try {
-        if (new URL(currentUrl).origin !== new URL(src).origin) throw new Error('unexpected origin')
+        if (new URL(webview.getURL()).origin !== new URL(src).origin) throw new Error('unexpected origin')
+        guestWebContentsIdRef.current = webview.getWebContentsId()
       } catch {
+        console.error(`[native-client:${accountId.slice(0, 8)}] 原生客户端来源校验失败`)
         setState('failed')
-        setDetail('原生客户端跳转到了未授权页面，已停止配置注入')
+        setDetail('原生客户端跳转到了未授权页面，已停止账号控制')
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端来源校验失败')
         return
       }
       setState('ready')
-      // 把服务端地址与登录态注入补丁版客户端，它据此调 /api/translate/batch。
-      //
-      // 用 executeJavaScript 而不是 <webview preload>：preload 要单独走一遍
-      // 构建配置，而这里注入的时机（dom-ready）远早于用户点开会话触发翻译，
-      // 够用。将来要在页面脚本之前注入别的东西时再改成 preload。
-      const cfg = JSON.stringify({ serverUrl: serverUrlRef.current, token: tokenRef.current })
-      // 写完立刻回读一次确认。注入是整条翻译链路的第一环，
-      // 它悄悄失败的话，后面所有开关看起来都是对的，就是没有译文。
-      void (el as unknown as { executeJavaScript(code: string): Promise<unknown> })
-        .executeJavaScript(`window.__IM_HUB__ = ${cfg}; Boolean(window.__IM_HUB__ && window.__IM_HUB__.token)`)
-        .then((ok: unknown) => {
-          if (ok === true) console.log('[native] im-hub 配置已注入', serverUrlRef.current)
-          else console.error('[native] im-hub 配置注入后回读失败，翻译不会生效')
-        })
-        .catch(() => { console.error('[native] 注入 im-hub 配置失败（详情已脱敏）') })
+      void provisionControl()
     }
+
     const onFail = (e: Event): void => {
       const err = e as Event & { errorCode?: number; errorDescription?: string; isMainFrame?: boolean }
-      // 子资源加载失败很常见（广告、统计、被墙的 CDN），只有主框架失败才算真挂了
       if (err.isMainFrame === false) return
+      console.error(
+        `[native-client:${accountId.slice(0, 8)}] 原生客户端主页面加载失败，错误码 ${String(err.errorCode ?? 'unknown')}`,
+      )
       setState('failed')
       setDetail(`${err.errorDescription ?? '未知错误'}（${String(err.errorCode ?? '')}）`)
       useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端页面加载失败')
     }
-    // guest 仍有 M3 待收口的历史 token 注入。不得原样转发 console
-    // message/sourceId，否则页面 console.log(token) 会把 JWT 带进外壳日志。
+
     const onConsole = (e: Event): void => {
-      const m = e as Event & { level?: number }
-      const tag = `[tg:${accountId.slice(0, 8)}]`
-      if ((m.level ?? 0) >= 2) {
-        console.error(tag, 'guest 报告 warning/error；请在开发构建中检查它的隔离控制台')
+      const message = e as Event & { level?: number }
+      if ((message.level ?? 0) >= 2) {
+        console.error(`[tg:${accountId.slice(0, 8)}]`, 'guest 报告 warning/error；请在开发构建中检查隔离控制台')
       }
     }
-    const onIpcMessage = (e: Event): void => {
-      if (disposed) return
-      const ipc = e as Event & { channel?: string; args?: unknown[] }
-      if (ipc.channel !== NATIVE_EVENT_CHANNEL) return
-      const event = parseNativeGuestEvent(ipc.args?.[0])
-      if (!event) {
-        console.error(`[native:${accountId.slice(0, 8)}] 已拒绝无效桥接事件`)
-        useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端发送了无效桥接事件')
-        return
-      }
 
+    const sendEventAck = (command: NativeHostCommand): void => {
+      const target = currentTarget()
+      if (!target) return
+      void nativeControl.sendCommand(target, command).catch(() => {
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端桥接已断开')
+      })
+    }
+
+    const handleEvent = (event: NativeGuestEvent): void => {
+      if (disposed) return
       if (event.type === 'bridge.ready') {
-        useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在核对 Telegram 登录身份')
         return
       }
       if (event.type === 'account.identity') {
         useStore.getState().setNativeAccountIdentity(accountId, event.platformAccountExternalId)
+        void provisionControl()
+        return
+      }
+      if (event.type === 'account.signed-out') {
+        useStore.getState().setNativeAccountIdentity(accountId, null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Telegram 账号已退出')
         return
       }
       if (event.type === 'command.result') {
@@ -298,11 +358,7 @@ function WebviewPane({ accountId, src, visible }: {
           const incomingConversationId = event.context?.platformConversationId ?? null
           const currentConversationId = currentContext?.platformConversationId ?? null
           if (incomingConversationId !== currentConversationId) {
-            useStore.getState().setNativeBridgeConnection(
-              accountId,
-              'failed',
-              '原生客户端复用了当前会话 revision',
-            )
+            useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端复用了当前会话 revision')
           }
           return
         }
@@ -312,16 +368,15 @@ function WebviewPane({ accountId, src, visible }: {
           return
         }
         const context = event.context
-        const pendingContext = {
+        useStore.getState().setNativeContext(accountId, {
           ...context,
           contextRevision: event.contextRevision,
           conversationId: null,
-        }
-        useStore.getState().setNativeContext(accountId, pendingContext)
-        void api.syncNativeContext(accountId, context).then(({ conversationId }) => {
+        })
+        const target = currentTarget()
+        if (!target) return
+        void nativeControl.syncContext(target, context).then(({ conversationId }) => {
           if (disposed) return
-          // UUID 一旦解析成功就立即落到当前 context。会话列表刷新只是为了右栏
-          // 展示资料，不能让它的瞬时网络失败阻断输入坞整次会话解析。
           useStore.getState().resolveNativeConversation(
             accountId,
             event.contextRevision,
@@ -333,11 +388,7 @@ function WebviewPane({ accountId, src, visible }: {
           }).catch(() => {})
         }).catch(() => {
           if (disposed) return
-          const current = useStore.getState().nativeBridgeByAccount[accountId]?.context
-          if (current?.contextRevision === event.contextRevision
-            && current.platformConversationId === context.platformConversationId) {
-            useStore.getState().setNativeBridgeConnection(accountId, 'ready', '当前会话同步到服务端失败')
-          }
+          useStore.getState().setNativeBridgeConnection(accountId, 'failed', '当前会话同步到服务端失败')
         })
         return
       }
@@ -352,30 +403,26 @@ function WebviewPane({ accountId, src, visible }: {
         return
       }
 
-      void api.reportNativeEvent(accountId, event as NativeServerEvent).then(() => {
+      const target = currentTarget()
+      if (!target) return
+      void nativeControl.reportEvent(target, event).then(() => {
         if (disposed) return
-        const bridge = useStore.getState().nativeBridgeByAccount[accountId]
-        if (bridge?.error === '消息回传失败，正在等待客户端重试') {
-          useStore.getState().setNativeBridgeConnection(accountId, 'ready')
-        }
         sendEventAck({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
-          type: 'event.ack', eventId: event.eventId, accepted: true, retryable: false,
+          type: 'event.ack',
+          eventId: event.eventId,
+          accepted: true,
+          retryable: false,
         })
       }).catch((error: unknown) => {
         if (disposed) return
-        const retryableHttpStatus = error instanceof HttpError
-          && (error.status === 408
-            || error.status === 409
-            || error.status === 425
-            || error.status === 429
-            || error.status >= 500)
-        // 只有明确的永久 4xx 才让 outbox 放弃。401 会同时触发外壳
-        // 登出，但事件必须留在 guest，下次登录后才能补报存档。
-        const retryable = error instanceof NetworkError
-          || error instanceof UnauthorizedError
-          || retryableHttpStatus
-          || !(error instanceof HttpError)
+        const status = nativeProxyStatus(error)
+        const retryable = status === null
+          || status === 408
+          || status === 409
+          || status === 425
+          || status === 429
+          || status >= 500
         useStore.getState().setNativeBridgeConnection(
           accountId,
           retryable ? 'ready' : 'failed',
@@ -383,40 +430,45 @@ function WebviewPane({ accountId, src, visible }: {
         )
         sendEventAck({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
-          type: 'event.ack', eventId: event.eventId, accepted: false, retryable,
+          type: 'event.ack',
+          eventId: event.eventId,
+          accepted: false,
+          retryable,
         })
       })
     }
-    const commandTarget = el as unknown as { send(channel: string, ...args: unknown[]): void }
-    function sendEventAck(command: {
-      protocolVersion: typeof NATIVE_BRIDGE_PROTOCOL_VERSION
-      type: 'event.ack'
-      eventId: string
-      accepted: boolean
-      retryable: boolean
-    }): void {
-      try {
-        commandTarget.send(NATIVE_COMMAND_CHANNEL, command)
-      } catch {
-        useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端桥接已断开')
-      }
+
+    const removeEventListener = nativeControl.onEvent((value) => {
+      if (value.accountId === accountId) handleEvent(value.event)
+    })
+    const removeStateListener = nativeControl.onState(applyControlState)
+    const commandTarget = {
+      send: (_channel: string, command: unknown): Promise<void> => {
+        const target = currentTarget()
+        if (!target) return Promise.reject(new Error('原生客户端尚未登记'))
+        return nativeControl.sendCommand(target, command as NativeHostCommand)
+      },
     }
     const unregisterTarget = registerNativeCommandTarget(accountId, commandTarget)
     el.addEventListener('did-start-loading', onStartLoading)
     el.addEventListener('dom-ready', onReady)
     el.addEventListener('did-fail-load', onFail)
     el.addEventListener('console-message', onConsole)
-    el.addEventListener('ipc-message', onIpcMessage)
     return () => {
       disposed = true
+      provisionGeneration += 1
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      const target = currentTarget()
+      if (target) void nativeControl.release(target).catch(() => {})
       unregisterTarget()
+      removeEventListener()
+      removeStateListener()
       el.removeEventListener('did-start-loading', onStartLoading)
       el.removeEventListener('dom-ready', onReady)
       el.removeEventListener('did-fail-load', onFail)
       el.removeEventListener('console-message', onConsole)
-      el.removeEventListener('ipc-message', onIpcMessage)
     }
-  }, [accountId])
+  }, [accountId, src])
 
   function openDevTools(): void {
     const el = ref.current as unknown as { openDevTools?(): void } | null
@@ -426,7 +478,6 @@ function WebviewPane({ accountId, src, visible }: {
   return (
     <div style={{
       position: 'absolute', inset: 0,
-      // 用 display 切换而不是卸载：重新加载一次要重连、重拉会话、丢滚动位置
       display: visible ? 'block' : 'none',
     }}>
       {state === 'failed' && (
@@ -447,7 +498,16 @@ function WebviewPane({ accountId, src, visible }: {
           </span>
         </div>
       )}
-      {/* guest DevTools 只在开发构建开放，生产外壳不能让普通用户直接执行页面脚本。 */}
+      {controlError && state === 'ready' && (
+        <div style={{
+          position: 'absolute', left: 16, right: 16, top: 12, zIndex: 3,
+          padding: '9px 12px', borderRadius: theme.radius.md,
+          background: theme.color.dangerSoft, color: theme.color.danger,
+          fontSize: theme.font.size.sm, pointerEvents: 'none',
+        }}>
+          账号控制已阻断：{controlError}
+        </div>
+      )}
       {import.meta.env.DEV && (
         <div style={{ position: 'absolute', right: 10, bottom: 10, zIndex: 3, opacity: .85 }}>
           <IconButton onClick={openDevTools} label="打开这个账号的调试控制台">⌘</IconButton>
@@ -456,7 +516,6 @@ function WebviewPane({ accountId, src, visible }: {
       <webview
         ref={ref as never}
         src={src}
-        // 登录态隔离就靠它：一个账号一个 partition，等于一个独立浏览器
         partition={`persist:native-${accountId}`}
         preload={nativePreload}
         allowpopups
