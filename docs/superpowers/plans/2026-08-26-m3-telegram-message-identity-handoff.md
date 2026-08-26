@@ -1,5 +1,8 @@
 # M3-1 Telegram 消息身份交接记录
 
+> 历史记录：本文只描述 M3-1 当时的状态，不再是当前恢复入口。最新交接请读取
+> `docs/superpowers/plans/2026-08-27-m3-telegram-composer-handoff.md`。
+
 日期：2026-08-26
 
 用途：这是清理 Codex 上下文后的恢复入口。下一次任务先读取本文，再核对 Git 与 GitHub

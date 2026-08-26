@@ -1,6 +1,10 @@
 import type { KeyboardEvent } from 'react'
 import { api, getCurrentUser } from '../api/client.js'
-import { nativeComposerBridge, type NativeCommandContext } from '../native-bridge.js'
+import {
+  nativeComposerBridge,
+  NativeBridgeCommandError,
+  type NativeCommandContext,
+} from '../native-bridge.js'
 import { useStore, type NativeDraftStatus } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip } from './ui.js'
@@ -26,13 +30,21 @@ export async function sendCurrentNativeDraft(
   context: NativeCommandContext,
   bridge: Pick<typeof nativeComposerBridge, 'getDraft' | 'send'> = nativeComposerBridge,
   canContinue: () => boolean = () => true,
+  resolveAttemptId: (finalDraft: string) => string = () => crypto.randomUUID(),
+  existingAttemptId?: string,
 ): Promise<string | null> {
+  // 上一次已进入 guest 但 host 未在超时内拿到结论时，原生 Composer 通常已经
+  // 清空输入框。此时直接用同一 attempt 查询结果，不能先用空草稿把重试挡掉。
+  if (existingAttemptId) {
+    if (!canContinue()) return null
+    return bridge.send(context, existingAttemptId)
+  }
   const finalDraft = await bridge.getDraft(context)
   if (!finalDraft.trim()) throw new Error('原生输入框为空，未发送')
   // getDraft 等待期间用户可能已经切到另一个账号/会话。必须在真正发送前
   // 再验证一次，不能因为旧请求终于返回就把当前原生框发出去。
   if (!canContinue()) return null
-  return bridge.send(context)
+  return bridge.send(context, resolveAttemptId(finalDraft))
 }
 
 /** 固定在原生客户端下方、通过 NativeComposerBridge 控制平台原生输入框。 */
@@ -75,7 +87,11 @@ export function TranslationDock() {
     || draft?.status === 'translating'
     || draft?.status === 'sending'
   const canUse = unavailableReason === null && key !== null && context !== null && activeAccountId !== null
-  const canSend = canUse && !busy && Boolean(draft?.translatedText) && Boolean(native?.composerCanSend)
+  const canResolveUnknownAttempt = draft?.status === 'failed' && Boolean(draft.sendAttemptId)
+  const canSend = canUse
+    && !busy
+    && Boolean(draft?.translatedText)
+    && (Boolean(native?.composerCanSend) || canResolveUnknownAttempt)
   const targetLang = conversation?.target_lang ?? null
 
   function commandContext(): NativeCommandContext | null {
@@ -120,6 +136,8 @@ export function TranslationDock() {
         targetLang: result.targetLang,
         status: 'ready',
         error: null,
+        sendAttemptId: null,
+        sendAttemptDraft: null,
       })
     } catch (error) {
       if (!continueOrReset(command, key)) return
@@ -141,15 +159,40 @@ export function TranslationDock() {
         command,
         nativeComposerBridge,
         () => continueOrReset(command, key),
+        (finalDraft) => {
+          const current = useStore.getState().nativeDrafts[key]
+          const attemptId = current?.sendAttemptId && current.sendAttemptDraft === finalDraft
+            ? current.sendAttemptId
+            : crypto.randomUUID()
+          updateDraft(key, { sendAttemptId: attemptId, sendAttemptDraft: finalDraft })
+          return attemptId
+        },
+        draft?.sendAttemptId ?? undefined,
       )
       if (platformMessageId === null) return
       if (!continueOrReset(command, key)) return
       clearDraft(key)
     } catch (error) {
       if (!continueOrReset(command, key)) return
+      const isResultUnknown = error instanceof NativeBridgeCommandError
+        && [
+          'result_unknown',
+          'attempt_context_mismatch',
+          'partial_send_failed',
+          'stale_command_result',
+          'attempt_mismatch',
+          'missing_message_id',
+          'bridge_disconnected',
+        ].includes(error.code)
       updateDraft(key, {
         status: 'failed',
         error: error instanceof Error ? error.message : '原生发送失败',
+        sendAttemptId: isResultUnknown
+          ? useStore.getState().nativeDrafts[key]?.sendAttemptId ?? null
+          : null,
+        sendAttemptDraft: isResultUnknown
+          ? useStore.getState().nativeDrafts[key]?.sendAttemptDraft ?? null
+          : null,
       })
     }
   }
@@ -163,7 +206,14 @@ export function TranslationDock() {
       await api.updateTargetLang(context.conversationId, next)
       if (!continueOrReset(command, key)) return
       updateConversationTargetLang(context.conversationId, next)
-      updateDraft(key, { targetLang: next, status: 'idle', translatedText: '', error: null })
+      updateDraft(key, {
+        targetLang: next,
+        status: 'idle',
+        translatedText: '',
+        error: null,
+        sendAttemptId: null,
+        sendAttemptDraft: null,
+      })
     } catch (error) {
       if (!continueOrReset(command, key)) return
       updateDraft(key, {
@@ -224,6 +274,7 @@ export function TranslationDock() {
             updateDraft(key, {
               sourceText: event.target.value,
               translatedText: '', backTranslated: null, status: 'idle', error: null,
+              sendAttemptId: null, sendAttemptDraft: null,
             })
           }}
           onKeyDown={handleKeyDown}

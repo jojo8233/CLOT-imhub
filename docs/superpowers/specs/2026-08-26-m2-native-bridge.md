@@ -43,6 +43,7 @@ guest → host：
 
 host → guest：
 
+- `bridge.request-state`（M3-3，账号授权完成后请求重发当前 context/composer 事实）
 - `composer.set-draft`
 - `composer.get-draft`
 - `composer.send`
@@ -127,8 +128,9 @@ v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只�
 读取员工修改后的最终文本，再调用 `composer.send`；外壳不会拿缓存译文直接调用旧适配器
 发送接口。失败保留草稿并显示错误，无会话或桥接断开时禁止发送。
 
-`composer.send` 的 8 秒超时是“结果未知”，不是确定未发送。M3 guest 必须按稳定发送
-attempt id 缓存结果/幂等，或要求先核对原生会话再允许重发。
+`composer.send` 的 8 秒超时是“结果未知”，不是确定未发送。M3-3 已让 Telegram guest 按
+稳定发送 attempt id 缓存结果；外壳在未知后直接以同一 attempt 查询，不依赖已经清空的
+原生输入框，也不会生成第二次发送。页面崩溃后的持久恢复仍属于后续 outbox 阶段。
 
 ## 6. 验证
 
@@ -142,13 +144,14 @@ attempt id 缓存结果/幂等，或要求先核对原生会话再允许重发�
 
 Telegram fork 需要：
 
-- 在会话变化时发送 `context.changed`
-- 把现有 draft bridge 映射到三个 composer 命令
+- M3-3 已在 chat/topic 变化时发送 `context.changed`，并以单调 revision 拒绝旧命令
+- M3-3 已把原生 rich editor/handleSend 映射到三个 composer 命令
 - 收发、编辑、删除和最终 id 事件进入带重试的 outbox
 - 收到 `event.ack` 后才能从 outbox 移除事件
-- 外壳桥接 ready 后隐藏/停用 fork 内部旧 `ImHubComposer`，避免双入口
+- M3-3 已删除 fork 内部旧 `ImHubComposer`，TranslationDock 是唯一翻译入口
 - M3-1 已统一 TDLib/fork 的 `chatId:serverMessageId` 规范键并提供历史迁移；开始
   shadow 前仍要用真实 fixture 和账号验证同一消息只落一行，再决定旧后台链路退出时机
-- 用稳定 attempt id 解决发送超时的结果未知；对 outbox 做同账号 single-flight/限流
+- M3-3 已用稳定 attempt id 和最终 Telegram update 解决 Composer 发送幂等；message outbox
+  的同账号 single-flight/限流仍待后续实现
 - M3-2 已完成短时 account-control grant、实际平台账号身份绑定与 guest JWT 移除
 - M3-2 已完成 Telegram 退出/账号删除时对应本地 partition 与 bridge 能力清理

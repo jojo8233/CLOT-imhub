@@ -31,11 +31,16 @@ describe('TranslationDock keyboard handling', () => {
       return 'chat-1:message-1'
     })
 
-    await expect(sendCurrentNativeDraft(context, { getDraft, send }))
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft, send },
+      () => true,
+      () => 'attempt-stable',
+    ))
       .resolves.toBe('chat-1:message-1')
     expect(order).toEqual(['getDraft', 'send'])
     expect(getDraft).toHaveBeenCalledWith(context)
-    expect(send).toHaveBeenCalledWith(context)
+    expect(send).toHaveBeenCalledWith(context, 'attempt-stable')
   })
 
   it('原生输入框为空时不调用发送', async () => {
@@ -61,5 +66,53 @@ describe('TranslationDock keyboard handling', () => {
       () => false,
     )).resolves.toBeNull()
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('结果未知后的相同原生草稿沿用稳定 attemptId', async () => {
+    const context = {
+      accountId: 'account-1', platformConversationId: 'chat-1', contextRevision: 7,
+    }
+    let savedDraft: string | null = null
+    let savedAttemptId: string | null = null
+    const attempts: string[] = []
+    const bridge = {
+      getDraft: vi.fn(async () => 'employee edited text'),
+      send: vi.fn(async (_context: typeof context, attemptId?: string) => {
+        attempts.push(attemptId ?? '')
+        throw new Error('result unknown')
+      }),
+    }
+    const resolveAttemptId = (draft: string) => {
+      if (savedDraft === draft && savedAttemptId) return savedAttemptId
+      savedDraft = draft
+      savedAttemptId = 'attempt-stable'
+      return savedAttemptId
+    }
+
+    await expect(sendCurrentNativeDraft(
+      context, bridge, () => true, resolveAttemptId,
+    )).rejects.toThrow('result unknown')
+    await expect(sendCurrentNativeDraft(
+      context, bridge, () => true, resolveAttemptId,
+    )).rejects.toThrow('result unknown')
+    expect(attempts).toEqual(['attempt-stable', 'attempt-stable'])
+  })
+
+  it('结果未知重试直接查询原 attempt，不依赖已被原生流程清空的草稿', async () => {
+    const context = {
+      accountId: 'account-1', platformConversationId: 'chat-1', contextRevision: 7,
+    }
+    const getDraft = vi.fn(async () => '')
+    const send = vi.fn(async () => 'chat-1:42')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft, send },
+      () => true,
+      () => 'should-not-be-used',
+      'attempt-unknown',
+    )).resolves.toBe('chat-1:42')
+    expect(getDraft).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith(context, 'attempt-unknown')
   })
 })

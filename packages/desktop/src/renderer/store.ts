@@ -50,11 +50,15 @@ export interface NativeDraftState {
   targetLang: string | null
   status: NativeDraftStatus
   error: string | null
+  /** 结果未知时与最终原生草稿绑定，重试必须沿用同一个逻辑发送标识。 */
+  sendAttemptId: string | null
+  sendAttemptDraft: string | null
 }
 
 const EMPTY_DRAFT: NativeDraftState = {
   sourceText: '', translatedText: '', backTranslated: null,
   targetLang: null, status: 'idle', error: null,
+  sendAttemptId: null, sendAttemptDraft: null,
 }
 
 interface State {
@@ -284,6 +288,8 @@ export const useStore = create<State>((set) => ({
           backTranslated: null,
           status: 'idle',
           error: null,
+          sendAttemptId: null,
+          sendAttemptDraft: null,
         }
       } else if (existing.status === 'ready') {
         nextDrafts[key] = {

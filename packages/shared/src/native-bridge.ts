@@ -46,6 +46,11 @@ export type NativeComposerCommand =
   | NativeGetDraftCommand
   | NativeSendCommand
 
+/** 主进程完成账号授权后要求 guest 重发当前会话与输入框事实。 */
+export interface NativeRequestStateCommand extends NativeBridgeFrame {
+  type: 'bridge.request-state'
+}
+
 export interface NativeEventAckCommand extends NativeBridgeFrame {
   type: 'event.ack'
   eventId: string
@@ -54,7 +59,7 @@ export interface NativeEventAckCommand extends NativeBridgeFrame {
   retryable: boolean
 }
 
-export type NativeHostCommand = NativeComposerCommand | NativeEventAckCommand
+export type NativeHostCommand = NativeComposerCommand | NativeEventAckCommand | NativeRequestStateCommand
 
 export interface NativeBridgeReadyEvent extends NativeBridgeFrame {
   type: 'bridge.ready'

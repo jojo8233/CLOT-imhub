@@ -257,8 +257,9 @@ Telegram：
    纳入桌面安装包、自动更新及 GPL 源码交付流程。上线前必须完成这条供应链。
 4. **完成剩余 M3 一致性门槛**：M3-1 已加入 TDLib/fork 统一 Telegram 消息键、Bridge v2
    与 `0005` 迁移；M3-2 已移除 guest JWT，加入五分钟 control grant、Telegram self id
-   绑定及退出/删除分区清理。上线前仍要用真实账号 fixture/shadow 对账确认迁移结果，完成
-   context/composer/message outbox 接线与发送 attempt 幂等。这些完成前仍不能作为生产闭环。
+   绑定及退出/删除分区清理；M3-3 已接通 chat/topic context、原生 Composer 和稳定发送
+   attempt。上线前仍要完成 message outbox，并用真实账号 fixture/shadow 对账确认迁移、媒体、
+   超时重试和多账号隔离。这些完成前仍不能作为生产闭环。
 
 ---
 
@@ -269,12 +270,12 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
 - **两条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
   已进入开发态。Signal 原生路线计划 M5，WhatsApp
-  计划 M6，Zoom 延后到 M8。M2 通用消息入口已经完成，但 Telegram fork 尚未在 M3
-  发出桥接事件，安装包分发也未完成，不能当成已上线能力。
-- **统一桥接已就位、平台接线未完成**：固定输入坞、当前会话映射、草稿/发送命令、
-  服务端消息回传与去重已经实现。telegram-tt 在 M3-2 已发 `bridge.ready/account.identity`，
-  但仍不发 `context.changed`、composer result 或消息 outbox，所以输入坞与右栏仍保持安全
-  禁用/空态；这是后续 M3 边界，不是可发送能力。
+  计划 M6，Zoom 延后到 M8。M3-3 已接通 Telegram context/composer 事件，但消息 outbox、
+  真实账号验收和安装包分发仍未完成，不能当成已上线能力。
+- **Composer 已接线、消息回传未完成**：telegram-tt 已发 `bridge.ready/account.identity`、
+  `context.changed`、`composer.state` 和 command result；TranslationDock 可驱动原生 rich editor
+  与发送 attempt。telegram-tt 仍不发 message upsert/edit/delete outbox，所以右栏长期存档与
+  shadow 对账仍依赖后续 M3，不是完整消息闭环。
 - **当前没有双路消息重复，canonical 基础已就位但 shadow 尚未开始**：telegram-tt
   尚未回传事件，所以 TDLib 与原生链路还不会同时落库。M3-1 已统一
   `chatId:serverMessageId`、临时命名空间和 `0005` 迁移；必须再完成真实 fixture 与
