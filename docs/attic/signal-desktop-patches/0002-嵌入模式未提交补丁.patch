@@ -1,0 +1,264 @@
+diff --git a/app/main.main.ts b/app/main.main.ts
+index e82204b..80599f0 100644
+--- a/app/main.main.ts
++++ b/app/main.main.ts
+@@ -97,6 +97,12 @@ import {
+ import * as ephemeralConfig from './ephemeral_config.main.ts';
+ import * as mainProcessLogging from '../ts/logging/main_process_logging.main.ts';
+ import { MainSQL } from '../ts/sql/main.main.ts';
++// im-hub 补丁：嵌入模式（无边框 + 位置交给宿主）
++import {
++  attachImHubEmbed,
++  imHubEmbedWindowOptions,
++  isImHubEmbed,
++} from './imhub_embed.main.ts';
+ import * as sqlChannels from './sql_channel.main.ts';
+ import * as windowState from './window_state.std.ts';
+ import type { CreateTemplateOptionsType } from './menu.std.ts';
+@@ -703,7 +709,11 @@ async function createWindow() {
+     systemTraySetting === SystemTraySetting.MinimizeToAndStartInSystemTray;
+ 
+   const shouldShowWindow =
+-    !app.getLoginItemSettings().wasOpenedAsHidden && !startInTray;
++    // im-hub 补丁：嵌入模式下由宿主决定何时显示，自己先别露面，否则会在默认
++    // 位置闪一下无边框窗口再跳到内容区。
++    !app.getLoginItemSettings().wasOpenedAsHidden &&
++    !startInTray &&
++    !isImHubEmbed();
+ 
+   const windowOptions: Electron.BrowserWindowConstructorOptions = {
+     show: false,
+@@ -767,10 +777,18 @@ async function createWindow() {
+     }
+   }
+ 
++  // im-hub 补丁：嵌入模式盖掉边框/可拖动/最小尺寸等选项。放在所有尺寸兜底
++  // 逻辑之后，确保不会被上面的 MIN_WIDTH 兜底顶回去。
++  if (isImHubEmbed()) {
++    Object.assign(windowOptions, imHubEmbedWindowOptions());
++  }
++
+   log.info('Initializing BrowserWindow config:', windowOptions);
+ 
+   // Create the browser window.
+   mainWindow = new BrowserWindow(windowOptions);
++  // im-hub 补丁：连上宿主，交出位置/层级控制权
++  attachImHubEmbed(mainWindow);
+   if (settingsChannel) {
+     settingsChannel.setMainWindow(mainWindow);
+   }
+@@ -783,10 +801,16 @@ async function createWindow() {
+     getResolvedMessagesLocale().i18n,
+     log
+   );
+-  if (!startInTray && windowConfig && windowConfig.maximized) {
++  // im-hub 补丁：嵌入模式下窗口尺寸由宿主决定，最大化/全屏会直接盖住宿主界面
++  if (!startInTray && windowConfig && windowConfig.maximized && !isImHubEmbed()) {
+     mainWindow.maximize();
+   }
+-  if (!startInTray && windowConfig && windowConfig.fullscreen) {
++  if (
++    !startInTray &&
++    windowConfig &&
++    windowConfig.fullscreen &&
++    !isImHubEmbed()
++  ) {
+     mainWindow.setFullScreen(true);
+   }
+   if (systemTrayService) {
+@@ -794,7 +818,9 @@ async function createWindow() {
+   }
+ 
+   function saveWindowStats() {
+-    if (!windowConfig) {
++    // im-hub 补丁：嵌入模式下的 bounds 是宿主强加的，存下来会污染独立运行时
++    // 的窗口位置记忆。
++    if (!windowConfig || isImHubEmbed()) {
+       return;
+     }
+ 
+diff --git a/app/imhub_embed.main.ts b/app/imhub_embed.main.ts
+new file mode 100644
+index 0000000..dfbb3a3
+--- /dev/null
++++ b/app/imhub_embed.main.ts
+@@ -0,0 +1,151 @@
++// Copyright 2026 im-hub
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// im-hub 补丁：嵌入模式（「窗口覆盖」方案）。
++//
++// 为什么不是真正的内嵌：Signal Desktop 的整个客户端跑在渲染层的 preload 里，
++// 依赖 sqlcipher / libsignal 这些原生模块，没法被别的 Electron 应用用 webview
++// 装进去；macOS 又没有 Windows SetParent() 那种跨进程窗口重父化的手段。
++//
++// 所以这里的做法是：Signal 仍然是独立进程、独立窗口，但去掉边框、禁止用户自己
++// 拖动，位置/大小/层级全部交给宿主 im-hub 实时同步，精确贴在宿主内容区上，
++// 视觉上就是一个应用。代价是焦点切换和多显示器场景会有瑕疵——这是这条路
++// 已知的上限，换来的是不用动 Signal 主进程的账号模型。
++//
++// 只在 IM_HUB_EMBED_SOCKET 存在时启用；不设这个变量时本文件全程无副作用，
++// Signal 照常独立运行。
++
++import { connect } from 'node:net';
++import type { Socket } from 'node:net';
++import type { BrowserWindow } from 'electron';
++
++import { createLogger } from '../ts/logging/log.std.ts';
++
++const log = createLogger('imhub-embed');
++
++const socketPath = process.env.IM_HUB_EMBED_SOCKET;
++const handshakeToken = process.env.IM_HUB_EMBED_TOKEN;
++
++export function isImHubEmbed(): boolean {
++  return Boolean(socketPath);
++}
++
++/**
++ * 嵌入模式下要盖掉的 BrowserWindow 选项。
++ *
++ * `show: false` 是关键：宿主还没告诉我们该贴在哪之前先别露面，否则会先在默认
++ * 位置闪一下无边框窗口。真正的显示由宿主的 show 指令触发。
++ */
++export function imHubEmbedWindowOptions(): Electron.BrowserWindowConstructorOptions {
++  return {
++    show: false,
++    frame: false,
++    titleBarStyle: 'default',
++    movable: false,
++    resizable: false,
++    minimizable: false,
++    maximizable: false,
++    fullscreenable: false,
++    skipTaskbar: true,
++    // 宿主会把我们精确摆到内容区，Signal 自己的最小尺寸限制会顶掉宿主给的
++    // 尺寸，导致右边/下边溢出到宿主窗口外面。
++    minWidth: 0,
++    minHeight: 0,
++  };
++}
++
++type HostCommand =
++  | { t: 'bounds'; x: number; y: number; width: number; height: number }
++  | { t: 'show' }
++  | { t: 'hide' }
++  | { t: 'top'; v: boolean }
++  | { t: 'focus' }
++  | { t: 'quit' };
++
++/**
++ * 连上宿主，开始接受它的摆布，并把自己的焦点变化报回去。
++ *
++ * 宿主需要知道我们有没有被点中：用户点 Signal 窗口时宿主自己的窗口会失焦，
++ * 宿主分不清是「切到别的 App 了」还是「点到我托管的 Signal 上了」，只能靠
++ * 我们主动上报。
++ */
++export function attachImHubEmbed(win: BrowserWindow): void {
++  if (!socketPath) return;
++
++  let sock: Socket | undefined;
++  const send = (msg: unknown): void => {
++    sock?.write(`${JSON.stringify(msg)}\n`);
++  };
++
++  const apply = (cmd: HostCommand): void => {
++    if (win.isDestroyed()) return;
++    switch (cmd.t) {
++      case 'bounds':
++        win.setBounds({
++          x: Math.round(cmd.x),
++          y: Math.round(cmd.y),
++          width: Math.round(cmd.width),
++          height: Math.round(cmd.height),
++        });
++        break;
++      case 'show':
++        // showInactive：宿主刚被点中时不要把焦点抢过来，否则用户点宿主侧边栏
++        // 会变成焦点在宿主和 Signal 之间来回弹。
++        if (!win.isVisible()) win.showInactive();
++        break;
++      case 'hide':
++        if (win.isVisible()) win.hide();
++        break;
++      case 'top':
++        win.setAlwaysOnTop(cmd.v, 'floating');
++        break;
++      case 'focus':
++        win.focus();
++        break;
++      case 'quit':
++        win.destroy();
++        break;
++      default:
++        break;
++    }
++  };
++
++  const onLine = (line: string): void => {
++    if (!line.trim()) return;
++    try {
++      apply(JSON.parse(line) as HostCommand);
++    } catch (error) {
++      log.warn('无法解析宿主指令', error);
++    }
++  };
++
++  sock = connect(socketPath, () => {
++    log.info('已连上 im-hub 宿主');
++    send({ t: 'hello', token: handshakeToken });
++    send({ t: 'ready' });
++  });
++
++  let buffer = '';
++  sock.on('data', chunk => {
++    buffer += chunk.toString('utf8');
++    let index = buffer.indexOf('\n');
++    while (index !== -1) {
++      onLine(buffer.slice(0, index));
++      buffer = buffer.slice(index + 1);
++      index = buffer.indexOf('\n');
++    }
++  });
++
++  // 宿主没了就别继续飘着一个没有边框、用户关不掉的窗口。
++  sock.on('close', () => {
++    log.warn('与 im-hub 宿主的连接断开，退出');
++    if (!win.isDestroyed()) win.destroy();
++  });
++  sock.on('error', error => {
++    log.error('宿主连接出错', error);
++  });
++
++  win.on('focus', () => send({ t: 'focus' }));
++  win.on('blur', () => send({ t: 'blur' }));
++  win.on('closed', () => sock?.end());
++}
+diff --git a/config/local-imhub.json b/config/local-imhub.json
+new file mode 100644
+index 0000000..5a5399e
+--- /dev/null
++++ b/config/local-imhub.json
+@@ -0,0 +1,22 @@
++{
++  "serverUrl": "https://chat.signal.org",
++  "storageUrl": "https://storage.signal.org",
++  "cdn": {
++    "0": "https://cdn.signal.org",
++    "2": "https://cdn2.signal.org",
++    "3": "https://cdn3.signal.org"
++  },
++  "sfuUrl": "https://sfu.voip.signal.org/",
++  "challengeUrl": "https://signalcaptchas.org/challenge/generate.html",
++  "registrationChallengeUrl": "https://signalcaptchas.org/registration/generate.html",
++  "serverPublicParams": "AMhf5ywVwITZMsff/eCyudZx9JDmkkkbV6PInzG4p8x3VqVJSFiMvnvlEKWuRob/1eaIetR31IYeAbm0NdOuHH8Qi+Rexi1wLlpzIo1gstHWBfZzy1+qHRV5A4TqPp15YzBPm0WSggW6PbSn+F4lf57VCnHF7p8SvzAA2ZZJPYJURt8X7bbg+H3i+PEjH9DXItNEqs2sNcug37xZQDLm7X36nOoGPs54XsEGzPdEV+itQNGUFEjY6X9Uv+Acuks7NpyGvCoKxGwgKgE5XyJ+nNKlyHHOLb6N1NuHyBrZrgtY/JYJHRooo5CEqYKBqdFnmbTVGEkCvJKxLnjwKWf+fEPoWeQFj5ObDjcKMZf2Jm2Ae69x+ikU5gBXsRmoF94GXTLfN0/vLt98KDPnxwAQL9j5V1jGOY8jQl6MLxEs56cwXN0dqCnImzVH3TZT1cJ8SW1BRX6qIVxEzjsSGx3yxF3suAilPMqGRp4ffyopjMD1JXiKR2RwLKzizUe5e8XyGOy9fplzhw3jVzTRyUZTRSZKkMLWcQ/gv0E4aONNqs4P+NameAZYOD12qRkxosQQP5uux6B2nRyZ7sAV54DgFyLiRcq1FvwKw2EPQdk4HDoePrO/RNUbyNddnM/mMgj4FW65xCoT1LmjrIjsv/Ggdlx46ueczhMgtBunx1/w8k8V+l8LVZ8gAT6wkU5J+DPQalQguMg12Jzug3q4TbdHiGCmD9EunCwOmsLuLJkz6EcSYXtrlDEnAM+hicw7iergYLLlMXpfTdGxJCWJmP4zqUFeTTmsmhsjGBt7NiEB/9pFFEB3pSbf4iiUukw63Eo8Aqnf4iwob6X1QviCWuc8t0LUlT9vALgh/f2DPVOOmR0RW6bgRvc7DSF20V/omg+YBw==",
++  "serverTrustRoots": [
++    "BXu6QIKVz5MA8gstzfOgRQGqyLqOwNKHL6INkv3IHWMF",
++    "BUkY0I+9+oPgDCn4+Ac6Iu813yvqkDr/ga8DzLxFxuk6"
++  ],
++  "genericServerPublicParams": "AByD873dTilmOSG0TjKrvpeaKEsUmIO8Vx9BeMmftwUs9v7ikPwM8P3OHyT0+X3EUMZrSe9VUp26Wai51Q9I8mdk0hX/yo7CeFGJyzoOqn8e/i4Ygbn5HoAyXJx5eXfIbqpc0bIxzju4H/HOQeOpt6h742qii5u/cbwOhFZCsMIbElZTaeU+BWMBQiZHIGHT5IE0qCordQKZ5iPZom0HeFa8Yq0ShuEyAl0WINBiY6xE3H/9WnvzXBbMuuk//eRxXgzO8ieCeK8FwQNxbfXqZm6Ro1cMhCOF3u7xoX83QhpN",
++  "backupServerPublicParams": "AJwNSU55fsFCbgaxGRD11wO1juAs8Yr5GF8FPlGzzvdJJIKH5/4CC7ZJSOe3yL2vturVaRU2Cx0n751Vt8wkj1bozK3CBV1UokxV09GWf+hdVImLGjXGYLLhnI1J2TWEe7iWHyb553EEnRb5oxr9n3lUbNAJuRmFM7hrr0Al0F0wrDD4S8lo2mGaXe0MJCOM166F8oYRQqpFeEHfiLnxA1O8ZLh7vMdv4g9jI5phpRBTsJ5IjiJrWeP0zdIGHEssUeprDZ9OUJ14m0v61eYJMKsf59Bn+mAT2a7YfB+Don9O",
++  "stripePublishableKey": "pk_live_6cmGZopuTsV8novGgJJW9JpC00vLIgtQ1D",
++  "updatesEnabled": false,
++  "storageProfile": "imhub"
++}

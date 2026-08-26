@@ -4,3 +4,4 @@ out/
 .env
 data/
 *.log
+.DS_Store
