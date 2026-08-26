@@ -43,57 +43,70 @@ const adapters = new AdapterManager([
 
 const hub = new WsHub()
 const queue = new BullTranslateQueue(redis)
-const ingestor = new MessageIngestor(new KyselyMessageRepo(db), queue)
+const messageRepo = new KyselyMessageRepo(db)
+const ingestor = new MessageIngestor(messageRepo, queue)
 
 adapters.onMessage((msg) => {
   void (async () => {
-    const messageId = await ingestor.ingest(msg)
-    if (!messageId) return
+    await ingestor.ingestDetailed(msg, async result => {
+      if (!result.isNew && !msg.editedAt) return
 
-    // 推给该账号的归属人。不推的话新消息和新会话都不会实时出现，
-    // 员工得手动刷新才看得到——那就不是聊天软件了。
-    const row = await db
-      .selectFrom('messages')
-      .innerJoin('accounts', 'accounts.id', 'messages.account_id')
-      .select([
-        'messages.id as id',
-        'messages.conversation_id as conversation_id',
-        'messages.account_id as account_id',
-        'messages.platform as platform',
-        'messages.direction as direction',
-        'messages.body as body',
-        'messages.sent_at as sent_at',
-        'accounts.owner_user_id as owner_user_id',
-      ])
-      .where('messages.id', '=', messageId)
-      .executeTakeFirst()
-
-    if (!row) return
-    hub.publishTo(row.owner_user_id, {
-      type: 'message',
-      messageId: row.id,
-      conversationId: row.conversation_id,
-      accountId: row.account_id,
-      platform: row.platform,
-      direction: row.direction,
-      body: row.body,
-      // 译文此刻还没产出，随后由 translation 事件补上
-      translatedBody: null,
-      sentAt: row.sent_at.toISOString(),
+      // 必须在翻译任务入队前推新消息。否则极快的 worker 可能先发 translation，
+      // 客户端还没有对应消息行，只能丢掉这条实时译文。
+      await messageRepo.withMessageForPublish(result.messageId, message => {
+        if (message.deletedAt) return
+        if (result.isNew) {
+          hub.publishTo(message.ownerUserId, {
+            type: 'message',
+            messageId: message.id,
+            conversationId: message.conversationId,
+            accountId: message.accountId,
+            platform: message.platform,
+            direction: message.direction,
+            body: message.body,
+            // worker 若已先完成，快照会直接携带译文；否则随后由 translation 事件补上。
+            translatedBody: message.translatedBody,
+            sentAt: message.sentAt.toISOString(),
+            editedAt: message.editedAt?.toISOString() ?? null,
+          })
+        } else if (message.editedAt
+          && msg.editedAt
+          && message.editedAt.toISOString() === msg.editedAt.toISOString()) {
+          // shadow/fallback 适配器与原生回传可能竞争同一编辑。哪条链路先
+          // 落库，哪条就负责发 update；后到的重放会被 revision 去重。
+          hub.publishTo(message.ownerUserId, {
+            type: 'message_updated',
+            messageId: message.id,
+            conversationId: message.conversationId,
+            body: message.body,
+            editedAt: message.editedAt.toISOString(),
+            translatedBody: message.translatedBody,
+          })
+        }
+      })
     })
   })()
 })
 
 adapters.onMessageIdRemapped((accountId, oldId, newId) => {
   void (async () => {
-    const r = await db
-      .updateTable('messages')
-      .set({ platform_message_id: newId })
-      .where('account_id', '=', accountId)
-      .where('platform_message_id', '=', oldId)
-      .executeTakeFirst()
-    if ((r.numUpdatedRows ?? 0n) > 0n) {
+    const result = await messageRepo.remapMessageId(accountId, oldId, newId)
+    if (result?.changed) {
       console.log(`[server] 消息 id 已换成最终值 ${oldId} -> ${newId}`)
+    }
+    if (result?.removedMessageId) {
+      const owner = await db.selectFrom('accounts')
+        .select('owner_user_id')
+        .where('id', '=', accountId)
+        .executeTakeFirst()
+      if (owner) {
+        hub.publishTo(owner.owner_user_id, {
+          type: 'message_merged',
+          conversationId: result.conversationId,
+          removedMessageId: result.removedMessageId,
+          canonicalMessageId: result.messageId,
+        })
+      }
     }
   })()
 })
@@ -156,11 +169,17 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
   await runTranslateJob(job.data, {
     loadMessage: async (id) => {
       const row = await db.selectFrom('messages')
-        .select(['id', 'body', 'direction', 'conversation_id'])
+        .select(['id', 'body', 'direction', 'conversation_id', 'edited_at'])
         .where('id', '=', id)
         .executeTakeFirst()
       return row
-        ? { id: row.id, body: row.body, direction: row.direction, conversationId: row.conversation_id }
+        ? {
+            id: row.id,
+            body: row.body,
+            direction: row.direction,
+            conversationId: row.conversation_id,
+            revision: row.edited_at?.toISOString() ?? 'initial',
+          }
         : null
     },
     // P0 只有全局默认引擎；会话/账号/团队级覆盖在 P2 随管理后台一起补
@@ -174,20 +193,7 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
       return row !== undefined
     },
     gateway,
-    saveTranslation: async (input) => {
-      await db.insertInto('message_translations').values({
-        message_id: input.messageId,
-        target_lang: input.targetLang,
-        provider: input.provider,
-        translated_text: input.translatedText,
-      }).onConflict(oc => oc.columns(['message_id', 'target_lang']).doUpdateSet({
-        translated_text: input.translatedText,
-        provider: input.provider,
-      })).execute()
-    },
-    saveDetectedLang: async (messageId, lang) => {
-      await db.updateTable('messages').set({ body_lang: lang }).where('id', '=', messageId).execute()
-    },
+    saveTranslation: input => messageRepo.saveTranslationIfCurrent(input),
     publish: async (event) => {
       const owner = await db.selectFrom('messages')
         .innerJoin('accounts', 'accounts.id', 'messages.account_id')
@@ -199,7 +205,15 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
   })
 }, { connection: redis })
 
-const app = await buildServer({ adapters, gateway }, hub)
+const app = await buildServer({
+  adapters,
+  gateway,
+  native: {
+    ingestor,
+    repo: messageRepo,
+    publish: (userId, event) => hub.publishTo(userId, event),
+  },
+}, hub)
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
 
 // TDLib 被强杀时可能来不及走完 authorizationStateClosed，本地 session 数据库

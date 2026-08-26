@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { BrowserWindow, app, ipcMain, safeStorage } from 'electron'
+import { BrowserWindow, app, ipcMain, safeStorage, shell } from 'electron'
+import { nativeClientUrlAllowed, nativePartitionAllowed } from './native-host-policy.js'
 
 const tokenFile = (): string => join(app.getPath('userData'), 'session.bin')
 
@@ -65,6 +66,26 @@ function createWindow(): void {
     },
   })
 
+  // webview 属性来自渲染进程，不能直接信任。真正附着 guest WebContents 前，主进程
+  // 再校验来源与 partition，并强制使用我们构建的受控 preload。
+  win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    if (!nativeClientUrlAllowed(params.src) || !nativePartitionAllowed(params.partition ?? '')) {
+      event.preventDefault()
+      console.error('[native-host] 已阻止非法 webview 来源或 partition')
+      return
+    }
+    webPreferences.preload = join(import.meta.dirname, '../preload/native-bridge.mjs')
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.nodeIntegrationInWorker = false
+    webPreferences.contextIsolation = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+    webPreferences.webviewTag = false
+    // 与外壳 preload 相同：当前 ESM preload 在 sandbox 下不会加载。
+    webPreferences.sandbox = false
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     // 开发模式自动开 DevTools：渲染进程的报错否则完全看不见
     win.webContents.openDevTools({ mode: 'right' })
@@ -73,6 +94,35 @@ function createWindow(): void {
     void win.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
 }
+
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return
+
+  // Electron 默认可能批准部分权限请求。guest 始终按不可信页面处理，M2
+  // 默认拒绝相机/麦克风/定位/通知/剪贴板等权限；未来平台确有需要时，
+  // 必须按 origin + 明确用户动作单独开口。
+  contents.session.setPermissionCheckHandler(() => false)
+  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false)
+  })
+
+  const blockUntrustedNavigation = (event: Electron.Event, url: string): void => {
+    if (!nativeClientUrlAllowed(url)) event.preventDefault()
+  }
+  contents.on('will-navigate', blockUntrustedNavigation)
+  // Electron 对服务端 30x 单独发 will-redirect，不会经过 will-navigate。两者必须
+  // 使用同一白名单，否则 localhost 客户端可把 guest 重定向到任意远端页面。
+  contents.on('will-redirect', blockUntrustedNavigation)
+  contents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') void shell.openExternal(url)
+    } catch {
+      // 非法 URL 直接拒绝，不把原始值写日志。
+    }
+    return { action: 'deny' }
+  })
+})
 
 void app.whenReady().then(() => {
   createWindow()

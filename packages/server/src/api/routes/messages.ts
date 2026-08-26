@@ -49,6 +49,7 @@ async function findLatestInboundLang(scoped: ScopedDb, conversationId: string): 
     .select('messages.body_lang as body_lang')
     .where('conversations.id', '=', conversationId)
     .where('messages.direction', '=', 'in')
+    .where('messages.deleted_at', 'is', null)
     .orderBy('messages.sent_at', 'desc')
     .limit(1)
     .executeTakeFirst()
@@ -79,9 +80,11 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
         .on('message_translations.target_lang', '=', 'zh'))
       .select([
         'messages.id as id', 'messages.direction as direction', 'messages.body as body',
-        'messages.sent_at as sent_at', 'message_translations.translated_text as translated_text',
+        'messages.sent_at as sent_at', 'messages.edited_at as edited_at',
+        'message_translations.translated_text as translated_text',
       ])
       .where('conversations.id', '=', id)
+      .where('messages.deleted_at', 'is', null)
       .orderBy('messages.sent_at', 'asc')
       .limit(500)
       .execute()
@@ -137,6 +140,9 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
    * 服务端翻译后发出——这条路径是给还没升级到预览流程的旧客户端用的。
    */
   app.post('/api/messages/send', async (req, reply) => {
+    if (req.actor.role === 'auditor') {
+      return reply.code(403).send({ error: '风控账号是只读的，不能发送消息' })
+    }
     const parsed = sendBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 

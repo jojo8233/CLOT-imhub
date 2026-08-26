@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { contextBridge, ipcRenderer } from 'electron'
 
 interface SessionPayload {
@@ -14,6 +16,9 @@ interface SessionPayload {
 contextBridge.exposeInMainWorld('imHub', {
   platform: process.platform,
   serverUrl: process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
+  // 只给可信的外壳渲染进程。主进程在 will-attach-webview 里会再次覆盖并校验
+  // preload，不能把页面传来的 preload 属性当成安全边界。
+  nativeBridgePreload: pathToFileURL(join(import.meta.dirname, 'native-bridge.mjs')).toString(),
   session: {
     save: (payload: SessionPayload): Promise<boolean> => ipcRenderer.invoke('session:save', payload),
     load: (): Promise<SessionPayload | null> => ipcRenderer.invoke('session:load'),

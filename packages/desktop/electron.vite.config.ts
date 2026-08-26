@@ -3,7 +3,16 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: { build: { rollupOptions: { input: 'src/main/index.ts' } } },
-  preload: { build: { rollupOptions: { input: 'src/preload/index.ts' } } },
+  preload: {
+    build: {
+      rollupOptions: {
+        input: {
+          index: 'src/preload/index.ts',
+          'native-bridge': 'src/preload/native-bridge.ts',
+        },
+      },
+    },
+  },
   renderer: {
     root: 'src/renderer',
     build: { rollupOptions: { input: 'src/renderer/index.html' } },

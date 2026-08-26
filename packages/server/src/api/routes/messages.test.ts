@@ -22,11 +22,15 @@ const db = new Kysely<Database>({
 })
 
 let OWNER_ID: string
+let AUDITOR_ID: string
 
 function fakeActorRepo(): ActorRepo {
   return {
-    findUser: async (userId) =>
-      userId === OWNER_ID ? { id: OWNER_ID, role: 'owner' as Role, disabled_at: null } : null,
+    findUser: async (userId) => userId === OWNER_ID
+      ? { id: OWNER_ID, role: 'owner' as Role, disabled_at: null }
+      : userId === AUDITOR_ID
+        ? { id: AUDITOR_ID, role: 'auditor' as Role, disabled_at: null }
+        : null,
     findMemberships: async () => [],
   }
 }
@@ -35,6 +39,7 @@ let app: FastifyInstance
 let translate: ReturnType<typeof vi.fn>
 let adapterSend: ReturnType<typeof vi.fn>
 let token: string
+let auditorToken: string
 let accountId: string
 let conversationId: string
 
@@ -51,6 +56,11 @@ beforeEach(async () => {
     email: 'owner-msg-route@example.com', display_name: 'O', role: 'owner', password_hash: 'x',
   }).returning('id').executeTakeFirstOrThrow()
   OWNER_ID = user.id
+
+  const auditor = await db.insertInto('users').values({
+    email: 'auditor-msg-route@example.com', display_name: 'A', role: 'auditor', password_hash: 'x',
+  }).returning('id').executeTakeFirstOrThrow()
+  AUDITOR_ID = auditor.id
 
   const acc = await db.insertInto('accounts').values({
     platform: 'telegram', owner_user_id: OWNER_ID, display_name: 'TG', status: 'connected',
@@ -75,6 +85,7 @@ beforeEach(async () => {
   ;({ signSession } = await import('../../auth/session.js'))
   app = await buildServer(deps, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
   token = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
+  auditorToken = await signSession({ userId: AUDITOR_ID }, process.env.JWT_SECRET!)
 })
 
 afterAll(async () => {
@@ -148,6 +159,25 @@ describe('POST /api/messages/translate-preview', () => {
     expect(translate).toHaveBeenNthCalledWith(1, expect.objectContaining({ to: 'ja' }))
   })
 
+  it('已删除的客户消息不参与回复语言推断', async () => {
+    await db.insertInto('messages').values({
+      conversation_id: conversationId, account_id: accountId, platform: 'telegram',
+      platform_message_id: 'deleted-m1', direction: 'in', sender_external_id: 'c1',
+      body: 'こんにちは', body_lang: 'ja', sent_at: new Date(), deleted_at: new Date(),
+      media_refs: JSON.stringify([]) as never, raw: JSON.stringify({}) as never,
+    }).execute()
+    translate
+      .mockResolvedValueOnce({ text: 'Hello', detectedLang: 'zh', provider: 'deepl', cached: false, downgradedFrom: [] })
+      .mockResolvedValueOnce({ text: '你好', detectedLang: 'en', provider: 'deepl', cached: false, downgradedFrom: [] })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/translate-preview',
+      headers: auth(token), payload: { conversationId, text: '你好' },
+    })
+    expect(res.json()).toMatchObject({ targetLang: 'en' })
+    expect(translate).toHaveBeenNthCalledWith(1, expect.objectContaining({ to: 'en' }))
+  })
+
   it('会话锁定的语言优先于客户检测语言', async () => {
     await db.updateTable('conversations').set({ target_lang: 'fr' }).where('id', '=', conversationId).execute()
     await db.insertInto('messages').values({
@@ -185,6 +215,15 @@ describe('POST /api/messages/translate-preview', () => {
 })
 
 describe('POST /api/messages/send', () => {
+  it('全局可见的 auditor 仍然是只读，不能发送', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/send', headers: auth(auditorToken),
+      payload: { conversationId, body: 'must not send', preTranslated: true },
+    })
+    expect(res.statusCode).toBe(403)
+    expect(adapterSend).not.toHaveBeenCalled()
+  })
+
   it('preTranslated:true 时原样发出，绝不再翻译一次', async () => {
     const res = await app.inject({
       method: 'POST', url: '/api/messages/send',

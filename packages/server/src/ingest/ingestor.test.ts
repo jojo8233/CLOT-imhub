@@ -23,7 +23,7 @@ function sample(overrides: Partial<NormalizedMessage> = {}): NormalizedMessage {
 function fakeRepo() {
   return {
     upsertConversation: vi.fn().mockResolvedValue({ id: 'conv-1' }),
-    insertMessage: vi.fn().mockResolvedValue({ id: 'msg-1', isNew: true }),
+    insertMessage: vi.fn().mockResolvedValue({ id: 'msg-1', isNew: true, contentChanged: false }),
     touchConversation: vi.fn().mockResolvedValue(undefined),
   }
 }
@@ -51,29 +51,45 @@ describe('MessageIngestor', () => {
     const repo = fakeRepo()
     const queue = fakeQueue()
     await new MessageIngestor(repo as never, queue as never).ingest(sample())
-    expect(queue.enqueueTranslate).toHaveBeenCalledWith({ messageId: 'msg-1', conversationId: 'conv-1' })
+    expect(queue.enqueueTranslate).toHaveBeenCalledWith({
+      messageId: 'msg-1', conversationId: 'conv-1', revision: 'initial',
+    })
+  })
+
+  it('先通知消息已存储，再让翻译任务进入可消费队列', async () => {
+    const order: string[] = []
+    const queue = {
+      enqueueTranslate: vi.fn(async () => { order.push('queue') }),
+    }
+    await new MessageIngestor(fakeRepo() as never, queue as never)
+      .ingestDetailed(sample(), () => { order.push('stored') })
+    expect(order).toEqual(['stored', 'queue'])
   })
 
   it('重复消息返回 null，但仍派发翻译任务以补偿此前可能丢失的派发', async () => {
     const repo = fakeRepo()
-    repo.insertMessage.mockResolvedValue({ id: 'msg-1', isNew: false })
+    repo.insertMessage.mockResolvedValue({ id: 'msg-1', isNew: false, contentChanged: false })
     const queue = fakeQueue()
     const id = await new MessageIngestor(repo as never, queue as never).ingest(sample())
     expect(id).toBeNull()
-    expect(queue.enqueueTranslate).toHaveBeenCalledWith({ messageId: 'msg-1', conversationId: 'conv-1' })
+    expect(queue.enqueueTranslate).toHaveBeenCalledWith({
+      messageId: 'msg-1', conversationId: 'conv-1', revision: 'initial',
+    })
   })
 
-  it('重复消息也不更新会话时间，避免旧消息重放把会话顶到列表最前', async () => {
+  it('重复消息仍补偿 touch，会话时间由 repo 保证只前进', async () => {
     const repo = fakeRepo()
-    repo.insertMessage.mockResolvedValue({ id: 'msg-1', isNew: false })
+    repo.insertMessage.mockResolvedValue({ id: 'msg-1', isNew: false, contentChanged: false })
     await new MessageIngestor(repo as never, fakeQueue() as never).ingest(sample())
-    expect(repo.touchConversation).not.toHaveBeenCalled()
+    expect(repo.touchConversation).toHaveBeenCalledWith('conv-1', sample().sentAt)
   })
 
   it('出向消息也入库，方向记为 out', async () => {
     const repo = fakeRepo()
-    await new MessageIngestor(repo as never, fakeQueue() as never).ingest(sample({ direction: 'out' }))
+    const queue = fakeQueue()
+    await new MessageIngestor(repo as never, queue as never).ingest(sample({ direction: 'out' }))
     expect(repo.insertMessage.mock.calls[0]![0]).toMatchObject({ direction: 'out' })
+    expect(queue.enqueueTranslate).not.toHaveBeenCalled()
   })
 
   it('入库成功后更新会话的 last_message_at', async () => {
@@ -96,6 +112,8 @@ describe('MessageIngestor', () => {
       senderExternalId: '777000',
       body: 'hello',
       mediaRefs: [{ kind: 'image', remoteId: 'f1' }],
+      replyToPlatformMessageId: null,
+      editedAt: null,
       sentAt: msg.sentAt,
       raw: { _: 'x' },
     })
@@ -108,6 +126,16 @@ describe('MessageIngestor', () => {
       .rejects.toThrow('redis down')
     // 消息本身已经入库，不应因为队列故障而丢失
     expect(repo.insertMessage).toHaveBeenCalledOnce()
+  })
+
+  it('纯媒体消息正常落库但不派发空正文翻译任务', async () => {
+    const repo = fakeRepo()
+    const queue = fakeQueue()
+    await new MessageIngestor(repo as never, queue as never).ingest(sample({
+      body: '', mediaRefs: [{ kind: 'sticker', remoteId: 'sticker-1' }],
+    }))
+    expect(repo.insertMessage).toHaveBeenCalledOnce()
+    expect(queue.enqueueTranslate).not.toHaveBeenCalled()
   })
 
   it('出向消息不传联系人字段，避免把会话对方覆盖成我方账号', async () => {

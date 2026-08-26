@@ -56,7 +56,7 @@ export function CustomerPanel({ nativePending = false }: { nativePending?: boole
           <SectionTitle>客户信息</SectionTitle>
           <EmptyHint>
             {nativePending ? (
-              <>原生客户端当前会话将在 M2 同步<br />接通后这里自动跟随客户</>
+              <>Telegram 原生会话将在 M3 接线<br />接通后这里自动跟随客户</>
             ) : (
               <>选中一个会话后<br />这里显示该客户的资料</>
             )}

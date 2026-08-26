@@ -2,6 +2,7 @@ import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 import type { AccountStatus, Direction, Platform, Role } from '@im-hub/shared'
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
+type NullableText = ColumnType<string | null, string | null | undefined, string | null>
 /** 必填且 DB 无默认值的时间列：insert 时不允许省略 */
 type RequiredTimestamp = ColumnType<Date, Date | string, Date | string>
 
@@ -63,9 +64,19 @@ export interface MessagesTable {
   body: string
   body_lang: string | null
   media_refs: JSONColumnType<unknown[]>
+  reply_to_platform_message_id: NullableText
+  edited_at: Timestamp | null
+  deleted_at: Timestamp | null
   sent_at: RequiredTimestamp
   ingested_at: Generated<Timestamp>
   raw: JSONColumnType<Record<string, unknown>>
+}
+
+export interface MessageIdAliasesTable {
+  account_id: string
+  platform_message_id: string
+  message_id: string
+  created_at: Generated<Timestamp>
 }
 
 export interface MessageTranslationsTable {
@@ -84,4 +95,5 @@ export interface Database {
   conversations: ConversationsTable
   messages: MessagesTable
   message_translations: MessageTranslationsTable
+  message_id_aliases: MessageIdAliasesTable
 }

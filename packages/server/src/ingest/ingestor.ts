@@ -17,6 +17,8 @@ export interface InsertMessageInput {
   senderExternalId: string
   body: string
   mediaRefs: MediaRef[]
+  replyToPlatformMessageId: string | null
+  editedAt: Date | null
   sentAt: Date
   raw: unknown
 }
@@ -25,6 +27,15 @@ export interface InsertMessageResult {
   id: string
   /** false 表示这条消息此前已入库（平台重复推送 / 调用方重试） */
   isNew: boolean
+  /** true 表示平台确认的编辑版本更新了既有消息。 */
+  contentChanged: boolean
+}
+
+export interface IngestMessageResult {
+  conversationId: string
+  messageId: string
+  isNew: boolean
+  contentChanged: boolean
 }
 
 export interface MessageRepo {
@@ -39,7 +50,7 @@ export interface MessageRepo {
 }
 
 export interface TranslateQueue {
-  enqueueTranslate(job: { messageId: string; conversationId: string }): Promise<void>
+  enqueueTranslate(job: { messageId: string; conversationId: string; revision?: string }): Promise<void>
 }
 
 /**
@@ -51,8 +62,11 @@ export interface TranslateQueue {
 export class MessageIngestor {
   constructor(private readonly repo: MessageRepo, private readonly queue: TranslateQueue) {}
 
-  /** 返回新消息 id；重复消息返回 null。 */
-  async ingest(msg: NormalizedMessage): Promise<string | null> {
+  async ingestDetailed(
+    msg: NormalizedMessage,
+    /** 在翻译任务可被 worker 消费前发布 message/message_updated，避免译文事件先到。 */
+    onStored?: (result: IngestMessageResult) => void | Promise<void>,
+  ): Promise<IngestMessageResult> {
     // 出向消息的 sender 是我方账号，不是客户。拿它更新联系人会把会话的对方身份
     // 覆盖成我们自己——员工主动发起的会话更是从第一条起就错。
     const isInbound = msg.direction === 'in'
@@ -68,7 +82,7 @@ export class MessageIngestor {
         ?? (isInbound ? msg.senderDisplayName : null),
     })
 
-    const { id: messageId, isNew } = await this.repo.insertMessage({
+    const { id: messageId, isNew, contentChanged } = await this.repo.insertMessage({
       conversationId,
       accountId: msg.accountId,
       platform: msg.platform,
@@ -77,21 +91,37 @@ export class MessageIngestor {
       senderExternalId: msg.senderExternalId,
       body: msg.body,
       mediaRefs: msg.mediaRefs,
+      replyToPlatformMessageId: msg.replyToPlatformMessageId ?? null,
+      editedAt: msg.editedAt ?? null,
       sentAt: msg.sentAt,
       raw: msg.raw,
     })
 
-    // 只有真正的新消息才更新会话时间。重复推送的旧消息若也更新，
-    // 会把早已沉底的会话顶到列表最前面。
-    if (isNew) {
-      await this.repo.touchConversation(conversationId, msg.sentAt)
-    }
+    // repo 用 greatest 保证时间只前进。重复推送也 touch，既不会把旧会话顶上来，
+    // 又能补偿首次消息已落库但 touch 暂时失败的情况。
+    await this.repo.touchConversation(conversationId, msg.sentAt)
+
+    const result = { messageId, conversationId, isNew, contentChanged }
+    await onStored?.(result)
 
     // 无论是否新消息都派发翻译任务。这看似浪费，实则是唯一的补偿机制：
     // 队列故障导致首次派发失败时，平台的重复推送或调用方的重试能把它补回来。
     // 代价可控——BullMQ 用 messageId 作 jobId 去重，且相同文本会命中翻译缓存。
-    await this.queue.enqueueTranslate({ messageId, conversationId })
+    // 纯媒体消息没有可翻译文本。空正文仍然正常存档，但不制造必然失败的翻译任务。
+    if (isInbound && msg.body.trim() !== '') {
+      await this.queue.enqueueTranslate({
+        messageId,
+        conversationId,
+        revision: msg.editedAt?.toISOString() ?? 'initial',
+      })
+    }
 
-    return isNew ? messageId : null
+    return result
+  }
+
+  /** 保持旧适配器契约：只有首次新增返回 id；重复与编辑不冒充新消息。 */
+  async ingest(msg: NormalizedMessage): Promise<string | null> {
+    const result = await this.ingestDetailed(msg)
+    return result.isNew ? result.messageId : null
   }
 }

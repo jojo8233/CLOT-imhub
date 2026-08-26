@@ -5,6 +5,7 @@ function deps(overrides: Record<string, unknown> = {}) {
   return {
     loadMessage: vi.fn().mockResolvedValue({
       id: 'msg-1', body: 'Hello, is this in stock?', direction: 'in', conversationId: 'conv-1',
+      revision: 'initial',
     }),
     loadEngineConfig: vi.fn().mockResolvedValue({ global: 'deepl' }),
     hasTranslation: vi.fn().mockResolvedValue(false),
@@ -14,8 +15,7 @@ function deps(overrides: Record<string, unknown> = {}) {
         provider: 'deepl', cached: false, downgradedFrom: [],
       }),
     },
-    saveTranslation: vi.fn().mockResolvedValue(undefined),
-    saveDetectedLang: vi.fn().mockResolvedValue(undefined),
+    saveTranslation: vi.fn().mockResolvedValue(true),
     publish: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
@@ -36,9 +36,10 @@ describe('runTranslateJob', () => {
     expect(d.saveTranslation).toHaveBeenCalledWith({
       messageId: 'msg-1', targetLang: 'zh',
       provider: 'deepl', translatedText: '你好，这个还有货吗？',
+      revision: 'initial', detectedLang: 'en',
     })
     expect(d.publish).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'translation', messageId: 'msg-1' }),
+      expect.objectContaining({ type: 'translation', messageId: 'msg-1', conversationId: 'conv-1' }),
     )
   })
 
@@ -52,11 +53,22 @@ describe('runTranslateJob', () => {
   it('空白消息体跳过翻译', async () => {
     const d = deps({
       loadMessage: vi.fn().mockResolvedValue({
-        id: 'msg-1', body: '   ', direction: 'in', conversationId: 'conv-1',
+        id: 'msg-1', body: '   ', direction: 'in', conversationId: 'conv-1', revision: 'initial',
       }),
     })
     await runTranslateJob(job, d as never)
     expect(d.gateway.translate).not.toHaveBeenCalled()
+  })
+
+  it('部署前遗留的出向任务也会在 worker 边界被丢弃', async () => {
+    const d = deps({
+      loadMessage: vi.fn().mockResolvedValue({
+        id: 'msg-1', body: 'outbound', direction: 'out', conversationId: 'conv-1', revision: 'initial',
+      }),
+    })
+    await runTranslateJob(job, d as never)
+    expect(d.gateway.translate).not.toHaveBeenCalled()
+    expect(d.saveTranslation).not.toHaveBeenCalled()
   })
 
   it('已有译文时跳过，不重复调用翻译引擎', async () => {
@@ -66,10 +78,10 @@ describe('runTranslateJob', () => {
     expect(d.saveTranslation).not.toHaveBeenCalled()
   })
 
-  it('把检测到的源语言写回 body_lang', async () => {
+  it('把检测到的源语言交给原子写入', async () => {
     const d = deps()
     await runTranslateJob(job, d as never)
-    expect(d.saveDetectedLang).toHaveBeenCalledWith('msg-1', 'en')
+    expect(d.saveTranslation).toHaveBeenCalledWith(expect.objectContaining({ detectedLang: 'en' }))
   })
 
   it("检测语言是 'und' 时不写 body_lang——那是占位值不是语言", async () => {
@@ -82,7 +94,7 @@ describe('runTranslateJob', () => {
       },
     })
     await runTranslateJob(job, d as never)
-    expect(d.saveDetectedLang).not.toHaveBeenCalled()
+    expect(d.saveTranslation).toHaveBeenCalledWith(expect.objectContaining({ detectedLang: null }))
   })
 
   it('使用该会话配置的引擎', async () => {
@@ -104,5 +116,17 @@ describe('runTranslateJob', () => {
     const d = deps({ publish: vi.fn().mockRejectedValue(new Error('ws down')) })
     await expect(runTranslateJob(job, d as never)).rejects.toThrow('ws down')
     expect(d.saveTranslation).toHaveBeenCalledOnce()
+  })
+
+  it('任务 revision 已过期时不调用翻译引擎', async () => {
+    const d = deps()
+    await runTranslateJob({ ...job, revision: '2026-08-26T01:00:00.000Z' }, d as never)
+    expect(d.gateway.translate).not.toHaveBeenCalled()
+  })
+
+  it('翻译期间发生编辑时拒绝保存且不广播旧译文', async () => {
+    const d = deps({ saveTranslation: vi.fn().mockResolvedValue(false) })
+    await runTranslateJob(job, d as never)
+    expect(d.publish).not.toHaveBeenCalled()
   })
 })

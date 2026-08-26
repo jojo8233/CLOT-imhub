@@ -13,6 +13,7 @@ const db = new Kysely<Database>({
 const repo = new KyselyMessageRepo(db)
 
 let accountId: string
+let ownerUserId: string
 
 beforeEach(async () => {
   // 每个用例从干净状态开始；顺序按外键依赖倒序
@@ -26,6 +27,7 @@ beforeEach(async () => {
   const user = await db.insertInto('users').values({
     email: 'repo-test@example.com', display_name: 'T', role: 'agent', password_hash: 'x',
   }).returning('id').executeTakeFirstOrThrow()
+  ownerUserId = user.id
 
   const acc = await db.insertInto('accounts').values({
     platform: 'telegram', owner_user_id: user.id, display_name: 'TG', status: 'connected',
@@ -40,7 +42,8 @@ function msg(over: Partial<Parameters<typeof repo.insertMessage>[0]> = {}) {
   return {
     conversationId: '', accountId, platform: 'telegram' as const,
     platformMessageId: '555', direction: 'in' as const, senderExternalId: '777',
-    body: 'hello', mediaRefs: [], sentAt: new Date('2026-08-24T00:00:00Z'), raw: {},
+    body: 'hello', mediaRefs: [], replyToPlatformMessageId: null, editedAt: null,
+    sentAt: new Date('2026-08-24T00:00:00Z'), raw: {},
     ...over,
   }
 }
@@ -135,15 +138,307 @@ describe('KyselyMessageRepo.insertMessage', () => {
       .where('platform_message_id', '=', '555').execute()
     expect(rows).toHaveLength(1)
   })
+
+  it('带较新 editedAt 的事件更新正文并使旧译文失效', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({ conversationId }))
+    await db.updateTable('messages').set({ body_lang: 'en' }).where('id', '=', first.id).execute()
+    await db.insertInto('message_translations').values({
+      message_id: first.id, target_lang: 'zh', provider: 'deepl', translated_text: '旧译文',
+    }).execute()
+
+    const edited = await repo.insertMessage(msg({
+      conversationId, body: 'edited body', editedAt: new Date('2026-08-24T01:00:00Z'),
+      replyToPlatformMessageId: 'reply-1',
+    }))
+    expect(edited).toMatchObject({ id: first.id, isNew: false, contentChanged: true })
+    const row = await db.selectFrom('messages')
+      .select(['body', 'body_lang', 'reply_to_platform_message_id', 'edited_at'])
+      .where('id', '=', first.id).executeTakeFirstOrThrow()
+    expect(row.body).toBe('edited body')
+    expect(row.reply_to_platform_message_id).toBe('reply-1')
+    expect(row.edited_at?.toISOString()).toBe('2026-08-24T01:00:00.000Z')
+    expect(row.body_lang).toBeNull()
+    expect(await db.selectFrom('message_translations').select('message_id').execute()).toHaveLength(0)
+  })
+
+  it('只保存与当前正文 revision 匹配的译文', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({
+      conversationId, editedAt: new Date('2026-08-24T01:00:00Z'),
+    }))
+    const base = {
+      messageId: first.id, targetLang: 'zh', provider: 'deepl', translatedText: '译文', detectedLang: 'en',
+    }
+    expect(await repo.saveTranslationIfCurrent({ ...base, revision: 'initial' })).toBe(false)
+    expect(await repo.saveTranslationIfCurrent({
+      ...base, revision: '2026-08-24T01:00:00.000Z',
+    })).toBe(true)
+    const translation = await db.selectFrom('message_translations')
+      .select('translated_text').where('message_id', '=', first.id).executeTakeFirstOrThrow()
+    const message = await db.selectFrom('messages')
+      .select('body_lang').where('id', '=', first.id).executeTakeFirstOrThrow()
+    expect(translation.translated_text).toBe('译文')
+    expect(message.body_lang).toBe('en')
+  })
+
+  it('翻译 worker 先持有消息锁时，首次发布快照等待并携带已提交译文', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const message = await repo.insertMessage(msg({ conversationId }))
+
+    let releaseWorker!: () => void
+    let workerLocked!: () => void
+    const release = new Promise<void>(resolve => { releaseWorker = resolve })
+    const locked = new Promise<void>(resolve => { workerLocked = resolve })
+    const worker = db.transaction().execute(async trx => {
+      await trx.selectFrom('messages').select('id')
+        .where('id', '=', message.id).forUpdate().executeTakeFirstOrThrow()
+      await trx.insertInto('message_translations').values({
+        message_id: message.id, target_lang: 'zh', provider: 'deepl', translated_text: '已完成译文',
+      }).execute()
+      workerLocked()
+      await release
+    })
+    await locked
+
+    let snapshot: Parameters<Parameters<typeof repo.withMessageForPublish>[1]>[0] | undefined
+    const publishing = repo.withMessageForPublish(message.id, current => { snapshot = current })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    releaseWorker()
+    await Promise.all([worker, publishing])
+
+    expect(snapshot).toMatchObject({
+      id: message.id,
+      ownerUserId,
+      translatedBody: '已完成译文',
+    })
+  })
+
+  it('临时 id 换成最终 id 后，迟到的临时 id 重放仍命中同一行', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({ conversationId, platformMessageId: 'temp-1' }))
+    expect(await repo.remapMessageId(accountId, 'temp-1', 'final-1')).toMatchObject({ changed: true })
+
+    const replay = await repo.insertMessage(msg({ conversationId, platformMessageId: 'temp-1' }))
+    expect(replay).toMatchObject({ id: first.id, isNew: false })
+    const rows = await db.selectFrom('messages').select(['id', 'platform_message_id']).execute()
+    expect(rows).toEqual([{ id: first.id, platform_message_id: 'final-1' }])
+  })
+
+  it('多段 remap 后重放旧步骤不回退 direct id，所有历史 id 仍去重', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({ conversationId, platformMessageId: 'temp-chain' }))
+    await repo.remapMessageId(accountId, 'temp-chain', 'final-1-chain')
+    await repo.remapMessageId(accountId, 'final-1-chain', 'final-2-chain')
+    expect(await repo.remapMessageId(accountId, 'temp-chain', 'final-1-chain')).toMatchObject({
+      messageId: first.id, changed: false,
+    })
+
+    for (const platformMessageId of ['temp-chain', 'final-1-chain', 'final-2-chain']) {
+      expect(await repo.insertMessage(msg({ conversationId, platformMessageId }))).toMatchObject({
+        id: first.id, isNew: false,
+      })
+    }
+    expect(await db.selectFrom('messages').select(['id', 'platform_message_id']).execute())
+      .toEqual([{ id: first.id, platform_message_id: 'final-2-chain' }])
+  })
+
+  it('temp/final 已各自落库时保留较新编辑、删除状态并报告被合并行', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const temp = await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'temp-1', body: 'initial',
+    }))
+    await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'temp-1',
+      body: 'edited body',
+      editedAt: new Date('2026-08-24T01:00:00Z'),
+      mediaRefs: [{ kind: 'image', remoteId: 'image-1' }],
+      replyToPlatformMessageId: 'reply-1',
+      raw: { version: 'edited' },
+    }))
+    await repo.saveTranslationIfCurrent({
+      messageId: temp.id, targetLang: 'zh', provider: 'deepl', translatedText: '新译文',
+      revision: '2026-08-24T01:00:00.000Z', detectedLang: 'en',
+    })
+    const final = await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'final-1', body: 'initial',
+    }))
+    const deletedAt = new Date('2026-08-24T02:00:00Z')
+    await repo.markMessageDeleted(accountId, 'final-1', deletedAt)
+
+    const remapped = await repo.remapMessageId(accountId, 'temp-1', 'final-1')
+    expect(remapped).toMatchObject({
+      messageId: temp.id, removedMessageId: final.id, changed: true,
+    })
+    const rows = await db.selectFrom('messages').select([
+      'id', 'platform_message_id', 'body', 'media_refs', 'reply_to_platform_message_id',
+      'edited_at', 'deleted_at', 'raw',
+    ]).execute()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      id: temp.id,
+      platform_message_id: 'final-1',
+      body: 'edited body',
+      media_refs: [{ kind: 'image', remoteId: 'image-1' }],
+      reply_to_platform_message_id: 'reply-1',
+      raw: { version: 'edited' },
+    })
+    expect(rows[0]?.edited_at?.toISOString()).toBe('2026-08-24T01:00:00.000Z')
+    expect(rows[0]?.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+    expect(await db.selectFrom('message_translations').select('translated_text')
+      .where('message_id', '=', temp.id).executeTakeFirstOrThrow()).toMatchObject({
+      translated_text: '新译文',
+    })
+  })
+
+  it('编辑、删除与 temp/final remap 并发时不丢生命周期状态', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'temp-race', body: 'initial',
+    }))
+    await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'final-race', body: 'initial',
+    }))
+    const editedAt = new Date('2026-08-24T03:00:00Z')
+    const deletedAt = new Date('2026-08-24T04:00:00Z')
+
+    await Promise.all([
+      repo.insertMessage(msg({
+        conversationId, platformMessageId: 'temp-race', body: 'edited concurrently', editedAt,
+      })),
+      repo.markMessageDeleted(accountId, 'temp-race', deletedAt),
+      repo.remapMessageId(accountId, 'temp-race', 'final-race'),
+    ])
+
+    const rows = await db.selectFrom('messages')
+      .select(['platform_message_id', 'body', 'edited_at', 'deleted_at'])
+      .execute()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.platform_message_id).toBe('final-race')
+    expect(rows[0]?.body).toBe('edited concurrently')
+    expect(rows[0]?.edited_at?.toISOString()).toBe(editedAt.toISOString())
+    expect(rows[0]?.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+  })
+
+  it('alias 删除与下一段 remap 并发时，删除状态落到最终规范行', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await repo.insertMessage(msg({ conversationId, platformMessageId: 'temp-alias-race' }))
+    await repo.remapMessageId(accountId, 'temp-alias-race', 'final-1-alias-race')
+    await repo.insertMessage(msg({ conversationId, platformMessageId: 'final-2-alias-race' }))
+    const deletedAt = new Date('2026-08-24T05:00:00Z')
+
+    await Promise.all([
+      repo.markMessageDeleted(accountId, 'temp-alias-race', deletedAt),
+      repo.remapMessageId(accountId, 'final-1-alias-race', 'final-2-alias-race'),
+    ])
+
+    const rows = await db.selectFrom('messages')
+      .select(['platform_message_id', 'deleted_at'])
+      .execute()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.platform_message_id).toBe('final-2-alias-race')
+    expect(rows[0]?.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+  })
+
+  it('拒绝把同一账号下两个不同会话的消息 remap 合并', async () => {
+    const firstConversation = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const secondConversation = await repo.upsertConversation({
+      accountId, platformConversationId: 'c2', contactExternalId: '888', contactDisplayName: null,
+    })
+    await repo.insertMessage(msg({
+      conversationId: firstConversation.id, platformMessageId: 'temp-cross',
+    }))
+    await repo.insertMessage(msg({
+      conversationId: secondConversation.id, platformMessageId: 'final-cross',
+    }))
+
+    expect(await repo.remapMessageId(accountId, 'temp-cross', 'final-cross')).toMatchObject({
+      changed: false,
+      removedMessageId: null,
+      integrityViolation: 'cross_conversation',
+    })
+    expect(await db.selectFrom('messages').select('id').execute()).toHaveLength(2)
+  })
+
+  it('翻译事务与 remap 并发时，已提交译文迁移到规范行', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const temp = await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'temp-translation', body: 'same body',
+    }))
+    await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'final-translation', body: 'same body',
+    }))
+
+    let releaseWorker!: () => void
+    let workerLocked!: () => void
+    const release = new Promise<void>(resolve => { releaseWorker = resolve })
+    const locked = new Promise<void>(resolve => { workerLocked = resolve })
+    const worker = db.transaction().execute(async trx => {
+      await trx.selectFrom('messages').select('id')
+        .where('id', '=', temp.id).forUpdate().executeTakeFirstOrThrow()
+      await trx.insertInto('message_translations').values({
+        message_id: temp.id, target_lang: 'zh', provider: 'deepl', translated_text: '并发译文',
+      }).execute()
+      workerLocked()
+      await release
+    })
+    await locked
+    const remap = repo.remapMessageId(accountId, 'temp-translation', 'final-translation')
+    // 让 remap 到达 FOR UPDATE 等待点，再提交模拟中的 worker 事务。
+    await new Promise(resolve => setTimeout(resolve, 20))
+    releaseWorker()
+    const [, result] = await Promise.all([worker, remap])
+    expect(result).not.toBeNull()
+    if (!result) throw new Error('expected remap result')
+    expect(await db.selectFrom('message_translations').select('translated_text')
+      .where('message_id', '=', result.messageId).executeTakeFirstOrThrow()).toMatchObject({
+      translated_text: '并发译文',
+    })
+  })
+
+  it('删除事件幂等写入 deleted_at', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({ conversationId }))
+    const deletedAt = new Date('2026-08-24T02:00:00Z')
+    expect(await repo.markMessageDeleted(accountId, '555', deletedAt)).toMatchObject({ changed: true })
+    expect(await repo.markMessageDeleted(accountId, '555', deletedAt)).toMatchObject({ changed: false })
+    const row = await db.selectFrom('messages').select('deleted_at').where('id', '=', first.id)
+      .executeTakeFirstOrThrow()
+    expect(row.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+  })
 })
 
 describe('KyselyMessageRepo.touchConversation', () => {
-  it('更新 last_message_at', async () => {
+  it('last_message_at 只前进，不被迟到旧消息回退', async () => {
     const { id } = await repo.upsertConversation({
       accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
     })
     const at = new Date('2026-08-24T12:00:00Z')
     await repo.touchConversation(id, at)
+    await repo.touchConversation(id, new Date('2026-08-24T10:00:00Z'))
     const row = await db.selectFrom('conversations').select('last_message_at')
       .where('id', '=', id).executeTakeFirstOrThrow()
     expect(row.last_message_at?.toISOString()).toBe(at.toISOString())

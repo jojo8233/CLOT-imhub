@@ -1,4 +1,10 @@
-import type { WsServerEvent } from '@im-hub/shared'
+import type {
+  NativeConversationContext,
+  NativeMessageDeletedEvent,
+  NativeMessageIdRemappedEvent,
+  NativeMessageUpsertEvent,
+  WsServerEvent,
+} from '@im-hub/shared'
 
 interface SessionBridge {
   save(payload: { token: string; user: SessionUser }): Promise<boolean>
@@ -52,8 +58,17 @@ export class NetworkError extends Error {
   }
 }
 
-// token 只活在这个模块级变量里，绝不落 localStorage/sessionStorage，也不打印到 console。
-// 持久化只走 preload 暴露的 session.save/load/clear（主进程用 safeStorage 加密写盘）。
+/** 服务端明确返回的非 2xx；status 供消息 outbox 区分永久拒绝与可重试故障。 */
+export class HttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+    this.name = 'HttpError'
+  }
+}
+
+// 外壳 token 只活在这个模块级变量里，绝不落 localStorage/sessionStorage，也不打印到
+// console。持久化只走 preload 的 session.save/load/clear（主进程 safeStorage）。
+// Telegram fork 仍有 M3 待移除的 guest 内存副本；不要把这里误解为整页已无 token。
 let token: string | null = null
 let currentUser: SessionUser | null = null
 
@@ -112,13 +127,16 @@ export async function logout(): Promise<void> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // 请求发出时的会话归属不能在响应回来时重新猜。A 用户的迟到
+  // 401 不得清掉期间已登录的 B 用户 token。
+  const requestToken = token
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}),
         ...init.headers,
       },
     })
@@ -129,10 +147,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 401) {
     // 无论是"密码错误"（登录请求）还是"token 过期/失效"（其它请求），服务端都回 401——
     // 两种情况都该清掉内存里可能存在的旧 token，登录请求本来就没有 token 可清，无副作用。
-    token = null
-    currentUser = null
-    void clearPersistedSession()
-    unauthorizedListener?.()
+    if (token === requestToken) {
+      token = null
+      currentUser = null
+      void clearPersistedSession()
+      unauthorizedListener?.()
+    }
     throw new UnauthorizedError()
   }
 
@@ -144,7 +164,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // 响应体不是 JSON 或读取失败，忽略，用纯状态码报错
     }
-    throw new Error(`${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`)
+    throw new HttpError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`)
   }
   return res.json() as Promise<T>
 }
@@ -152,6 +172,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface AccountRow {
   id: string
   platform: string
+  owner_user_id: string
   display_name: string
   status: string
   history_available_from: string | null
@@ -181,8 +202,14 @@ export interface MessageRow {
   direction: 'in' | 'out'
   body: string
   sent_at: string
+  edited_at: string | null
   translated_text: string | null
 }
+
+export type NativeServerEvent =
+  | NativeMessageUpsertEvent
+  | NativeMessageDeletedEvent
+  | NativeMessageIdRemappedEvent
 
 export const api = {
   /**
@@ -198,6 +225,15 @@ export const api = {
     currentUser = res.user
     await persistSession()
     return res.user
+  },
+  async refreshSessionUser(): Promise<SessionUser> {
+    const res = await request<{ user: { id: string; role: string } }>('/api/session/me')
+    if (!currentUser || currentUser.id !== res.user.id) {
+      throw new Error('服务端会话身份与本地快照不一致')
+    }
+    currentUser = { ...currentUser, role: res.user.role }
+    await persistSession()
+    return currentUser
   },
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
@@ -227,6 +263,18 @@ export const api = {
       `/api/conversations/${conversationId}/target-lang`,
       { method: 'PATCH', body: JSON.stringify({ targetLang }) },
     ),
+  /**
+   * 把平台侧当前会话解析成服务端 conversations.id。accountId 只用于定位候选账号，
+   * 服务端会按当前 token 重新校验实际归属，不能把客户端传值当授权。
+   */
+  syncNativeContext: (accountId: string, context: NativeConversationContext) =>
+    request<{ conversationId: string }>('/api/native/context', {
+      method: 'POST', body: JSON.stringify({ accountId, context }),
+    }),
+  reportNativeEvent: (accountId: string, event: NativeServerEvent) =>
+    request<{ accepted: boolean; duplicate?: boolean }>('/api/native/events', {
+      method: 'POST', body: JSON.stringify({ accountId, event }),
+    }),
   /**
    * 鉴权走首帧消息，不走 query string —— token 有 12 小时有效期，
    * 出现在 URL 里会被反向代理/服务端访问日志记下来，query string 鉴权就是把这个

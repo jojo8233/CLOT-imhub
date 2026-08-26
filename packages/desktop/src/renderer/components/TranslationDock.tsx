@@ -1,21 +1,188 @@
-import { useStore } from '../store.js'
+import type { KeyboardEvent } from 'react'
+import { api, getCurrentUser } from '../api/client.js'
+import { nativeComposerBridge, type NativeCommandContext } from '../native-bridge.js'
+import { useStore, type NativeDraftStatus } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip } from './ui.js'
+import { nativeAccountControllable } from './NativeClient.js'
 
-/**
- * 固定在原生客户端下方的统一翻译输入坞。
- *
- * M1 只建立位置、样式和禁用态。M2 接入 NativeComposerBridge 后才允许把译文
- * 写入原生输入框并触发原生发送；现在提前启用会造成“按钮能点但可能发错会话”。
- */
+const TARGET_LANGS = [
+  ['en', 'English'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'],
+  ['it', 'Italiano'], ['pt', 'Português'], ['ja', '日本語'], ['ko', '한국어'],
+  ['ru', 'Русский'], ['ar', 'العربية'], ['th', 'ไทย'], ['vi', 'Tiếng Việt'],
+] as const
+
+const STATUS_LABEL: Record<NativeDraftStatus, string> = {
+  idle: '等待输入', configuring: '正在更新回复语言', translating: '翻译中', ready: '已写入原生输入框',
+  sending: '发送中', failed: '操作失败',
+}
+
+export function nativeDraftKey(accountId: string, conversationId: string): string {
+  return `${accountId}:${conversationId}`
+}
+
+/** 发送事实始终取自原生输入框；外壳缓存的 translatedText 只用于门禁。 */
+export async function sendCurrentNativeDraft(
+  context: NativeCommandContext,
+  bridge: Pick<typeof nativeComposerBridge, 'getDraft' | 'send'> = nativeComposerBridge,
+  canContinue: () => boolean = () => true,
+): Promise<string | null> {
+  const finalDraft = await bridge.getDraft(context)
+  if (!finalDraft.trim()) throw new Error('原生输入框为空，未发送')
+  // getDraft 等待期间用户可能已经切到另一个账号/会话。必须在真正发送前
+  // 再验证一次，不能因为旧请求终于返回就把当前原生框发出去。
+  if (!canContinue()) return null
+  return bridge.send(context)
+}
+
+/** 固定在原生客户端下方、通过 NativeComposerBridge 控制平台原生输入框。 */
 export function TranslationDock() {
   const accounts = useStore(s => s.accounts)
+  const conversations = useStore(s => s.conversations)
   const activeAccountId = useStore(s => s.activeAccountId)
+  const native = useStore(s => activeAccountId ? s.nativeBridgeByAccount[activeAccountId] : undefined)
   const active = accounts.find(account => account.id === activeAccountId) ?? null
+  const context = native?.context ?? null
+  const key = activeAccountId && context?.conversationId
+    ? nativeDraftKey(activeAccountId, context.conversationId)
+    : null
+  const draft = useStore(s => key ? s.nativeDrafts[key] : undefined)
+  const updateDraft = useStore(s => s.updateNativeDraft)
+  const clearDraft = useStore(s => s.clearNativeDraft)
+  const updateConversationTargetLang = useStore(s => s.updateConversationTargetLang)
+  const conversation = conversations.find(item => item.id === context?.conversationId) ?? null
+  const currentUser = getCurrentUser()
+  const readOnly = currentUser?.role === 'auditor'
+  const canControlAccount = nativeAccountControllable(active, currentUser)
 
-  const reason = active
-    ? `等待 ${PLATFORM_LABEL[active.platform] ?? active.platform} 原生输入桥接（M2）`
-    : '先选择或添加当前平台账号'
+  const unavailableReason = !active
+    ? '先选择或添加当前平台账号'
+    : readOnly
+      ? '风控账号是只读的，不能操作原生输入框'
+    : !canControlAccount
+      ? '这个平台账号不属于当前用户，不能操作原生输入框'
+    : native?.connection === 'failed'
+      ? native.error ?? '原生客户端桥接失败'
+      : native?.connection !== 'ready'
+        ? `等待 ${PLATFORM_LABEL[active.platform] ?? active.platform} 原生输入桥接`
+        : !context
+          ? '请先在原生客户端中打开一个会话'
+          : !context.conversationId
+            ? '正在同步当前会话'
+            : null
+
+  const busy = draft?.status === 'configuring'
+    || draft?.status === 'translating'
+    || draft?.status === 'sending'
+  const canUse = unavailableReason === null && key !== null && context !== null && activeAccountId !== null
+  const canSend = canUse && !busy && Boolean(draft?.translatedText) && Boolean(native?.composerCanSend)
+  const targetLang = conversation?.target_lang ?? null
+
+  function commandContext(): NativeCommandContext | null {
+    if (!canUse || !activeAccountId || !context) return null
+    return {
+      accountId: activeAccountId,
+      platformConversationId: context.platformConversationId,
+      contextRevision: context.contextRevision,
+    }
+  }
+
+  function contextStillCurrent(captured: NativeCommandContext): boolean {
+    const state = useStore.getState()
+    const current = state.nativeBridgeByAccount[captured.accountId]?.context
+    return state.activeAccountId === captured.accountId
+      && current?.platformConversationId === captured.platformConversationId
+      && current.contextRevision === captured.contextRevision
+  }
+
+  function continueOrReset(captured: NativeCommandContext, draftKey: string): boolean {
+    if (contextStillCurrent(captured)) return true
+    // 切会话时保留各自草稿但解除 busy；登出已经 reset 后不能被迟到 promise
+    // 重新创建上一个用户的 key。
+    if (useStore.getState().nativeDrafts[draftKey]) {
+      updateDraft(draftKey, { status: 'idle', error: null })
+    }
+    return false
+  }
+
+  async function translate(): Promise<void> {
+    const command = commandContext()
+    if (!command || !context?.conversationId || !key || !draft?.sourceText.trim()) return
+    updateDraft(key, { status: 'translating', error: null })
+    try {
+      const result = await api.translatePreview(context.conversationId, draft.sourceText)
+      if (!continueOrReset(command, key)) return
+      await nativeComposerBridge.setDraft(command, result.translated)
+      if (!continueOrReset(command, key)) return
+      updateDraft(key, {
+        translatedText: result.translated,
+        backTranslated: result.backTranslated,
+        targetLang: result.targetLang,
+        status: 'ready',
+        error: null,
+      })
+    } catch (error) {
+      if (!continueOrReset(command, key)) return
+      updateDraft(key, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : '翻译或写入原生输入框失败',
+      })
+    }
+  }
+
+  async function send(): Promise<void> {
+    const command = commandContext()
+    if (!command || !key) return
+    updateDraft(key, { status: 'sending', error: null })
+    try {
+      // 发送前重新读取原生输入框。员工可能已经在那里做过最后修改，外壳缓存的
+      // translatedText 不能作为最终发送事实来源。
+      const platformMessageId = await sendCurrentNativeDraft(
+        command,
+        nativeComposerBridge,
+        () => continueOrReset(command, key),
+      )
+      if (platformMessageId === null) return
+      if (!continueOrReset(command, key)) return
+      clearDraft(key)
+    } catch (error) {
+      if (!continueOrReset(command, key)) return
+      updateDraft(key, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : '原生发送失败',
+      })
+    }
+  }
+
+  async function changeTargetLang(value: string): Promise<void> {
+    const command = commandContext()
+    if (!command || !context?.conversationId || !key) return
+    const next = value || null
+    updateDraft(key, { status: 'configuring', error: null })
+    try {
+      await api.updateTargetLang(context.conversationId, next)
+      if (!continueOrReset(command, key)) return
+      updateConversationTargetLang(context.conversationId, next)
+      updateDraft(key, { targetLang: next, status: 'idle', translatedText: '', error: null })
+    } catch (error) {
+      if (!continueOrReset(command, key)) return
+      updateDraft(key, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : '更新回复语言失败',
+      })
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (!shouldTranslateOnKeyDown({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      isComposing: event.nativeEvent.isComposing,
+      keyCode: event.nativeEvent.keyCode,
+    })) return
+    event.preventDefault()
+    void translate()
+  }
 
   return (
     <section style={{
@@ -35,16 +202,31 @@ export function TranslationDock() {
             display: 'flex', alignItems: 'center', gap: 6,
             fontSize: theme.font.size.xs, color: theme.color.textFaint, fontWeight: theme.font.weight.bold,
           }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: theme.color.textFaint }} />
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: canUse ? theme.color.limeDeep : theme.color.textFaint }} />
             中文原文
           </div>
-          <Chip tone="muted" style={{ border: `1px dashed ${theme.color.borderStrong}` }}>
-            {reason}
+          <Chip
+            tone="muted"
+            style={{
+              border: `1px dashed ${theme.color.borderStrong}`,
+              ...(draft?.status === 'failed' ? { color: theme.color.danger } : {}),
+            }}
+          >
+            {unavailableReason ?? STATUS_LABEL[draft?.status ?? 'idle']}
           </Chip>
         </div>
 
         <textarea
-          disabled
+          disabled={!canUse || busy}
+          value={draft?.sourceText ?? ''}
+          onChange={(event) => {
+            if (!key) return
+            updateDraft(key, {
+              sourceText: event.target.value,
+              translatedText: '', backTranslated: null, status: 'idle', error: null,
+            })
+          }}
+          onKeyDown={handleKeyDown}
           aria-label="中文原文"
           placeholder="输入中文，回车翻译（Shift+回车换行）"
           style={{
@@ -55,6 +237,19 @@ export function TranslationDock() {
           }}
         />
 
+        {(draft?.backTranslated || draft?.error || native?.error) && (
+          <div style={{
+            marginTop: 7, fontSize: theme.font.size.xs,
+            color: draft?.error ? theme.color.danger : theme.color.textMuted,
+          }}>
+            {draft?.error
+              ? draft.error
+              : draft?.backTranslated
+                ? `回译检查：${draft.backTranslated}`
+                : native?.error}
+          </div>
+        )}
+
         <div style={{
           display: 'flex', alignItems: 'center', gap: theme.space.sm,
           marginTop: theme.space.md, paddingTop: theme.space.md,
@@ -62,35 +257,60 @@ export function TranslationDock() {
         }}>
           <span style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>回复语言</span>
           <select
-            disabled
+            disabled={!canUse || busy}
+            value={targetLang ?? ''}
+            onChange={(event) => { void changeTargetLang(event.target.value) }}
             aria-label="回复语言"
             style={{
-              height: 30, minWidth: 94, padding: '0 28px 0 10px',
+              height: 30, minWidth: 110, padding: '0 28px 0 10px',
               border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.pill,
               background: theme.color.white, color: theme.color.textMuted,
               fontSize: theme.font.size.sm,
             }}
           >
-            <option>自动</option>
+            <option value="">自动</option>
+            {TARGET_LANGS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
           </select>
-          <Chip tone="muted">🔒 自动</Chip>
+          <Chip tone="muted">{targetLang ? `🔒 ${targetLang}` : '🔓 自动'}</Chip>
 
           <div style={{ flex: 1 }} />
-          <button disabled style={secondaryButton}>翻译</button>
-          <button disabled style={primaryButton}>发送</button>
+          <button
+            disabled={!canUse || busy || !draft?.sourceText.trim()}
+            onClick={() => { void translate() }}
+            style={secondaryButton}
+          >
+            翻译
+          </button>
+          <button disabled={!canSend} onClick={() => { void send() }} style={primaryButton}>
+            发送
+          </button>
         </div>
       </div>
     </section>
   )
 }
 
+export function shouldTranslateOnKeyDown(event: {
+  key: string
+  shiftKey: boolean
+  isComposing: boolean
+  keyCode?: number
+}): boolean {
+  // 中文 IME 用 Enter 确认候选词时不能触发翻译。Safari/部分 Electron
+  // 组合输入还会用 229 表示 composing，两层都挡。
+  return event.key === 'Enter'
+    && !event.shiftKey
+    && !event.isComposing
+    && event.keyCode !== 229
+}
+
 const secondaryButton = {
   height: 34, padding: '0 16px', border: 'none', background: 'transparent',
-  color: theme.color.textFaint, fontSize: theme.font.size.base,
+  color: theme.color.textMuted, fontSize: theme.font.size.base,
 }
 
 const primaryButton = {
   height: 36, padding: '0 20px', border: 'none', borderRadius: theme.radius.pill,
-  background: theme.color.surface, color: theme.color.textFaint,
+  background: theme.color.ink, color: theme.color.lime,
   fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
 }

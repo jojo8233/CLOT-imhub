@@ -27,6 +27,8 @@ export function App() {
   const setMessages = useStore(s => s.setMessages)
   const applyTranslation = useStore(s => s.applyTranslation)
   const appendMessage = useStore(s => s.appendMessage)
+  const updateMessage = useStore(s => s.updateMessage)
+  const removeMessage = useStore(s => s.removeMessage)
   const setAccountStatus = useStore(s => s.setAccountStatus)
   const resetStore = useStore(s => s.reset)
   const activeId = useStore(s => s.activeConversationId)
@@ -60,10 +62,36 @@ export function App() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const authGenerationRef = useRef(0)
+  const messageMutationRevisionRef = useRef(0)
+  const messageLoadGenerationRef = useRef(0)
+
+  // HTTP 列表响应可能比期间收到的 WS 事件更旧。若请求期间有消息
+  // 变更，重拉一次；只有一份在途加载有权落入 store，避免旧快照覆盖新增/编辑/删除/译文。
+  const refreshMessages = useCallback(async (conversationId: string): Promise<void> => {
+    const generation = ++messageLoadGenerationRef.current
+    while (generation === messageLoadGenerationRef.current
+      && useStore.getState().activeConversationId === conversationId) {
+      const before = messageMutationRevisionRef.current
+      let result: Awaited<ReturnType<typeof api.listMessages>>
+      try {
+        result = await api.listMessages(conversationId)
+      } catch {
+        return
+      }
+      if (generation !== messageLoadGenerationRef.current
+        || useStore.getState().activeConversationId !== conversationId) return
+      if (before !== messageMutationRevisionRef.current) continue
+      setMessages(result.messages)
+      return
+    }
+  }, [setMessages])
 
   // 退回登录页的统一出口：401 全局兜底和手动登出都走这里，保证两条路径的
   // 清理动作（关 WS、清 store、清 user）完全一致，不会有一条漏做。
   const backToLogin = useCallback(() => {
+    authGenerationRef.current += 1
+    messageLoadGenerationRef.current += 1
     wsRef.current?.close()
     wsRef.current = null
     resetStore()
@@ -80,12 +108,23 @@ export function App() {
   }, [backToLogin])
 
   const bootstrap = useCallback(async (loggedInUser: SessionUser) => {
+    const generation = ++authGenerationRef.current
+    wsRef.current?.close()
+    wsRef.current = null
     setUser(loggedInUser)
     setBootError(null)
     try {
-      setAccounts((await api.listAccounts()).accounts)
-      setConversations((await api.listConversations()).conversations)
+      const currentSessionUser = await api.refreshSessionUser()
+      if (generation !== authGenerationRef.current) return
+      setUser(currentSessionUser)
+      const accounts = await api.listAccounts()
+      if (generation !== authGenerationRef.current) return
+      setAccounts(accounts.accounts)
+      const conversations = await api.listConversations()
+      if (generation !== authGenerationRef.current) return
+      setConversations(conversations.conversations)
     } catch (e) {
+      if (generation !== authGenerationRef.current) return
       if (e instanceof UnauthorizedError) {
         // onUnauthorized 已经把界面切回登录页了，这里不用再做什么，
         // 更不能往下继续把 authState 又设回 loggedIn。
@@ -99,10 +138,13 @@ export function App() {
       // 网络错误或其它错误：不是鉴权问题，允许继续进主界面（列表可能是空的），
       // 好过卡死在白屏或"检查登录状态…"上出不去。
     }
-    wsRef.current?.close()
     wsRef.current = api.connectWs((event) => {
+      if (generation !== authGenerationRef.current) return
       if (event.type === 'translation') {
-        applyTranslation(event.messageId, event.translatedText)
+        if (event.conversationId === useStore.getState().activeConversationId) {
+          messageMutationRevisionRef.current += 1
+          applyTranslation(event.messageId, event.translatedText, event.revision)
+        }
         return
       }
       if (event.type === 'account_status') {
@@ -120,27 +162,59 @@ export function App() {
           accountId: event.accountId, ok: event.ok, reason: event.reason,
         })
         // 关联成功的账号此刻才带上最终状态，整表重拉最省事
-        void api.listAccounts().then((r) => setAccounts(r.accounts)).catch(() => {})
+        void api.listAccounts().then((r) => {
+          if (generation === authGenerationRef.current) setAccounts(r.accounts)
+        }).catch(() => {})
         return
       }
       if (event.type === 'message') {
         // 会话列表可能因为这条消息新增了会话，或需要重排——整体重拉最省事，
         // 上限 200 行，开销可以忽略。401 会由全局兜底处理，这里只吞掉不重复处理。
-        void api.listConversations().then((r) => setConversations(r.conversations)).catch(() => {})
+        void api.listConversations().then((r) => {
+          if (generation === authGenerationRef.current) setConversations(r.conversations)
+        }).catch(() => {})
         // 只有正在看的那个会话才需要把消息插进列表
         if (event.conversationId === useStore.getState().activeConversationId) {
+          messageMutationRevisionRef.current += 1
           appendMessage({
             id: event.messageId,
             direction: event.direction,
             body: event.body,
             sent_at: event.sentAt,
+            edited_at: event.editedAt,
             translated_text: event.translatedBody,
           })
         }
+        return
+      }
+      if (event.type === 'message_updated') {
+        if (event.conversationId === useStore.getState().activeConversationId) {
+          messageMutationRevisionRef.current += 1
+          updateMessage(event.messageId, event.body, event.editedAt, event.translatedBody)
+        }
+        return
+      }
+      if (event.type === 'message_deleted') {
+        if (event.conversationId === useStore.getState().activeConversationId) {
+          messageMutationRevisionRef.current += 1
+          removeMessage(event.messageId)
+        }
+        return
+      }
+      if (event.type === 'message_merged') {
+        if (event.conversationId === useStore.getState().activeConversationId) {
+          messageMutationRevisionRef.current += 1
+          // temp/final 两行的正文可能不同，不能只在内存里改 id。事务已经提交，
+          // 直接重拉规范快照才能覆盖任意 WS 到达顺序。
+          void refreshMessages(event.conversationId)
+        }
       }
     })
-    setAuthState('loggedIn')
-  }, [setAccounts, setConversations, applyTranslation, setAccountStatus, appendMessage])
+    if (generation === authGenerationRef.current) setAuthState('loggedIn')
+  }, [
+    setAccounts, setConversations, applyTranslation, setAccountStatus,
+    appendMessage, updateMessage, removeMessage, refreshMessages,
+  ])
 
   // 启动时先看磁盘上有没有加密存档的登录态：有就跳过登录页直接进主界面，
   // 没有（或 safeStorage 解不出来）就显示登录页。
@@ -153,16 +227,22 @@ export function App() {
         setAuthState('loggedOut')
       }
     })()
-    return () => { wsRef.current?.close() }
+    return () => {
+      authGenerationRef.current += 1
+      messageLoadGenerationRef.current += 1
+      wsRef.current?.close()
+    }
     // 只在挂载时跑一次，bootstrap 走 ref 闭包即可
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (!activeId) return
-    // 401 交给全局兜底处理，这里只需要不让 rejection 变成 unhandled
-    void api.listMessages(activeId).then(r => setMessages(r.messages)).catch(() => {})
-  }, [activeId])
+    if (!activeId) {
+      messageLoadGenerationRef.current += 1
+      return
+    }
+    void refreshMessages(activeId)
+  }, [activeId, refreshMessages])
 
   async function handleLogout(): Promise<void> {
     await apiLogout()
@@ -225,9 +305,17 @@ export function App() {
             compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
           />
 
-          {view === 'chat' ? (
+          {/* 原生 webview 已建立后保持常驻。切到账号管理只隐藏宿主，不卸载 guest，
+              否则返回会话时会重连、丢滚动位置，“多开常驻”就只在同平台切账号时成立。 */}
+          <div style={{
+            display: view === 'chat' ? 'flex' : 'none',
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+          }}>
             <NativeConversationWorkspace />
-          ) : (
+          </div>
+          {view !== 'chat' && (
             <AccountsView
               onOpenChat={() => setView('chat')}
               onAddAccount={() => {

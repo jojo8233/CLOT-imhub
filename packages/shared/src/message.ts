@@ -1,7 +1,7 @@
 import type { Direction, Platform } from './platform.js'
 
 export interface MediaRef {
-  kind: 'image' | 'video' | 'audio' | 'file'
+  kind: 'image' | 'video' | 'audio' | 'file' | 'sticker'
   /** 平台侧的文件标识，用于回源下载；不是 URL，也不是内容哈希 */
   remoteId: string
   fileName?: string
@@ -29,6 +29,10 @@ export interface NormalizedMessage {
   conversationDisplayName: string | null
   body: string
   mediaRefs: MediaRef[]
+  /** 平台侧被回复消息的 id；没有回复关系时为 null/省略。 */
+  replyToPlatformMessageId?: string | null
+  /** 平台确认的编辑时间；普通新增消息为 null/省略。 */
+  editedAt?: Date | null
   sentAt: Date
   raw: unknown
 }

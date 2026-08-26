@@ -16,7 +16,10 @@ function fakeSocket(readyState = OPEN) {
   }
 }
 
-const event = { type: 'translation', messageId: 'm1', targetLang: 'zh', translatedText: '你好', provider: 'deepl' } as const
+const event = {
+  type: 'translation', messageId: 'm1', conversationId: 'c1', targetLang: 'zh', translatedText: '你好',
+  provider: 'deepl', revision: 'initial',
+} as const
 
 describe('WsHub', () => {
   it('推送给指定用户的连接', () => {
