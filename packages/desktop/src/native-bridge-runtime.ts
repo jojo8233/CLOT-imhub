@@ -145,6 +145,7 @@ export function parseNativeHostCommand(value: unknown): NativeHostCommand | null
       ? value as unknown as NativeHostCommand
       : null
   }
+  if (value.type === 'bridge.request-state') return value as unknown as NativeHostCommand
   if (!['composer.set-draft', 'composer.get-draft', 'composer.send'].includes(value.type)
     || !nonEmptyString(value.requestId, 128)
     || !Number.isSafeInteger(value.contextRevision)

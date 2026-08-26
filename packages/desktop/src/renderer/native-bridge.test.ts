@@ -117,6 +117,10 @@ describe('nativeComposerBridge', () => {
   it('主进程只转发结构完整的 typed command', () => {
     expect(parseNativeHostCommand({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'bridge.request-state',
+    })).toMatchObject({ type: 'bridge.request-state' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'composer.send',
       requestId: 'request-1',
       contextRevision: 2,
@@ -164,6 +168,24 @@ describe('nativeComposerBridge', () => {
       contextRevision: 8, ok: true, attemptId: 'attempt-1', platformMessageId: 'm-1',
     })
     await expect(pending).rejects.toThrow('过期或不匹配')
+    unregister()
+  })
+
+  it('保留 guest 的脱敏错误码供外壳区分明确失败与结果未知', async () => {
+    let sent: NativeComposerCommand | null = null
+    const unregister = registerNativeCommandTarget(context.accountId, {
+      send: (_channel, command) => { sent = command as NativeComposerCommand },
+    })
+
+    const pending = nativeComposerBridge.send(context, 'attempt-1')
+    const command = sent!
+    handleNativeCommandResult(context.accountId, {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'command.result', requestId: command.requestId, command: command.type,
+      contextRevision: 7, ok: false, attemptId: 'attempt-1',
+      error: { code: 'send_failed', message: 'Telegram 原生发送失败' },
+    })
+    await expect(pending).rejects.toMatchObject({ code: 'send_failed' })
     unregister()
   })
 })

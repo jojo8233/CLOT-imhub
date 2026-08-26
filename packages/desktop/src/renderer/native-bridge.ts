@@ -31,7 +31,7 @@ export interface NativeCommandContext {
 }
 
 export class NativeBridgeCommandError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly code = 'bridge_command_failed') {
     super(message)
     this.name = 'NativeBridgeCommandError'
   }
@@ -48,7 +48,7 @@ export function registerNativeCommandTarget(accountId: string, target: CommandTa
     for (const [requestId, command] of pending) {
       if (command.accountId !== accountId) continue
       if (command.timer) clearTimeout(command.timer)
-      command.reject(new NativeBridgeCommandError('原生客户端桥接已断开'))
+      command.reject(new NativeBridgeCommandError('原生客户端桥接已断开', 'bridge_disconnected'))
       pending.delete(requestId)
     }
   }
@@ -61,15 +61,24 @@ export function handleNativeCommandResult(accountId: string, event: NativeComman
   if (command.timer) clearTimeout(command.timer)
 
   if (event.command !== command.command || event.contextRevision !== command.contextRevision) {
-    command.reject(new NativeBridgeCommandError('原生客户端返回了过期或不匹配的命令结果'))
+    command.reject(new NativeBridgeCommandError(
+      '原生客户端返回了过期或不匹配的命令结果',
+      'stale_command_result',
+    ))
     return true
   }
   if (command.command === 'composer.send' && event.attemptId !== command.attemptId) {
-    command.reject(new NativeBridgeCommandError('原生客户端返回了不匹配的发送 attemptId'))
+    command.reject(new NativeBridgeCommandError(
+      '原生客户端返回了不匹配的发送 attemptId',
+      'attempt_mismatch',
+    ))
     return true
   }
   if (!event.ok) {
-    command.reject(new NativeBridgeCommandError(event.error?.message ?? '原生客户端命令执行失败'))
+    command.reject(new NativeBridgeCommandError(
+      event.error?.message ?? '原生客户端命令执行失败',
+      event.error?.code ?? 'guest_command_failed',
+    ))
     return true
   }
   command.resolve(event)
@@ -81,7 +90,7 @@ async function sendCommand(
   command: NativeComposerCommand,
 ): Promise<NativeCommandResultEvent> {
   const target = targets.get(context.accountId)
-  if (!target) throw new NativeBridgeCommandError('原生客户端桥接尚未连接')
+  if (!target) throw new NativeBridgeCommandError('原生客户端桥接尚未连接', 'bridge_disconnected')
 
   return new Promise((resolve, reject) => {
     const pendingCommand: PendingCommand = {
@@ -102,18 +111,22 @@ async function sendCommand(
           // 避免授权服务短暂变慢时外壳先报超时、主进程随后才把发送命令交给页面。
           pendingCommand.timer = setTimeout(() => {
             pending.delete(command.requestId)
-            reject(new NativeBridgeCommandError('原生客户端响应超时'))
+            reject(new NativeBridgeCommandError('原生客户端响应超时，发送结果未知', 'result_unknown'))
           }, COMMAND_TIMEOUT_MS)
         })
         .catch((error: unknown) => {
           if (pendingCommand.timer) clearTimeout(pendingCommand.timer)
           pending.delete(command.requestId)
-          reject(error instanceof Error ? error : new NativeBridgeCommandError('发送原生客户端命令失败'))
+          reject(error instanceof Error
+            ? error
+            : new NativeBridgeCommandError('发送原生客户端命令失败', 'command_delivery_failed'))
         })
     } catch (error) {
       if (pendingCommand.timer) clearTimeout(pendingCommand.timer)
       pending.delete(command.requestId)
-      reject(error instanceof Error ? error : new NativeBridgeCommandError('发送原生客户端命令失败'))
+      reject(error instanceof Error
+        ? error
+        : new NativeBridgeCommandError('发送原生客户端命令失败', 'command_delivery_failed'))
     }
   })
 }
@@ -134,18 +147,22 @@ export const nativeComposerBridge = {
 
   async getDraft(context: NativeCommandContext): Promise<string> {
     const result = await sendCommand(context, { ...baseCommand(context), type: 'composer.get-draft' })
-    if (typeof result.draft !== 'string') throw new NativeBridgeCommandError('原生客户端没有返回草稿内容')
+    if (typeof result.draft !== 'string') {
+      throw new NativeBridgeCommandError('原生客户端没有返回草稿内容', 'missing_draft')
+    }
     return result.draft
   },
 
   async send(context: NativeCommandContext, attemptId: string = crypto.randomUUID()): Promise<string> {
     if (attemptId.trim() === '' || attemptId.length > 128) {
-      throw new NativeBridgeCommandError('发送 attemptId 无效')
+      throw new NativeBridgeCommandError('发送 attemptId 无效', 'invalid_attempt')
     }
     const result = await sendCommand(context, {
       ...baseCommand(context), type: 'composer.send', attemptId,
     })
-    if (!result.platformMessageId) throw new NativeBridgeCommandError('原生客户端没有返回最终消息 ID')
+    if (!result.platformMessageId) {
+      throw new NativeBridgeCommandError('原生客户端没有返回最终消息 ID', 'missing_message_id')
+    }
     return result.platformMessageId
   },
 }

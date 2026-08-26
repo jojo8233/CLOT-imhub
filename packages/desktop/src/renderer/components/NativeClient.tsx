@@ -229,6 +229,15 @@ function WebviewPane({ accountId, src, visible }: {
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        const target = currentTarget()
+        if (target) {
+          void nativeControl.sendCommand(target, {
+            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+            type: 'bridge.request-state',
+          }).catch(() => {
+            useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端状态同步失败')
+          })
+        }
         return
       }
       const message = control.message ?? '账号控制尚未就绪'
