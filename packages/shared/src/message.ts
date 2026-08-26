@@ -33,6 +33,8 @@ export interface NormalizedMessage {
   replyToPlatformMessageId?: string | null
   /** 平台确认的编辑时间；普通新增消息为 null/省略。 */
   editedAt?: Date | null
+  /** 平台提供的单调编辑序号；没有可靠序号的旧适配器为 null/省略。 */
+  editVersion?: number | null
   sentAt: Date
   raw: unknown
 }

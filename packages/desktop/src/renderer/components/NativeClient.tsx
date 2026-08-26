@@ -216,6 +216,7 @@ function WebviewPane({ accountId, src, visible }: {
       setState('loading')
       setDetail('')
       lastContextRevisionRef.current = -1
+      useStore.getState().setNativeAccountIdentity(accountId, null)
       useStore.getState().setNativeContext(accountId, null)
       useStore.getState().setNativeBridgeConnection(accountId, 'waiting')
     }
@@ -276,6 +277,10 @@ function WebviewPane({ accountId, src, visible }: {
 
       if (event.type === 'bridge.ready') {
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        return
+      }
+      if (event.type === 'account.identity') {
+        useStore.getState().setNativeAccountIdentity(accountId, event.platformAccountExternalId)
         return
       }
       if (event.type === 'command.result') {

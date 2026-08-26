@@ -255,8 +255,9 @@ Telegram：
    但会把演示账号和已知密码写入目标库。
 3. **补丁版客户端分发**：开发期 Telegram 从同级 `telegram-tt` 源码仓库启动，尚未
    纳入桌面安装包、自动更新及 GPL 源码交付流程。上线前必须完成这条供应链。
-4. **完成 M3 原生安全与一致性门槛**：统一 TDLib/fork 的 Telegram 账号级消息键并迁移
-   旧数据；移除 guest 的 12 小时 JWT 注入；用服务端签发、主进程验证的短时 control
+4. **完成 M3 原生安全与一致性门槛**：M3-1 已加入 TDLib/fork 统一 Telegram 消息键、
+   Bridge v2 与 `0005` 迁移；上线前仍要用真实账号 fixture/shadow 对账确认迁移结果，
+   并移除 guest 的 12 小时 JWT 注入；用服务端签发、主进程验证的短时 control
    grant 约束账号操作并绑定实际平台登录身份；发送 attempt 幂等；删账号时退出并清除
    `persist:native-<accountId>`。这些完成前 M2 只能按通用合约验收，不能作为生产闭环。
 
@@ -274,9 +275,10 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
 - **统一桥接已就位、平台接线未完成**：固定输入坞、当前会话映射、草稿/发送命令、
   服务端消息回传与去重已经实现。当前 telegram-tt 不发 `bridge.ready/context.changed`，
   所以输入坞与右栏仍保持安全禁用/空态；这是 M3 边界，不是可发送能力。
-- **当前没有双路消息重复，但 shadow 前有硬门槛**：telegram-tt 尚未回传事件，所以
-  TDLib 与原生链路还不会同时落库。Telegram 的 TDLib id 与 MTP id 当前并不相同；M3
-  必须先统一账号级 `chatId:serverMessageId` 并迁移旧数据，再做 shadow 验证。
+- **当前没有双路消息重复，canonical 基础已就位但 shadow 尚未开始**：telegram-tt
+  尚未回传事件，所以 TDLib 与原生链路还不会同时落库。M3-1 已统一
+  `chatId:serverMessageId`、临时命名空间和 `0005` 迁移；必须再完成真实 fixture 与
+  shadow 对账，才能确认历史数据和两条实时链路没有重复。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。

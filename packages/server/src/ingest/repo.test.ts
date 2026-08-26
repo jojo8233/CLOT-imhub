@@ -45,6 +45,7 @@ function msg(over: Partial<Parameters<typeof repo.insertMessage>[0]> = {}) {
     body: 'hello', mediaRefs: [], replyToPlatformMessageId: null, editedAt: null,
     sentAt: new Date('2026-08-24T00:00:00Z'), raw: {},
     ...over,
+    editVersion: over.editVersion ?? null,
   }
 }
 
@@ -184,6 +185,46 @@ describe('KyselyMessageRepo.insertMessage', () => {
       .select('body_lang').where('id', '=', first.id).executeTakeFirstOrThrow()
     expect(translation.translated_text).toBe('译文')
     expect(message.body_lang).toBe('en')
+  })
+
+  it('有 editVersion 后只接受更大的版本，不再由 editedAt 猜测先后', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const editedAt = new Date('2026-08-24T01:00:00Z')
+    const first = await repo.insertMessage(msg({
+      conversationId, body: 'version 10', editedAt, editVersion: 10,
+    }))
+
+    const stale = await repo.insertMessage(msg({
+      conversationId,
+      body: 'stale version 9 with later clock',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 9,
+    }))
+    expect(stale.contentChanged).toBe(false)
+
+    const newer = await repo.insertMessage(msg({
+      conversationId, body: 'version 11 in same second', editedAt, editVersion: 11,
+    }))
+    expect(newer.contentChanged).toBe(true)
+
+    const row = await db.selectFrom('messages')
+      .select(['body', 'edited_at', 'edit_version'])
+      .where('id', '=', first.id)
+      .executeTakeFirstOrThrow()
+    expect(row).toMatchObject({ body: 'version 11 in same second', edit_version: 11 })
+    expect(row.edited_at?.toISOString()).toBe(editedAt.toISOString())
+
+    const translation = {
+      messageId: first.id,
+      targetLang: 'zh',
+      provider: 'deepl',
+      translatedText: '译文',
+      detectedLang: 'en',
+    }
+    expect(await repo.saveTranslationIfCurrent({ ...translation, revision: 'version:10' })).toBe(false)
+    expect(await repo.saveTranslationIfCurrent({ ...translation, revision: 'version:11' })).toBe(true)
   })
 
   it('翻译 worker 先持有消息锁时，首次发布快照等待并携带已提交译文', async () => {

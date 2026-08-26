@@ -3,7 +3,11 @@ import * as path from 'node:path'
 import * as tdl from 'tdl'
 import { getTdjson } from 'prebuilt-tdlib'
 import type { Update } from 'tdlib-types'
-import type { AccountStatus, OutboundContent } from '@im-hub/shared'
+import {
+  telegramMessageKeyFromTdlib,
+  type AccountStatus,
+  type OutboundContent,
+} from '@im-hub/shared'
 import type {
   AdapterAccount,
   AuthChallenge,
@@ -110,16 +114,24 @@ export class TelegramAdapter implements PlatformAdapter {
 
       // 发送成功后 TDLib 用最终 id 替换先前回显的临时 id。库里存的是临时 id，
       // 必须就地改写，否则这条消息经其他路径再到达时会被当成新消息存第二遍。
-      const u = update as { _?: string; old_message_id?: number; message?: { id: number } }
+      const u = update as {
+        _?: string
+        old_message_id?: number
+        message?: { id: number; chat_id: number }
+      }
       if (u._ === 'updateMessageSendSucceeded' && u.old_message_id != null && u.message) {
-        const oldId = String(u.old_message_id)
-        const newId = String(u.message.id)
-        for (const h of this.idRemapHandlers) {
-          try {
-            h(account.id, oldId, newId)
-          } catch (err) {
-            console.error(`[telegram] 账号 ${account.id} 的 id 重映射处理器抛出异常，已隔离:`, err)
+        try {
+          const oldId = telegramMessageKeyFromTdlib(u.message.chat_id, u.old_message_id)
+          const newId = telegramMessageKeyFromTdlib(u.message.chat_id, u.message.id)
+          for (const h of this.idRemapHandlers) {
+            try {
+              h(account.id, oldId, newId)
+            } catch (err) {
+              console.error(`[telegram] 账号 ${account.id} 的 id 重映射处理器抛出异常，已隔离:`, err)
+            }
           }
+        } catch {
+          console.error(`[telegram] 账号 ${account.id} 收到无效消息 id，已拒绝重映射`)
         }
       }
 
@@ -290,7 +302,7 @@ export class TelegramAdapter implements PlatformAdapter {
         if (update._ === 'updateMessageSendSucceeded' && update.old_message_id === tempId) {
           clearTimeout(timer)
           client.off('update', handler)
-          resolve(String(update.message.id))
+          resolve(telegramMessageKeyFromTdlib(conversationId, update.message.id))
         } else if (update._ === 'updateMessageSendFailed' && update.old_message_id === tempId) {
           clearTimeout(timer)
           client.off('update', handler)

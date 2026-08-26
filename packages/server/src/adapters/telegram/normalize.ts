@@ -1,4 +1,4 @@
-import type { NormalizedMessage } from '@im-hub/shared'
+import { telegramMessageKeyFromTdlib, type NormalizedMessage } from '@im-hub/shared'
 
 interface TdSenderUser { _: 'messageSenderUser'; user_id: number }
 interface TdSenderChat { _: 'messageSenderChat'; chat_id: number }
@@ -39,11 +39,18 @@ export function normalizeTelegramMessage(update: unknown, accountId: string): No
   const sender = senderId(m.sender_id)
   if (sender === null) return null
 
+  let platformMessageId: string
+  try {
+    platformMessageId = telegramMessageKeyFromTdlib(m.chat_id, m.id)
+  } catch {
+    return null
+  }
+
   return {
     platform: 'telegram',
     accountId,
     platformConversationId: String(m.chat_id),
-    platformMessageId: String(m.id),
+    platformMessageId,
     direction: m.is_outgoing ? 'out' : 'in',
     senderExternalId: sender,
     senderDisplayName: null,

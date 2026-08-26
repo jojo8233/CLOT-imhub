@@ -1,8 +1,9 @@
 import type { MediaRef } from './message.js'
 import type { Direction } from './platform.js'
 
-export const NATIVE_BRIDGE_PROTOCOL_VERSION = 1 as const
+export const NATIVE_BRIDGE_PROTOCOL_VERSION = 2 as const
 export type NativeBridgeProtocolVersion = typeof NATIVE_BRIDGE_PROTOCOL_VERSION
+export const NATIVE_EDIT_VERSION_MAX = 2_147_483_647
 
 /**
  * 平台客户端当前打开的会话。这里全部是平台侧标识；服务端 UUID 由外壳上报后解析，
@@ -36,6 +37,8 @@ export interface NativeGetDraftCommand extends NativeCommandFrame {
 
 export interface NativeSendCommand extends NativeCommandFrame {
   type: 'composer.send'
+  /** 一次逻辑发送的稳定标识；结果未知后的重试必须沿用同一个值。 */
+  attemptId: string
 }
 
 export type NativeComposerCommand =
@@ -55,6 +58,12 @@ export type NativeHostCommand = NativeComposerCommand | NativeEventAckCommand
 
 export interface NativeBridgeReadyEvent extends NativeBridgeFrame {
   type: 'bridge.ready'
+}
+
+export interface NativeAccountIdentityEvent extends NativeBridgeFrame {
+  type: 'account.identity'
+  /** 平台稳定账号标识；Telegram 使用当前登录用户的 user id。 */
+  platformAccountExternalId: string
 }
 
 export interface NativeContextChangedEvent extends NativeBridgeFrame {
@@ -79,6 +88,8 @@ export interface NativeCommandResultEvent extends NativeBridgeFrame {
   command: NativeCommandName
   contextRevision: number
   ok: boolean
+  /** composer.send 必须原样回显命令携带的 attemptId。 */
+  attemptId?: string
   draft?: string
   platformMessageId?: string
   error?: {
@@ -113,6 +124,8 @@ export interface NativeMessageSnapshot {
   sentAt: string
   /** 非 null 表示这是平台确认过的编辑版本。 */
   editedAt: string | null
+  /** 平台提供的单调编辑序号；同一条消息只接受更大的版本。 */
+  editVersion: number | null
   raw: Record<string, unknown>
 }
 
@@ -142,6 +155,7 @@ export interface NativeMessageIdRemappedEvent extends NativeMessageEventFrame {
 
 export type NativeGuestEvent =
   | NativeBridgeReadyEvent
+  | NativeAccountIdentityEvent
   | NativeContextChangedEvent
   | NativeComposerStateEvent
   | NativeCommandResultEvent

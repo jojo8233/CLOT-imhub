@@ -114,8 +114,19 @@ describe('MessageIngestor', () => {
       mediaRefs: [{ kind: 'image', remoteId: 'f1' }],
       replyToPlatformMessageId: null,
       editedAt: null,
+      editVersion: null,
       sentAt: msg.sentAt,
       raw: { _: 'x' },
+    })
+  })
+
+  it('单调 editVersion 进入翻译 revision，避免同秒连续编辑共用任务', async () => {
+    const queue = fakeQueue()
+    await new MessageIngestor(fakeRepo() as never, queue as never).ingest(sample({
+      editedAt: new Date('2026-08-26T01:00:00Z'), editVersion: 42,
+    }))
+    expect(queue.enqueueTranslate).toHaveBeenCalledWith({
+      messageId: 'msg-1', conversationId: 'conv-1', revision: 'version:42',
     })
   })
 

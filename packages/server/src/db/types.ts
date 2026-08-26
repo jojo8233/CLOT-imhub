@@ -66,6 +66,7 @@ export interface MessagesTable {
   media_refs: JSONColumnType<unknown[]>
   reply_to_platform_message_id: NullableText
   edited_at: Timestamp | null
+  edit_version: number | null
   deleted_at: Timestamp | null
   sent_at: RequiredTimestamp
   ingested_at: Generated<Timestamp>
