@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { api, NetworkError } from '../api/client.js'
+import type { ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip, PlatformIcon } from './ui.js'
 
 /** 各平台目前的接入程度。写在这里而不是散在文案里，将来接完一个改一行。 */
-const PLATFORMS: { key: string; blurb: string; ready: boolean }[] = [
+const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
   { key: 'signal', blurb: '关联为次要设备，手机仍是主设备', ready: true },
   { key: 'whatsapp', blurb: '需要网页版壳 + 扫码登录', ready: false },
-  { key: 'zoom', blurb: 'Team Chat，需走官方 OAuth', ready: false },
 ]
 
 type Step = 'pick' | 'linking'
@@ -22,13 +22,16 @@ type Step = 'pick' | 'linking'
  * TDLib 的二维码 token 过期后会自动下发新的链接，所以这里不用计时刷新，
  * 跟着事件走就行。
  */
-export function AddAccountDialog({ onClose }: { onClose(): void }) {
-  const [platform, setPlatform] = useState('telegram')
+export function AddAccountDialog({ initialPlatform, onClose }: {
+  initialPlatform: ChatPlatform
+  onClose(): void
+}) {
+  const [platform, setPlatform] = useState<ChatPlatform>(initialPlatform)
   const [name, setName] = useState('')
   const [step, setStep] = useState<Step>('pick')
   const [accountId, setAccountId] = useState<string | null>(null)
   // 单独记一份：进入扫码步骤后上面的平台选择器就不该再影响指引文案了
-  const [linkingPlatform, setLinkingPlatform] = useState('telegram')
+  const [linkingPlatform, setLinkingPlatform] = useState<ChatPlatform>(initialPlatform)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

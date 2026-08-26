@@ -1,6 +1,13 @@
 import { create } from 'zustand'
 import type { AuthChallengeKind } from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
+import {
+  initialNavigation,
+  reconcileNavigation,
+  selectAccount,
+  selectPlatform,
+  type ChatPlatform,
+} from './navigation.js'
 
 /** 正在进行的鉴权挑战。payload 是二维码链接或提示语，都不是敏感值 */
 export interface AuthChallengeState {
@@ -20,8 +27,12 @@ interface State {
   conversations: ConversationRow[]
   messages: MessageRow[]
   activeConversationId: string | null
-  /** null = 不按账号过滤，显示全部会话。顶部账号标签页切换的就是它。 */
+  /** 顶部一级导航。Zoom 延后，不进入当前会话导航。 */
+  activePlatform: ChatPlatform
+  /** 当前平台的明确账号。平台没有账号时才为 null，不再提供跨账号“全部”。 */
   activeAccountId: string | null
+  /** 每个平台分别记住最后一次激活账号，切回来时恢复。 */
+  lastActiveAccountByPlatform: Partial<Record<ChatPlatform, string>>
   authChallenge: AuthChallengeState | null
   authDone: AuthDoneState | null
   /** 左侧功能中心是否展开。窗口窄的时候收起来给聊天区让位。 */
@@ -30,7 +41,8 @@ interface State {
   setConversations(c: ConversationRow[]): void
   setMessages(m: MessageRow[]): void
   setActiveConversation(id: string): void
-  setActiveAccount(id: string | null): void
+  setActivePlatform(platform: ChatPlatform): void
+  setActiveAccount(id: string): void
   setAuthChallenge(c: AuthChallengeState): void
   setAuthDone(d: AuthDoneState): void
   clearAuth(): void
@@ -52,17 +64,42 @@ export const useStore = create<State>((set) => ({
   conversations: [],
   messages: [],
   activeConversationId: null,
+  activePlatform: 'telegram',
   activeAccountId: null,
+  lastActiveAccountByPlatform: {},
   authChallenge: null,
   authDone: null,
   panelOpen: true,
-  setAccounts: (accounts) => set({ accounts }),
+  setAccounts: (accounts) => set((s) => {
+    // 登录后第一次拿到账号列表时直接打开首个实际有账号的平台；之后刷新列表则
+    // 尊重用户当前选的平台，只修复被删除或失去权限的账号。
+    const firstLoad = s.accounts.length === 0
+      && s.activeAccountId === null
+      && Object.keys(s.lastActiveAccountByPlatform).length === 0
+    const navigation = firstLoad ? initialNavigation(accounts) : reconcileNavigation(accounts, s)
+    const accountChanged = navigation.activeAccountId !== s.activeAccountId
+    return {
+      accounts,
+      ...navigation,
+      ...(accountChanged ? { activeConversationId: null, messages: [] } : {}),
+    }
+  }),
   setConversations: (conversations) => set({ conversations }),
   setMessages: (messages) => set({ messages }),
   setActiveConversation: (activeConversationId) => set({ activeConversationId }),
-  // 换账号时清掉当前会话：上一个账号的会话不属于新账号，留着会让右侧客户信息
-  // 和聊天区显示一个在新过滤条件下根本看不见的会话。
-  setActiveAccount: (activeAccountId) => set({ activeAccountId, activeConversationId: null, messages: [] }),
+  // 换平台或账号时清掉当前会话：上一个账号的客户信息不能留在新平台右栏。
+  setActivePlatform: (platform) => set((s) => {
+    const navigation = selectPlatform(s.accounts, s, platform)
+    if (navigation.activePlatform === s.activePlatform && navigation.activeAccountId === s.activeAccountId) {
+      return navigation
+    }
+    return { ...navigation, activeConversationId: null, messages: [] }
+  }),
+  setActiveAccount: (accountId) => set((s) => {
+    const navigation = selectAccount(s.accounts, s, accountId)
+    if (navigation.activeAccountId === s.activeAccountId) return navigation
+    return { ...navigation, activeConversationId: null, messages: [] }
+  }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   setAuthChallenge: (authChallenge) => set({ authChallenge, authDone: null }),
   setAuthDone: (authDone) => set({ authDone, authChallenge: null }),
@@ -86,7 +123,9 @@ export const useStore = create<State>((set) => ({
     conversations: [],
     messages: [],
     activeConversationId: null,
+    activePlatform: 'telegram',
     activeAccountId: null,
+    lastActiveAccountByPlatform: {},
     authChallenge: null,
     authDone: null,
   }),

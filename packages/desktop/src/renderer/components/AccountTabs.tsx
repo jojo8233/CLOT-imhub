@@ -1,80 +1,75 @@
+import { accountsForPlatform, CHAT_PLATFORMS, type ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
-import { STATUS_LABEL, theme } from '../theme.js'
+import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Avatar, PlatformIcon, StatusDot } from './ui.js'
 
-/**
- * 顶栏：品牌块 + 账号标签页 + 当前用户。
- *
- * 账号标签页是这套界面的主轴——一个员工同时挂着好几个平台账号，
- * 切账号的动作必须一直在视线里，不能藏进菜单。选中的账号会过滤下方会话列表。
- */
-
+/** 顶部两级导航：一级选平台，二级只展示该平台账号。 */
 interface Props {
   currentUserName: string | null
   onLogout(): void
-  onAddAccount(): void
+  onAddAccount(platform: ChatPlatform): void
 }
 
 export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) {
   const accounts = useStore(s => s.accounts)
-  const activeAccountId = useStore(s => s.activeAccountId)
-  const setActiveAccount = useStore(s => s.setActiveAccount)
   const conversations = useStore(s => s.conversations)
+  const activePlatform = useStore(s => s.activePlatform)
+  const activeAccountId = useStore(s => s.activeAccountId)
+  const setActivePlatform = useStore(s => s.setActivePlatform)
+  const setActiveAccount = useStore(s => s.setActiveAccount)
 
+  const platformAccounts = accountsForPlatform(accounts, activePlatform)
   const countOf = (accountId: string): number =>
-    conversations.filter(c => c.account_id === accountId).length
+    conversations.filter(conversation => conversation.account_id === accountId).length
 
   return (
-      <div style={{
-        height: 68, flexShrink: 0, display: 'flex', alignItems: 'center',
-        borderBottom: `1px solid ${theme.color.border}`, background: theme.color.bg,
-      }}>
-        {/* 品牌块。参考稿里它自成一格，右侧有一道竖线把它和标签页分开 */}
+    <header style={{
+      height: 104, flexShrink: 0, display: 'flex', alignItems: 'stretch',
+      borderBottom: `1px solid ${theme.color.border}`, background: theme.color.bg,
+    }}>
+      <Brand />
+
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{
-          width: 190, flexShrink: 0, height: '100%', display: 'flex', alignItems: 'center',
-          gap: theme.space.sm, padding: `0 ${theme.space.lg}px`,
-          borderRight: `1px solid ${theme.color.border}`,
+          height: 46, flexShrink: 0, display: 'flex', alignItems: 'center',
+          gap: theme.space.sm, padding: `0 ${theme.space.md}px`,
+          borderBottom: `1px solid ${theme.color.border}`,
         }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: theme.radius.md, flexShrink: 0,
-            background: theme.color.ink, color: theme.color.lime,
-            fontSize: 15, fontWeight: theme.font.weight.heavy,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            IH
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>im-hub</div>
-            <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>跨境客服工作台</div>
-          </div>
+          {CHAT_PLATFORMS.map(platform => (
+            <PlatformTab
+              key={platform}
+              platform={platform}
+              count={accountsForPlatform(accounts, platform).length}
+              active={platform === activePlatform}
+              onClick={() => setActivePlatform(platform)}
+            />
+          ))}
         </div>
 
-        {/* 标签页横向滚动：账号多了不折行、不挤压，跟参考稿一致 */}
         <div className="ih-scroll" style={{
-          flex: 1, minWidth: 0, height: '100%', display: 'flex', alignItems: 'center',
+          flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
           gap: theme.space.sm, padding: `0 ${theme.space.md}px`, overflowX: 'auto', overflowY: 'hidden',
         }}>
-          <AccountTab
-            label="全部"
-            active={activeAccountId === null}
-            onClick={() => setActiveAccount(null)}
-            badge={conversations.length}
-          />
-          {accounts.map(a => (
+          {platformAccounts.length === 0 ? (
+            <span style={{ fontSize: theme.font.size.sm, color: theme.color.textFaint, whiteSpace: 'nowrap' }}>
+              暂无 {PLATFORM_LABEL[activePlatform]} 账号
+            </span>
+          ) : platformAccounts.map(account => (
             <AccountTab
-              key={a.id}
-              label={a.display_name}
-              platform={a.platform}
-              status={a.status}
-              active={activeAccountId === a.id}
-              onClick={() => setActiveAccount(a.id)}
-              badge={countOf(a.id)}
+              key={account.id}
+              label={account.display_name}
+              platform={account.platform}
+              status={account.status}
+              active={activeAccountId === account.id}
+              onClick={() => setActiveAccount(account.id)}
+              badge={countOf(account.id)}
             />
           ))}
           <button
             className="ih-tab"
-            onClick={onAddAccount}
-            title="添加账号"
+            onClick={() => onAddAccount(activePlatform)}
+            title={`添加 ${PLATFORM_LABEL[activePlatform]} 账号`}
+            aria-label={`添加 ${PLATFORM_LABEL[activePlatform]} 账号`}
             style={{
               width: 34, height: 34, flexShrink: 0, borderRadius: '50%',
               border: `1px dashed ${theme.color.borderStrong}`, background: 'transparent',
@@ -84,78 +79,139 @@ export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) 
             +
           </button>
         </div>
-
-        {/* 当前用户 */}
-        <div style={{
-          flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.sm,
-          padding: `0 ${theme.space.lg}px`, borderLeft: `1px solid ${theme.color.border}`, height: '100%',
-        }}>
-          <Avatar name={currentUserName} size={30} />
-          <div style={{ maxWidth: 96, overflow: 'hidden' }}>
-            <div style={{
-              fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
-              whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden',
-            }}>
-              {currentUserName ?? '—'}
-            </div>
-            <button
-              onClick={onLogout}
-              style={{
-                padding: 0, border: 'none', background: 'none',
-                fontSize: theme.font.size.xs, color: theme.color.textFaint,
-              }}
-            >
-              登出
-            </button>
-          </div>
-        </div>
       </div>
 
+      <CurrentUser currentUserName={currentUserName} onLogout={onLogout} />
+    </header>
   )
 }
 
-function AccountTab({ label, platform, status, active, onClick, badge }: {
-  label: string
-  platform?: string
-  status?: string
+function Brand() {
+  return (
+    <div style={{
+      width: 190, flexShrink: 0, display: 'flex', alignItems: 'center',
+      gap: theme.space.sm, padding: `0 ${theme.space.lg}px`,
+      borderRight: `1px solid ${theme.color.border}`,
+    }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: theme.radius.md, flexShrink: 0,
+        background: theme.color.ink, color: theme.color.lime,
+        fontSize: 15, fontWeight: theme.font.weight.heavy,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        IH
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>im-hub</div>
+        <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>跨境客服工作台</div>
+      </div>
+    </div>
+  )
+}
+
+function CurrentUser({ currentUserName, onLogout }: {
+  currentUserName: string | null
+  onLogout(): void
+}) {
+  return (
+    <div style={{
+      width: 156, flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.sm,
+      padding: `0 ${theme.space.lg}px`, borderLeft: `1px solid ${theme.color.border}`,
+    }}>
+      <Avatar name={currentUserName} size={30} />
+      <div style={{ minWidth: 0, overflow: 'hidden' }}>
+        <div style={{
+          fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
+          whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden',
+        }}>
+          {currentUserName ?? '—'}
+        </div>
+        <button
+          onClick={onLogout}
+          style={{
+            padding: 0, border: 'none', background: 'none',
+            fontSize: theme.font.size.xs, color: theme.color.textFaint,
+          }}
+        >
+          登出
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PlatformTab({ platform, count, active, onClick }: {
+  platform: ChatPlatform
+  count: number
   active: boolean
   onClick(): void
-  badge?: number
 }) {
   return (
     <button
       className="ih-tab"
       onClick={onClick}
-      title={status ? `${label} · ${STATUS_LABEL[status] ?? status}` : label}
+      aria-pressed={active}
       style={{
-        flexShrink: 0, height: 38, display: 'flex', alignItems: 'center', gap: theme.space.sm,
+        height: 32, display: 'flex', alignItems: 'center', gap: 7,
         padding: `0 ${theme.space.md}px`, borderRadius: theme.radius.pill,
         border: `1px solid ${active ? 'transparent' : theme.color.border}`,
         background: active ? theme.color.ink : theme.color.card,
         color: active ? theme.color.onInk : theme.color.text,
-        fontSize: theme.font.size.base,
+        fontSize: theme.font.size.sm,
+        fontWeight: active ? theme.font.weight.heavy : theme.font.weight.bold,
+      }}
+    >
+      <PlatformIcon platform={platform} size={16} />
+      {PLATFORM_LABEL[platform]}
+      <span style={{
+        minWidth: 18, height: 18, padding: '0 5px', borderRadius: theme.radius.pill,
+        background: active ? theme.color.lime : theme.color.surface,
+        color: active ? theme.color.onLime : theme.color.textMuted,
+        fontSize: theme.font.size.xs, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {count}
+      </span>
+    </button>
+  )
+}
+
+function AccountTab({ label, platform, status, active, onClick, badge }: {
+  label: string
+  platform: string
+  status: string
+  active: boolean
+  onClick(): void
+  badge: number
+}) {
+  return (
+    <button
+      className="ih-tab"
+      onClick={onClick}
+      title={`${label} · ${STATUS_LABEL[status] ?? status}`}
+      aria-pressed={active}
+      style={{
+        flexShrink: 0, height: 36, display: 'flex', alignItems: 'center', gap: theme.space.sm,
+        padding: `0 ${theme.space.md}px`, borderRadius: theme.radius.pill,
+        border: `1px solid ${active ? theme.color.limeDeep : theme.color.border}`,
+        background: active ? theme.color.limeSoft : theme.color.card,
+        color: theme.color.text, fontSize: theme.font.size.base,
         fontWeight: active ? theme.font.weight.heavy : theme.font.weight.medium,
       }}
     >
-      {platform && (
-        <span style={{ position: 'relative', display: 'flex' }}>
-          <PlatformIcon platform={platform} size={16} />
-          {status && (
-            <span style={{ position: 'absolute', right: -2, bottom: -2 }}>
-              <StatusDot status={status} size={7} />
-            </span>
-          )}
+      <span style={{ position: 'relative', display: 'flex' }}>
+        <PlatformIcon platform={platform} size={16} />
+        <span style={{ position: 'absolute', right: -2, bottom: -2 }}>
+          <StatusDot status={status} size={7} />
         </span>
-      )}
-      <span style={{ maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      </span>
+      <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {label}
       </span>
-      {badge !== undefined && badge > 0 && (
+      {badge > 0 && (
         <span style={{
           minWidth: 18, height: 18, padding: '0 5px', borderRadius: theme.radius.pill,
-          background: active ? theme.color.lime : theme.color.white,
-          color: active ? theme.color.onLime : theme.color.textMuted,
-          fontSize: theme.font.size.xs, fontWeight: theme.font.weight.heavy,
+          background: active ? theme.color.white : theme.color.surface,
+          color: theme.color.textMuted, fontSize: theme.font.size.xs,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           {badge}

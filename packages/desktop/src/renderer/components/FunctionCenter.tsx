@@ -12,7 +12,7 @@ import { IconButton, NotWired } from './ui.js'
  * 顺带这份名单也就是路线图，接完一个把 view 填上、ready 改 true。
  */
 
-export type ViewKey = 'chat' | 'native' | 'accounts'
+export type ViewKey = 'chat' | 'accounts'
 
 interface Entry {
   /** 图标块里的字。参考稿用的就是单字，比抽象图形更好认 */
@@ -27,8 +27,7 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   { glyph: '+', tint: '#0a6fe8', title: '添加账号', desc: '接入新的聊天平台账号', action: 'addAccount' },
-  { glyph: '原', tint: '#0a6fe8', title: '原生界面', desc: '平台自己的界面，群组图片都全', view: 'native' },
-  { glyph: '话', tint: '#101a5c', title: '会话工作台', desc: '收发消息、发送前译文校对', view: 'chat' },
+  { glyph: '话', tint: '#101a5c', title: '会话', desc: '平台原生界面、翻译与客户资料', view: 'chat' },
   { glyph: '号', tint: '#22b573', title: '账号状态', desc: '各账号在线情况与历史起点', view: 'accounts' },
   { glyph: '警', tint: '#e0364a', title: '关键词警报', desc: '命中敏感词时通知管理员' },
   { glyph: '译', tint: '#e79a1a', title: '翻译历史', desc: '原文、译文与回译留痕' },

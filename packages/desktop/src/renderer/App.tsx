@@ -13,10 +13,10 @@ import { useStore } from './store.js'
 import { AccountTabs } from './components/AccountTabs.js'
 import { AccountsView } from './components/AccountsView.js'
 import { AddAccountDialog } from './components/AddAccountDialog.js'
-import { ChatWorkspace } from './components/ChatWorkspace.js'
-import { NativeClient } from './components/NativeClient.js'
+import { NativeConversationWorkspace } from './components/NativeConversationWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
+import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
 
 type AuthState = 'checking' | 'loggedOut' | 'loggedIn'
@@ -30,9 +30,11 @@ export function App() {
   const setAccountStatus = useStore(s => s.setAccountStatus)
   const resetStore = useStore(s => s.reset)
   const activeId = useStore(s => s.activeConversationId)
+  const activePlatform = useStore(s => s.activePlatform)
 
   const [view, setView] = useState<ViewKey>('chat')
   const [addOpen, setAddOpen] = useState(false)
+  const [addPlatform, setAddPlatform] = useState<ChatPlatform>('telegram')
   // 整排的宽度。只用来决定功能中心要不要强制收成图标栏——
   // 三栏自己的宽度由 ChatWorkspace 量，两处各管各的，不互相牵连。
   const [rowWidth, setRowWidth] = useState(0)
@@ -196,7 +198,10 @@ export function App() {
         <AccountTabs
           currentUserName={user?.displayName ?? null}
           onLogout={() => void handleLogout()}
-          onAddAccount={() => setAddOpen(true)}
+          onAddAccount={(platform) => {
+            setAddPlatform(platform)
+            setAddOpen(true)
+          }}
         />
 
         {bootError && (
@@ -213,21 +218,30 @@ export function App() {
           <FunctionCenter
             view={view}
             onSelectView={setView}
-            onAddAccount={() => setAddOpen(true)}
+            onAddAccount={() => {
+              setAddPlatform(activePlatform)
+              setAddOpen(true)
+            }}
             compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
           />
 
           {view === 'chat' ? (
-            <ChatWorkspace />
-          ) : view === 'native' ? (
-            <NativeClient />
+            <NativeConversationWorkspace />
           ) : (
-            <AccountsView onOpenChat={() => setView('chat')} onAddAccount={() => setAddOpen(true)} />
+            <AccountsView
+              onOpenChat={() => setView('chat')}
+              onAddAccount={() => {
+                setAddPlatform(activePlatform)
+                setAddOpen(true)
+              }}
+            />
           )}
         </div>
       </div>
 
-      {addOpen && <AddAccountDialog onClose={() => setAddOpen(false)} />}
+      {addOpen && (
+        <AddAccountDialog initialPlatform={addPlatform} onClose={() => setAddOpen(false)} />
+      )}
     </div>
   )
 }
