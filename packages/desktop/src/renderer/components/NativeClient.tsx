@@ -34,6 +34,12 @@ const WEB_CLIENT: Record<string, string> = {
   telegram: 'http://localhost:1234/',
 }
 
+const PLATFORM_PHASE: Record<string, string> = {
+  signal: 'M5',
+  whatsapp: 'M6',
+  zoom: 'M8',
+}
+
 export function nativeClientSupported(platform: string): boolean {
   return platform in WEB_CLIENT
 }
@@ -70,22 +76,6 @@ export function NativeClient() {
     setMounted(prev => prev.includes(active.id) ? prev : [...prev, active.id])
   }, [active])
 
-  if (!webviewSupported()) {
-    return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.color.chat }}>
-        <EmptyHint>
-          原生界面只能在桌面客户端里打开。
-          <br />
-          当前这个窗口是浏览器，浏览器里没有 webview 这个东西。
-          <br />
-          <span style={{ color: theme.color.textMuted }}>
-            请切换到 im-hub 应用窗口（Cmd+Tab），或点 Dock 里的图标。
-          </span>
-        </EmptyHint>
-      </div>
-    )
-  }
-
   if (!active) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.color.chat }}>
@@ -98,9 +88,25 @@ export function NativeClient() {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.color.chat }}>
         <EmptyHint>
-          {PLATFORM_LABEL[active.platform] ?? active.platform} 没有网页版，嵌不进来。
+          {PLATFORM_LABEL[active.platform] ?? active.platform} 原生客户端尚未接入。
           <br />
-          这个平台只能走「会话工作台」，或者单独做补丁版桌面端。
+          计划在 {PLATFORM_PHASE[active.platform] ?? '后续阶段'} 完成多开、翻译与消息回传。
+        </EmptyHint>
+      </div>
+    )
+  }
+
+  if (!webviewSupported()) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.color.chat }}>
+        <EmptyHint>
+          原生界面只能在桌面客户端里打开。
+          <br />
+          当前这个窗口是浏览器，浏览器里没有 webview 这个东西。
+          <br />
+          <span style={{ color: theme.color.textMuted }}>
+            请切换到 im-hub 应用窗口（Cmd+Tab），或点 Dock 里的图标。
+          </span>
         </EmptyHint>
       </div>
     )

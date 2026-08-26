@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, NetworkError } from '../api/client.js'
+import { isChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
@@ -17,6 +18,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
 }) {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
+  const setActivePlatform = useStore(s => s.setActivePlatform)
   const setActiveAccount = useStore(s => s.setActiveAccount)
   const setAccounts = useStore(s => s.setAccounts)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -62,6 +64,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
         }}>
           {accounts.map(a => {
             const convs = conversations.filter(c => c.account_id === a.id)
+            const chatPlatform = isChatPlatform(a.platform) ? a.platform : null
             const last = convs.reduce<string | null>(
               (acc, c) => (c.last_message_at ?? '') > (acc ?? '') ? c.last_message_at : acc,
               null,
@@ -118,9 +121,20 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                   </div>
 
                   <div style={{ marginTop: theme.space.md, display: 'flex', gap: 6 }}>
-                    <CardButton onClick={() => { setActiveAccount(a.id); onOpenChat() }} grow>
-                      查看会话
-                    </CardButton>
+                    {chatPlatform ? (
+                      <CardButton
+                        onClick={() => {
+                          setActivePlatform(chatPlatform)
+                          setActiveAccount(a.id)
+                          onOpenChat()
+                        }}
+                        grow
+                      >
+                        查看会话
+                      </CardButton>
+                    ) : (
+                      <CardButton onClick={() => {}} disabled grow>未来接入</CardButton>
+                    )}
                     <CardButton onClick={() => setRenaming(a.id)}>改名</CardButton>
                     <CardButton
                       onClick={() => setDeleting({ id: a.id, name: a.display_name, platform: a.platform })}
@@ -159,21 +173,23 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
   )
 }
 
-function CardButton({ children, onClick, grow, danger }: {
+function CardButton({ children, onClick, grow, danger, disabled = false }: {
   children: React.ReactNode
   onClick(): void
   grow?: boolean
   danger?: boolean
+  disabled?: boolean
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className="ih-btn"
       style={{
         flex: grow ? 1 : undefined, padding: '9px 14px', whiteSpace: 'nowrap',
         borderRadius: theme.radius.pill, border: `1px solid ${theme.color.borderStrong}`,
         background: theme.color.surface,
-        color: danger ? theme.color.danger : theme.color.text,
+        color: disabled ? theme.color.textFaint : danger ? theme.color.danger : theme.color.text,
         fontSize: theme.font.size.base, fontWeight: theme.font.weight.bold,
       }}
     >

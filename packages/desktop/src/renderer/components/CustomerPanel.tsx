@@ -26,7 +26,7 @@ const PROFILE_FIELDS = [
   { key: 'other', label: '其他', hint: '不属于以上几类但值得记的' },
 ] as const
 
-export function CustomerPanel() {
+export function CustomerPanel({ nativePending = false }: { nativePending?: boolean }) {
   const conversations = useStore(s => s.conversations)
   const accounts = useStore(s => s.accounts)
   const messages = useStore(s => s.messages)
@@ -54,7 +54,13 @@ export function CustomerPanel() {
       {!conv ? (
         <>
           <SectionTitle>客户信息</SectionTitle>
-          <EmptyHint>选中一个会话后<br />这里显示该客户的资料</EmptyHint>
+          <EmptyHint>
+            {nativePending ? (
+              <>原生客户端当前会话将在 M2 同步<br />接通后这里自动跟随客户</>
+            ) : (
+              <>选中一个会话后<br />这里显示该客户的资料</>
+            )}
+          </EmptyHint>
         </>
       ) : (
         <div className="ih-scroll" style={{ flex: 1 }}>

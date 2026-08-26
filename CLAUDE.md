@@ -47,6 +47,8 @@ pnpm --filter @im-hub/server reset-account "<账号名>"  # 把某账号退回�
 `docs/superpowers/specs/2026-08-25-native-client-pivot.md`，**动这块之前先读它**。
 Telegram、Signal、WhatsApp 都保留；Zoom 延后。当前只有 Telegram 原生 webview
 骨架可运行，Signal 仍有 signal-cli 适配器，不能把“保留平台”写成“已经完成”。
+桌面端已经统一为单一“会话”入口与平台/账号两级导航；固定翻译输入坞和客户右栏
+已就位，但在 M2 原生会话与草稿桥接完成前必须保持明确禁用态/空态。
 
 ## 架构
 
