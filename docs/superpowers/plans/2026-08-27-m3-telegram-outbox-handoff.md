@@ -10,14 +10,15 @@
 - PR #16、#17、#18 均已合并；最新 `origin/main` 为 PR #18 merge commit
   `b8b2e3382714831ac3f8b016137593a083a8feeb`。
 - Issue #11、#12 均保持开放。PR #16/#17 和 Saved Messages 真实验收已经完成，不要重复。
-- M3-4 已在两个隔离 worktree 完成代码与自动验证，但真实账号故障矩阵尚未执行，因此不要关闭
-  Issue #12，也不要宣称 M3-4 完整验收。
+- M3-4 已在两个隔离 worktree 完成代码与自动验证，并在非 Saved Messages 的双人群完成一条
+  真实文本发送和多次编辑验收；完整故障矩阵仍未执行，因此不要关闭 Issue #12，也不要宣称
+  M3-4 完整验收。
 - im-hub PR #19 已创建并关联 Issue #12：
   <https://github.com/jojo8233/CLOT-imhub/pull/19>。
-- telegram-tt 实现提交为
-  `94bfc962abc942c331f607209ccb4057ae8d0880 feat: add persistent im-hub message outbox`。
-  该提交已推送到 `jojo8233/telegram-tt`：
-  <https://github.com/jojo8233/telegram-tt/commit/94bfc962abc942c331f607209ccb4057ae8d0880>。
+- telegram-tt 最新实现提交为
+  `6c8d86a33dd4db37081051ccc192a36650777f15 fix: keep Telegram edit bridge in sync`，建立在
+  `94bfc962abc942c331f607209ccb4057ae8d0880 feat: add persistent im-hub message outbox` 之上。
+  两者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
 - im-hub 实现已推送到 `codex/m3-telegram-outbox`，由 PR #19 审查；当前不自动合并或关闭 Issue。
 
 ## 2. 仓库与 worktree
@@ -38,7 +39,7 @@ telegram-tt：
 - 隔离 worktree：`/private/tmp/telegram-tt-m3-outbox`
 - 分支：`codex/m3-telegram-outbox`
 - 基线：`ba24da89abc1e56b4b8c3c68ebafa819e85e5b1d`
-- 当前提交：`94bfc962abc942c331f607209ccb4057ae8d0880`
+- 当前提交：`6c8d86a33dd4db37081051ccc192a36650777f15`
 - 远端：`imhub/codex/m3-telegram-outbox`，与当前提交精确一致
 
 `/Users/mac/Claude Code 工作区/代码/im-hub` 是带有既有用户改动的共享 workspace。本阶段只做过
@@ -60,6 +61,11 @@ telegram-tt：
 - 快照包含消息正文、方向、发送者/会话展示名、同会话 reply key、时间戳、媒体引用和最小元数据。
   不读取或持久化 token、session、二维码、验证码、2FA、API key、JWT 或 control grant。
 - scheduled/ephemeral/quick-reply 不伪装成长期已投递消息；scheduled 实际发送后以普通消息进入。
+- 异步翻译结果只在源正文仍匹配时回填；组件暂存译文也绑定源正文，连续编辑不会把上一版译文
+  显示在当前正文下方。
+- 对“本次确有内容变化、但 Telegram 返回 `MESSAGE_NOT_MODIFIED`”的非定时消息，重新读取
+  Telegram 当前消息，并以频道 `pts` 或全局 state `pts` 作为单调版本恢复中央 updater/outbox；
+  拉取或版本读取失败时仍保留原错误与回滚，不猜测成功。
 
 im-hub：
 
@@ -85,7 +91,7 @@ im-hub：
 telegram-tt：
 
 - `npm run check:ts` 通过。
-- 既有 `src/util/imhub.test.ts` 聚焦测试 1/1 通过。
+- 最终收敛代码的既有 `src/util/imhub.test.ts` 聚焦测试 1/1 通过。
 - `git diff --check` 通过。
 - 依照 telegram-tt 仓库约定，本补丁没有新增测试文件。
 
@@ -115,12 +121,35 @@ Telegram 的开发态哨兵 delete 事件：
 链路可运行，不能替代中央 Telegram updater、真实消息内容或完整故障矩阵，因此 Issue #12
 验收框仍保持未勾选。
 
-## 6. 尚未完成
+## 6. 非 Saved Messages 真实文本验收
+
+2026-08-27 在用户选定的双人 Telegram 群中完成一条固定测试消息，不重复 Saved Messages：
+
+- 原始发送 `IMHUB-M3-OUTBOX-20260827-TEXT-A` 经 local upsert、id remap 和 final upsert 后，
+  数据库按最终 `platform_message_id` 只保留 1 行，方向为 outbound/live。
+- `EDIT-3` 入库后 `edit_version=7433`；快速连续 `EDIT-4`/`EDIT-5` 最终只保留 `EDIT-5`，
+  `edit_version=7435`，证明同一消息没有新增重复行且较新 `pts` 胜出。
+- 连续编辑同时复现了旧译文短暂显示在新正文下方的竞态；telegram-tt 最新提交把翻译结果和
+  组件 fallback 都绑定到对应源正文。
+- worker 源码变更后的页面热重载不会终止既有 SharedWorker。早期 `EDIT-7` 至 `EDIT-9`
+  实际仍运行旧 worker，不能作为新修复的失败证据。完整停止并重启 Electron 后，`EDIT-10`
+  只进入一次编辑 RPC 且成功返回；服务端收到 outbox 事件，数据库仍只有 1 行，正文为
+  `EDIT-10`，`edit_version=7449`。
+- 验收期间的阶段诊断不包含正文、账号、会话或消息 id，定位后已全部删除。最终代码另外删除了
+  与中央 updater 重复的成功回包上报，只保留中央 updater 和 `MESSAGE_NOT_MODIFIED` 恢复路径。
+
+因此真实普通文本发送、final id 去重、普通群连续编辑和单调版本已覆盖；这仍不是 Issue #12
+完整故障矩阵。
+
+开发验收注意：修改 `src/api/gramjs/**` worker 代码后必须完整重启 Electron；只观察 Vite 的
+`page reload` 不足以证明新 worker 已加载。
+
+## 7. 尚未完成
 
 Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 
 1. 断网后恢复、页面刷新、Electron 进程终止和 ACK 丢失。
-2. 快速连续编辑、普通/频道删除、local-to-final remap。
+2. 普通/频道删除，以及频道编辑；普通群快速连续编辑与 local-to-final remap 已有上述证据。
 3. 图片、文件、语音等媒体引用。
 4. 两个账号同时积压时的 partition 隔离。
 5. permanent rejection、dead-letter 容量与运维恢复路径。
@@ -128,7 +157,7 @@ Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 真实矩阵可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved Messages
 验收。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于本提交。
 
-## 7. 恢复顺序
+## 8. 恢复顺序
 
 1. 读根 `AGENTS.md`、本交接和 outbox 规格。
 2. 刷新 PR #16/#17/#18、Issue #11/#12、两个仓库远端与 worktree 状态。
