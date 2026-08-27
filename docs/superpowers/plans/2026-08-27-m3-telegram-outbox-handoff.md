@@ -12,11 +12,13 @@
 - Issue #11、#12 均保持开放。PR #16/#17 和 Saved Messages 真实验收已经完成，不要重复。
 - M3-4 已在两个隔离 worktree 完成代码与自动验证，但真实账号故障矩阵尚未执行，因此不要关闭
   Issue #12，也不要宣称 M3-4 完整验收。
+- im-hub PR #19 已创建并关联 Issue #12：
+  <https://github.com/jojo8233/CLOT-imhub/pull/19>。
 - telegram-tt 实现提交为
   `94bfc962abc942c331f607209ccb4057ae8d0880 feat: add persistent im-hub message outbox`。
-  保存本文时，该提交仅存在于本地隔离分支；向 `jojo8233/telegram-tt` fork 推送需要用户对具体
-  外部远端显式授权，尚未推送。
-- im-hub 实现保存在本地 `codex/m3-telegram-outbox` 分支；保存本文时尚未推送或创建 PR。
+  该提交已推送到 `jojo8233/telegram-tt`：
+  <https://github.com/jojo8233/telegram-tt/commit/94bfc962abc942c331f607209ccb4057ae8d0880>。
+- im-hub 实现已推送到 `codex/m3-telegram-outbox`，由 PR #19 审查；当前不自动合并或关闭 Issue。
 
 ## 2. 仓库与 worktree
 
@@ -27,6 +29,7 @@ im-hub：
 - 隔离 worktree：`/private/tmp/im-hub-m3-outbox`
 - 分支：`codex/m3-telegram-outbox`
 - 基线：`b8b2e3382714831ac3f8b016137593a083a8feeb`
+- PR：<https://github.com/jojo8233/CLOT-imhub/pull/19>
 
 telegram-tt：
 
@@ -36,6 +39,7 @@ telegram-tt：
 - 分支：`codex/m3-telegram-outbox`
 - 基线：`ba24da89abc1e56b4b8c3c68ebafa819e85e5b1d`
 - 当前提交：`94bfc962abc942c331f607209ccb4057ae8d0880`
+- 远端：`imhub/codex/m3-telegram-outbox`，与当前提交精确一致
 
 `/Users/mac/Claude Code 工作区/代码/im-hub` 是带有既有用户改动的共享 workspace。本阶段只做过
 只读核对，没有修改、清理、暂存或重置其中任何内容。
@@ -105,11 +109,10 @@ Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 
 1. 读根 `AGENTS.md`、本交接和 outbox 规格。
 2. 刷新 PR #16/#17/#18、Issue #11/#12、两个仓库远端与 worktree 状态。
-3. 若用户已显式授权具体远端，推送 telegram-tt 的
-   `codex/m3-telegram-outbox` 到 `jojo8233/telegram-tt`。
-4. 确认 telegram-tt 远端提交后，把精确链接补入本交接；再提交、推送 im-hub 分支并创建关联
-   Issue #12 的 PR。Issue 保持开放，直到真实故障矩阵完成。
-5. 不操作共享 workspace 的既有用户改动，不重做 PR #16/#17 或 Saved Messages 真实验收。
+3. 检查 PR #19 的 checks/review；不要在没有新证据时关闭 Issue #12。
+4. 在明确限定安全目标后执行 Issue #12 真实故障矩阵，并把可审计结果写入 Issue；不要重复
+   Saved Messages 验收。
+5. 不操作共享 workspace 的既有用户改动，不重做 PR #16/#17。
 
 快速核对：
 
@@ -121,6 +124,7 @@ git -C /private/tmp/telegram-tt-m3-outbox rev-parse HEAD imhub/codex/m3-telegram
 gh pr view 16 --repo jojo8233/CLOT-imhub
 gh pr view 17 --repo jojo8233/CLOT-imhub
 gh pr view 18 --repo jojo8233/CLOT-imhub
+gh pr view 19 --repo jojo8233/CLOT-imhub
 gh issue view 11 --repo jojo8233/CLOT-imhub
 gh issue view 12 --repo jojo8233/CLOT-imhub
 ```
