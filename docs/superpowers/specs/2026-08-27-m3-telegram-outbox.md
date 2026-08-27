@@ -46,7 +46,8 @@ Electron 的 `persist:native-<accountId>` partition 再提供物理隔离。退�
 
 相同平台事实在刷新、重放和 ACK 丢失后得到相同 `eventId`。同账号只有一个发送循环和一个
 in-flight 事件，按首次入队顺序发送；事件间最少间隔 100ms。发送前先把 attempt 次数与下次
-重试时间写回 IndexedDB，避免崩溃把退避状态回滚。
+重试时间写回 IndexedDB，避免崩溃把退避状态回滚。发送泵自身也保持单一异步协程；IndexedDB
+等待期间到达的新调度只登记下一次延迟，不能并发读取和发送同一个队首事件。
 
 ## 4. ACK、退避与容量
 
@@ -84,6 +85,9 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
   `git diff --check` 通过。
 - telegram-tt：`npm run check:ts` 通过；既有 `src/util/imhub.test.ts` 1 个聚焦测试通过；
   `git diff --check` 通过。依照仓库约定，没有为本补丁新增测试文件。
+- 两个不进入 Telegram 的永久拒绝哨兵首次暴露并发 pump 会重复发送队首、覆盖 ACK timer 的
+  竞态；串行化发送泵后，每个事件只发送和 ACK 一次，队列从 pending 收敛到 dead-letter，等待
+  超过 10 秒不再误报 `ack_timeout`。探针记录随后精确清理，partition 恢复为空。
 
 仍需真实账号故障矩阵：断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、快速连续编辑、
 普通与频道删除、local/final remap、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。

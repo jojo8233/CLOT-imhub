@@ -12,7 +12,7 @@
 - im-hub `codex/m3-telegram-outbox` 的最后一个功能/验收提交为
   `1ddfc09e671067a84907a22d27a7a56ef357caf2`；本 checkpoint 所在提交继续推送到同一分支和
   PR #19。telegram-tt 分支精确停在
-  `6c8d86a33dd4db37081051ccc192a36650777f15`。
+  `c60343e98a05936cab898d3dc08069d5e7524e9b`。
 - 两个隔离 worktree 均无未提交改动，并分别与
   `origin/codex/m3-telegram-outbox`、`imhub/codex/m3-telegram-outbox` 一致。
 - PR #19 为 OPEN、CLEAN、非 Draft，暂无 checks 或 review decision；Issue #11/#12 均 OPEN。
@@ -24,7 +24,7 @@
   暂存或重置。后续继续使用隔离 worktree；如果 `/private/tmp` worktree 已被系统清理，从对应远端
   分支重新创建，不要转而在共享 workspace 工作。
 - 下一主线是 Issue #12 剩余真实故障矩阵。优先在再次确认安全目标后覆盖普通/频道删除与频道
-  编辑，再做媒体、多账号 partition、permanent rejection/dead-letter；不要把 M3-5 shadow
+  编辑，再做媒体、多账号 partition、dead-letter 容量与运维恢复；不要把 M3-5 shadow
   reconciliation 混入 PR #19。
 - 修改 `src/api/gramjs/**` 后必须完整停止并重启 Electron，不能把 Vite `page reload` 当成
   SharedWorker 已更新的证据。
@@ -53,9 +53,10 @@ Saved Messages、普通群 TEXT-A/EDIT-10 验收。以最新交接记录为事�
 - im-hub PR #19 已创建并关联 Issue #12：
   <https://github.com/jojo8233/CLOT-imhub/pull/19>。
 - telegram-tt 最新实现提交为
-  `6c8d86a33dd4db37081051ccc192a36650777f15 fix: keep Telegram edit bridge in sync`，建立在
+  `c60343e98a05936cab898d3dc08069d5e7524e9b im-hub Outbox: Serialize delivery pump`，建立在
+  `6c8d86a33dd4db37081051ccc192a36650777f15 fix: keep Telegram edit bridge in sync` 与
   `94bfc962abc942c331f607209ccb4057ae8d0880 feat: add persistent im-hub message outbox` 之上。
-  两者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
+  三者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
 - im-hub 实现已推送到 `codex/m3-telegram-outbox`，由 PR #19 审查；当前不自动合并或关闭 Issue。
 
 ## 2. 仓库与 worktree
@@ -76,7 +77,7 @@ telegram-tt：
 - 隔离 worktree：`/private/tmp/telegram-tt-m3-outbox`
 - 分支：`codex/m3-telegram-outbox`
 - 基线：`ba24da89abc1e56b4b8c3c68ebafa819e85e5b1d`
-- 当前提交：`6c8d86a33dd4db37081051ccc192a36650777f15`
+- 当前提交：`c60343e98a05936cab898d3dc08069d5e7524e9b`
 - 远端：`imhub/codex/m3-telegram-outbox`，与当前提交精确一致
 
 `/Users/mac/Claude Code 工作区/代码/im-hub` 是带有既有用户改动的共享 workspace。本阶段只做过
@@ -92,6 +93,8 @@ telegram-tt：
   `editVersion`，避免同一秒快速连续编辑失序。
 - pending 与 dead-letter 使用账号 partition 内的 IndexedDB；同账号单 in-flight，ACK 后删除，
   ACK 超时或 retryable 拒绝按 1–60 秒指数退避，永久拒绝移入 dead-letter。
+- IndexedDB 等待期间的新入队只记录下一次调度请求；同账号始终只有一个异步发送泵，避免两个
+  pump 同时读取并重复发送同一个队首事件，也避免 ACK 定时器句柄相互覆盖。
 - `eventId` 由账号与规范事件语义生成稳定 SHA-256 截断值；刷新、重放和 ACK 丢失不会换 id。
 - pending/dead-letter 各限 1000；同毫秒事件使用单调入队时间保持顺序。dead-letter 满时永久失败
   记录保留在 pending，不静默丢失。
@@ -131,6 +134,7 @@ telegram-tt：
 - 最终收敛代码的既有 `src/util/imhub.test.ts` 聚焦测试 1/1 通过。
 - `git diff --check` 通过。
 - 依照 telegram-tt 仓库约定，本补丁没有新增测试文件。
+- 单泵竞态修复后再次运行 `npm run check:ts`、既有聚焦测试 1/1 与 `git diff --check`，均通过。
 
 上述自动测试没有加载或打印 `.env`、平台会话目录、二维码、验证码或 2FA。全量 im-hub 测试
 直接使用测试自身配置；没有把测试指向开发库或生产库。下述本地探针经用户授权只把既有环境
@@ -158,7 +162,29 @@ Telegram 的开发态哨兵 delete 事件：
 链路可运行，不能替代中央 Telegram updater、真实消息内容或完整故障矩阵，因此 Issue #12
 验收框仍保持未勾选。
 
-## 6. 非 Saved Messages 真实文本验收
+## 6. Permanent rejection 与单泵竞态探针
+
+2026-08-27 使用两个固定、虚构且跨会话的 remap 事件验证 permanent rejection。两个事件只进入
+telegram-tt IndexedDB、typed bridge 与本机 `/api/native/events`；服务端在 canonical 校验阶段
+返回 422，不进入 Telegram，也不创建或修改数据库消息。
+
+首次运行暴露了真实竞态：两个事件连续入队时，第一个 pump 尚在等待 IndexedDB，第二个 pump
+也读取了同一个队首，导致首个事件产生两次 HTTP 请求和两次 ACK；后一个 ACK timer 覆盖前一个
+句柄，队列已经 `pending=0, dead=2` 后仍误报 `ack_timeout`。
+
+telegram-tt `c60343e98a05936cab898d3dc08069d5e7524e9b` 将异步 pump 串行化并保留等待中的调度请求。
+完整重启 Electron 后用相同两个事件回归：每个事件各产生一次 guest event、一次 HTTP 422 和
+一次 permanent ACK；状态按 `pending=2/dead=0`、`1/1`、`0/2` 收敛，第二个永久失败没有被第一个
+阻塞。继续等待超过 ACK 的 10 秒上限，没有再出现虚假 timeout。
+
+探针使用无效占位 Telegram API 参数启动 Vite，没有读取 telegram-tt `.env`，也没有建立可用的
+Telegram 外发能力。两个固定 eventId 对应的 pending/dead-letter 记录随后已精确清理，partition
+恢复 `pending=0, dead=0`；临时注入与匿名计数诊断均已移除，未进入提交。
+
+该结果覆盖 permanent rejection 的移出队首、后续事件继续发送以及并发调度故障，不覆盖
+dead-letter 满容量和运维恢复路径，也不替代真实频道、媒体或多账号验收。
+
+## 7. 非 Saved Messages 真实文本验收
 
 2026-08-27 在用户选定的双人 Telegram 群中完成一条固定测试消息，不重复 Saved Messages：
 
@@ -181,7 +207,7 @@ Telegram 的开发态哨兵 delete 事件：
 开发验收注意：修改 `src/api/gramjs/**` worker 代码后必须完整重启 Electron；只观察 Vite 的
 `page reload` 不足以证明新 worker 已加载。
 
-## 7. 尚未完成
+## 8. 尚未完成
 
 Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 
@@ -189,12 +215,12 @@ Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 2. 普通/频道删除，以及频道编辑；普通群快速连续编辑与 local-to-final remap 已有上述证据。
 3. 图片、文件、语音等媒体引用。
 4. 两个账号同时积压时的 partition 隔离。
-5. permanent rejection、dead-letter 容量与运维恢复路径。
+5. dead-letter 容量与运维恢复路径；基础 permanent rejection 与后续事件继续发送已有上述证据。
 
 真实矩阵可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved Messages
 验收。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于本提交。
 
-## 8. 恢复顺序
+## 9. 恢复顺序
 
 1. 读根 `AGENTS.md`、本交接和 outbox 规格。
 2. 刷新 PR #16/#17/#18、Issue #11/#12、两个仓库远端与 worktree 状态。
