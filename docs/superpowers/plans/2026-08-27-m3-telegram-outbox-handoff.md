@@ -1,18 +1,18 @@
 # M3-4 Telegram 持久事件 outbox 交接记录
 
-日期：2026-08-27
+日期：2026-08-28
 
 用途：这是 M3-4 代码实现和自动验证后的最新恢复入口。恢复时仍须重新核对 Git、GitHub 与
 真实账号状态；本文不替代实时检查，也不把尚未完成的真实故障矩阵写成已验收。
 
 ## 0. 清理上下文前 checkpoint
 
-截至 2026-08-27 本次交接保存时：
+截至 2026-08-28 本次交接保存时：
 
-- im-hub `codex/m3-telegram-outbox` 在本轮删除探针前的最后一个验收/交接提交为
-  `de9ba1242bedad2efa99e11ba680732e2d27a04f`；本 checkpoint 所在提交继续推送到同一分支和
+- im-hub `codex/m3-telegram-outbox` 在本轮恢复前的交接提交为
+  `62758708482a698afea9bcb50b7c62a6ccccb095`；本 checkpoint 所在提交继续推送到同一分支和
   PR #19。telegram-tt 分支精确停在
-  `c60343e98a05936cab898d3dc08069d5e7524e9b`。
+  `675df80d8d4b287bd1afc2dfe544b70d796581f0`。
 - 两个隔离 worktree 均无未提交改动，并分别与
   `origin/codex/m3-telegram-outbox`、`imhub/codex/m3-telegram-outbox` 一致。
 - PR #19 为 OPEN、CLEAN、非 Draft，暂无 checks 或 review decision；Issue #11/#12 均 OPEN。
@@ -20,16 +20,21 @@
 - 本轮 Electron、telegram-tt Vite 和 im-hub server 已停止；下次不能假设任何开发进程仍在运行。
 - 真实普通群文本发送、local-to-final remap、单行去重、快速连续编辑和单调 `editVersion` 已验收；
   PR #16/#17 与 Saved Messages 真实验收也早已完成，全部不要重复。
-- 普通群删除已经对之前 M3 创建的唯一 `EDIT-10` 测试消息做过两次“对所有人删除”确认，其中
-  一次在完整重启 Electron 后执行；消息仍留在 Telegram，且服务端没有收到
-  `/api/native/events`。这不是删除或 outbox 成功证据，后续须先解决/绕过 telegram-tt 删除路径
-  没有产生平台更新的问题，不能继续反复点击同一消息。
+- 旧 `EDIT-10` 的两次删除确认实际已被 Telegram 平台异步执行；此前看似“消息仍在”的直接原因是
+  GramJS worker 在网络接收返回空数据后访问 `body.length` 崩溃，客户端没有及时消费删除更新。
+  `675df80d8d4b287bd1afc2dfe544b70d796581f0` 将空接收纳入既有重连路径并增加回归测试。完整冷启动
+  后 Telegram 保持稳定，旧删除更新随后进入 `/api/native/events`，数据库聚合从 live 1、deleted 0
+  收敛为 live 0、deleted 1；不要再操作 `EDIT-10`。
+- 为验证修复后的平台删除，只在同一用户选定双人群发送了一条固定的删除专用标记，没有编辑，也
+  没有复跑普通文本验收。唯一勾选的“对所有人删除”确认后标记从 Telegram 消失，outbox 为
+  `pending=0, dead=0`。该新标记未进入 im-hub 数据库，因此它只证明平台删除路径恢复，不能单独
+  作为新消息 upsert/delete 落库闭环证据；旧 `EDIT-10` 的补传才是本轮可审计的服务端删除证据。
 - 共享 workspace `/Users/mac/Claude Code 工作区/代码/im-hub` 的既有用户改动从未被修改、清理、
   暂存或重置。后续继续使用隔离 worktree；如果 `/private/tmp` worktree 已被系统清理，从对应远端
   分支重新创建，不要转而在共享 workspace 工作。
-- 下一主线是 Issue #12 剩余真实故障矩阵。优先在再次确认安全目标后覆盖普通/频道删除与频道
-  编辑，再做媒体、多账号 partition、dead-letter 容量与运维恢复；不要把 M3-5 shadow
-  reconciliation 混入 PR #19。
+- 下一主线是 Issue #12 剩余真实故障矩阵。普通群删除已有恢复证据；优先在再次确认安全目标后
+  覆盖频道删除与频道编辑，再做媒体、多账号 partition、dead-letter 容量与运维恢复；不要把
+  M3-5 shadow reconciliation 混入 PR #19。
 - 修改 `src/api/gramjs/**` 后必须完整停止并重启 Electron，不能把 Vite `page reload` 当成
   SharedWorker 已更新的证据。
 
@@ -57,10 +62,11 @@ Saved Messages、普通群 TEXT-A/EDIT-10 验收。以最新交接记录为事�
 - im-hub PR #19 已创建并关联 Issue #12：
   <https://github.com/jojo8233/CLOT-imhub/pull/19>。
 - telegram-tt 最新实现提交为
-  `c60343e98a05936cab898d3dc08069d5e7524e9b im-hub Outbox: Serialize delivery pump`，建立在
+  `675df80d8d4b287bd1afc2dfe544b70d796581f0 fix: reconnect after empty GramJS receive`，建立在
+  `c60343e98a05936cab898d3dc08069d5e7524e9b im-hub Outbox: Serialize delivery pump`、
   `6c8d86a33dd4db37081051ccc192a36650777f15 fix: keep Telegram edit bridge in sync` 与
   `94bfc962abc942c331f607209ccb4057ae8d0880 feat: add persistent im-hub message outbox` 之上。
-  三者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
+  四者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
 - im-hub 实现已推送到 `codex/m3-telegram-outbox`，由 PR #19 审查；当前不自动合并或关闭 Issue。
 
 ## 2. 仓库与 worktree
@@ -81,7 +87,7 @@ telegram-tt：
 - 隔离 worktree：`/private/tmp/telegram-tt-m3-outbox`
 - 分支：`codex/m3-telegram-outbox`
 - 基线：`ba24da89abc1e56b4b8c3c68ebafa819e85e5b1d`
-- 当前提交：`c60343e98a05936cab898d3dc08069d5e7524e9b`
+- 当前提交：`675df80d8d4b287bd1afc2dfe544b70d796581f0`
 - 远端：`imhub/codex/m3-telegram-outbox`，与当前提交精确一致
 
 `/Users/mac/Claude Code 工作区/代码/im-hub` 是带有既有用户改动的共享 workspace。本阶段只做过
@@ -110,6 +116,8 @@ telegram-tt：
 - 对“本次确有内容变化、但 Telegram 返回 `MESSAGE_NOT_MODIFIED`”的非定时消息，重新读取
   Telegram 当前消息，并以频道 `pts` 或全局 state `pts` 作为单调版本恢复中央 updater/outbox；
   拉取或版本读取失败时仍保留原错误与回滚，不猜测成功。
+- GramJS `_recvLoop` 把连接返回空数据视为连接错误，复用既有 reconnect 流程；不再让
+  `body.length` 的未捕获异常终止 worker 并使客户端停在 `waiting for network`。
 
 im-hub：
 
@@ -135,9 +143,10 @@ im-hub：
 telegram-tt：
 
 - `npm run check:ts` 通过。
-- 最终收敛代码的既有 `src/util/imhub.test.ts` 聚焦测试 1/1 通过。
+- `src/lib/gramjs/network/MTProtoSender.test.ts` 新增空接收重连回归；与既有
+  `src/lib/gramjs/extensions/PromisedWebSockets.test.ts`、`src/util/imhub.test.ts` 一起为 3 个文件、
+  3 个测试通过。
 - `git diff --check` 通过。
-- 依照 telegram-tt 仓库约定，本补丁没有新增测试文件。
 - 单泵竞态修复后再次运行 `npm run check:ts`、既有聚焦测试 1/1 与 `git diff --check`，均通过。
 
 上述自动测试没有加载或打印 `.env`、平台会话目录、二维码、验证码或 2FA。全量 im-hub 测试
@@ -216,8 +225,7 @@ dead-letter 满容量和运维恢复路径，也不替代真实频道、媒体�
 Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 
 1. 断网后恢复、页面刷新、Electron 进程终止和 ACK 丢失。
-2. 普通/频道删除，以及频道编辑；普通群删除已安全复现“平台消息未删除、没有 outbox 事件”的
-   客户端阻断，普通群快速连续编辑与 local-to-final remap 已有上述成功证据。
+2. 频道删除与频道编辑；普通群删除、快速连续编辑与 local-to-final remap 已有上述成功证据。
 3. 图片、文件、语音等媒体引用。
 4. 两个账号同时积压时的 partition 隔离。
 5. dead-letter 容量与运维恢复路径；基础 permanent rejection 与后续事件继续发送已有上述证据。
@@ -225,29 +233,38 @@ Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 真实矩阵可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved Messages
 验收。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于本提交。
 
-## 9. 普通群删除安全探针与目标发现
+## 9. 普通群删除故障定位与恢复验证
 
-2026-08-27 在用户明确授权后，只把 telegram-tt 仓库既有 `.env` 加载到隔离 worktree 的 Vite
-进程；没有输出、复制或记录任何变量值。外部操作严格限定为此前 M3 验收创建的唯一
-`EDIT-10` 自己发出的测试消息，不发送新的普通群文本，也不触碰其他消息。
+2026-08-28 在用户明确要求继续后，只把既有环境加载到隔离 worktree 进程；没有输出、复制或
+记录任何变量值。先保持外部操作只读，沿原有 `EDIT-10` 证据追踪 renderer、GramJS worker、
+typed bridge、HTTP 与数据库状态。
 
-- DOM 核验当前会话只有一个正文含 `EDIT-10` 的 `.Message.own`；删除菜单与最终弹窗各只有一个
-  可见 Delete，且 `Delete for everyone` 唯一复选框保持勾选。
-- 删除流程先遇到开发态 worker 异常提示
-  `Cannot read properties of undefined (reading 'length')`，Telegram 一度显示
-  `waiting for network`。关闭提示后第一次确认删除，目标消息仍存在，服务端没有收到
-  `/api/native/events`。
-- 完整停止并重启 Electron、确认 Telegram 会话恢复后，再次打开同一个唯一消息并重新核验上述
-  条件。第二次确认后目标标记仍可见，服务端仍没有收到事件，因此没有任何 deletion 进入
-  im-hub。这条结果只能证明删除动作在 Telegram 客户端/平台更新之前被阻断，不能用来验收
-  `message.deleted` outbox。
-- 安全目标发现只返回类型和权限计数，不输出名称或 id：当前会话是
-  `chatTypeBasicGroup`，但当前账号不是 creator；已加载状态中频道数为 0，且聊天列表未完整加载。
-  因而没有可证明为当前账号自建并可清理的频道/群目标。本轮未执行频道编辑/删除、图片、文件或
-  语音外发，也没有为验收新建频道或扩大外部影响。
+- 旧 `EDIT-10` 最终从 Telegram 消失，说明此前删除 RPC 已在平台侧异步成功；当时 outbox 为
+  `pending=0, dead=0`，数据库仍为 `1 live / 0 deleted`，表明客户端尚未消费/上报对应 update。
+- 临时只传递异常 stack 的诊断把故障固定到 `MTProtoSender._recvLoop`：活动连接的 `recv()` 在
+  断开边界返回了 `undefined`，随后对 `body.length` 的访问形成未捕获异常，worker 退出并进入
+  `waiting for network`。诊断代码定位后全部撤销，未进入提交。
+- telegram-tt `675df80d8d4b287bd1afc2dfe544b70d796581f0` 在 `recv()` 后检查空数据并抛入现有 catch，
+  由 `handleConnectionError()` 执行 reconnect；对应单元测试证明空接收会调用重连而不是从
+  `_recvLoop` 泄漏异常。
+- 完整停止并重启 Electron 后连接保持稳定，没有再次出现同类未捕获 worker 异常。服务端随后
+  收到一次 `/api/native/events` 200，数据库中的 `EDIT-10` 由 `1 live / 0 deleted` 收敛为
+  `0 live / 1 deleted`。结合新标记没有任何数据库行，这是旧删除 update 在恢复连接后补传的
+  证据；该结论不依赖消息或会话 id，也没有把 M3-5 主动 shadow reconciliation 混入 PR。
+- 为验证修复后的平台删除，只在同一用户选定的双人群发送固定标记
+  `IMHUB-M3-OUTBOX-20260828-DELETE-1` 作为一次性删除前置条件，没有编辑，也没有重复
+  TEXT-A/EDIT-10 验收。确认该标记是唯一 final outgoing 消息、删除弹窗只有一个勾选的
+  `Delete for everyone` 后，只确认一次。标记随后从 Telegram DOM 消失，Composer 为空，outbox
+  收敛为 `pending=0, dead=0`。
+- 新标记在 im-hub 数据库中为 0 行，因此本轮不把它宣称成新的 upsert/delete 服务端闭环；它只
+  验证平台删除路径在 worker 修复后可用。旧 `EDIT-10` 的 delayed update 则覆盖了实际
+  `message.deleted` 经 bridge 到服务端落库。后续若要解释新标记为什么未进入中央 updater，须先
+  做不外发的状态/单元诊断，不能再发送或删除同类消息来碰运气。
+- 安全目标发现仍只有非 creator 的普通群，没有可证明为当前账号自建并可清理的频道/群。本轮未
+  执行频道编辑/删除、图片、文件或语音外发，也没有新建频道或扩大外部影响。
 
-最终确认没有发生平台删除；所有 CDP/截图/调试端口临时文件和代码均已移除，server、Vite、
-Electron 已停止，两个隔离 worktree 在写入本 checkpoint 前恢复为干净状态。
+所有阶段诊断代码均已撤销；CDP、截图与调试端口临时文件在收尾时精确删除，server、Vite、
+Electron 已停止。telegram-tt 修复已推送，im-hub 仅保留本交接与规格更新等待提交。
 
 ## 10. 恢复顺序
 

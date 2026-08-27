@@ -78,29 +78,31 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
 
 ## 6. 验证与剩余边界
 
-2026-08-27 自动验证结果：
+截至 2026-08-28 的验证结果：
 
 - im-hub：`pnpm typecheck` 通过；desktop 9 个测试文件、65 个测试通过；全量
   `pnpm test` 为 34 个文件、331 个测试通过、1 个既有 todo；desktop build 通过；
   `git diff --check` 通过。
-- telegram-tt：`npm run check:ts` 通过；既有 `src/util/imhub.test.ts` 1 个聚焦测试通过；
-  `git diff --check` 通过。依照仓库约定，没有为本补丁新增测试文件。
+- telegram-tt：`npm run check:ts` 通过；空接收重连、既有 WebSocket 握手与 im-hub bridge 共
+  3 个聚焦测试通过；`git diff --check` 通过。
 - 两个不进入 Telegram 的永久拒绝哨兵首次暴露并发 pump 会重复发送队首、覆盖 ACK timer 的
   竞态；串行化发送泵后，每个事件只发送和 ACK 一次，队列从 pending 收敛到 dead-letter，等待
   超过 10 秒不再误报 `ack_timeout`。探针记录随后精确清理，partition 恢复为空。
-- 真实普通群删除探针只选择此前 M3 创建且可唯一识别的自己发出的测试消息，并两次确认
-  `Delete for everyone`，其中一次在完整重启 Electron 后执行。目标消息仍存在，服务端也没有
-  收到 `/api/native/events`；流程期间还出现开发态 worker 的
-  `Cannot read properties of undefined (reading 'length')` 和短暂 `waiting for network`。因此删除
-  在 Telegram 客户端/平台更新之前被阻断，这不是 `message.deleted` outbox 成功或失败的传输
-  证据。
+- 真实普通群删除探针确认旧删除 RPC 已在 Telegram 平台侧异步成功；未及时回传的根因是
+  GramJS `MTProtoSender._recvLoop` 在连接 `recv()` 返回空数据后访问 `body.length`，未捕获异常
+  终止 worker 并显示 `waiting for network`。telegram-tt
+  `675df80d8d4b287bd1afc2dfe544b70d796581f0` 把空数据纳入既有 reconnect 路径并增加单元回归。
+- 完整冷启动后旧 `EDIT-10` 删除 update 经 `/api/native/events` 200 到达，数据库从
+  `1 live / 0 deleted` 收敛为 `0 live / 1 deleted`。同一安全群中的一条删除专用新标记只确认
+  一次“对所有人删除”后也从 Telegram 消失，outbox 为 `pending=0, dead=0`；但新标记没有中央
+  数据库行，因此它只作为平台删除恢复证据，不伪装成新消息的完整 bridge 落库验收。
 - 安全目标发现确认当前普通群不是当前账号创建，已加载状态没有频道，且列表尚未完整加载；没有
   可证明为自建并可清理的频道/群。本轮没有执行频道编辑/删除或媒体外发，也没有创建新频道。
 
-仍需真实账号故障矩阵：断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、普通与频道删除、
-频道编辑、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。快速连续编辑和
-local/final remap 已有成功证据；普通群删除已有客户端阻断证据，但尚未产生可供 outbox 验收的
-平台 update。
+仍需真实账号故障矩阵：断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、频道删除与频道
+编辑、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。快速连续编辑、local/final
+remap 和普通群删除已有成功证据；删除专用新标记未进入中央 updater 的原因仍须用不外发诊断
+解释，不能把平台侧消失写成新的 upsert/delete 数据库闭环。
 在这些证据写入 Issue #12 前，不关闭 Issue，也不宣称 M3-4 完整验收。
 
 M3-5 仍负责 TDLib 与 telegram-tt 的 shadow reconciliation、历史缺口扫描，以及客户端未观察到
