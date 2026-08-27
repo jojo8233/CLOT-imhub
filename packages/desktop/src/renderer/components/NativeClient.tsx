@@ -69,6 +69,42 @@ export function nativeAccountControllable(
     && user.role !== 'auditor'
 }
 
+interface NativeWebviewLoadProbe {
+  getURL(): string
+  getWebContentsId(): number
+  isLoading(): boolean
+}
+
+/**
+ * React 的 effect 可能在很快的本机页面已经触发 dom-ready 后才挂上监听器。
+ * 这时 webview 已经可用，不能继续等到二十秒超时。
+ */
+export function nativeWebviewAlreadyLoaded(webview: NativeWebviewLoadProbe, src: string): boolean {
+  try {
+    return webview.getWebContentsId() > 0
+      && !webview.isLoading()
+      && new URL(webview.getURL()).origin === new URL(src).origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 同一账号的 control grant 是单活版本：每次签发都会立即让上一份失效。
+ * 因此 dom-ready、身份上报和 StrictMode 即使同时触发，也只能共用一次签发。
+ */
+export function createSingleFlight<T>(operation: () => Promise<T>): () => Promise<T> {
+  let active: Promise<T> | null = null
+  return () => {
+    if (active) return active
+    const current = operation().finally(() => {
+      if (active === current) active = null
+    })
+    active = current
+    return current
+  }
+}
+
 /**
  * 当前宿主是否支持 <webview>。
  *
@@ -218,6 +254,8 @@ function WebviewPane({ accountId, src, visible }: {
     let disposed = false
     let grantRefreshTimer: ReturnType<typeof setTimeout> | null = null
     let provisionGeneration = 0
+    let readyHandled = false
+    let hasUsableGrant = false
 
     const currentTarget = () => {
       const guestWebContentsId = guestWebContentsIdRef.current
@@ -226,18 +264,10 @@ function WebviewPane({ accountId, src, visible }: {
 
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
+      hasUsableGrant = control.expiresAt !== null && control.state !== 'blocked'
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
-        const target = currentTarget()
-        if (target) {
-          void nativeControl.sendCommand(target, {
-            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
-            type: 'bridge.request-state',
-          }).catch(() => {
-            useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端状态同步失败')
-          })
-        }
         return
       }
       const message = control.message ?? '账号控制尚未就绪'
@@ -258,7 +288,7 @@ function WebviewPane({ accountId, src, visible }: {
       grantRefreshTimer = setTimeout(() => { void provisionControl() }, delay)
     }
 
-    const provisionControl = async (): Promise<void> => {
+    const provisionControl = createSingleFlight(async (): Promise<void> => {
       const target = currentTarget()
       if (!target || disposed) return
       const generation = ++provisionGeneration
@@ -271,6 +301,7 @@ function WebviewPane({ accountId, src, visible }: {
         scheduleGrantRefresh(grant.expiresAt)
       } catch {
         if (disposed || generation !== provisionGeneration) return
+        hasUsableGrant = false
         setControlError('账号控制授权建立失败，请确认服务端账号已连接')
         useStore.getState().setNativeBridgeConnection(
           accountId,
@@ -278,9 +309,10 @@ function WebviewPane({ accountId, src, visible }: {
           '账号控制授权建立失败，请确认服务端账号已连接',
         )
       }
-    }
+    })
 
     const onStartLoading = (): void => {
+      readyHandled = false
       provisionGeneration += 1
       if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
       const target = currentTarget()
@@ -288,6 +320,7 @@ function WebviewPane({ accountId, src, visible }: {
       setState('loading')
       setDetail('')
       setControlError(null)
+      hasUsableGrant = false
       lastContextRevisionRef.current = -1
       useStore.getState().setNativeAccountIdentity(accountId, null)
       useStore.getState().setNativeContext(accountId, null)
@@ -295,7 +328,8 @@ function WebviewPane({ accountId, src, visible }: {
     }
 
     const onReady = (): void => {
-      const webview = el as unknown as { getURL(): string; getWebContentsId(): number }
+      if (readyHandled) return
+      const webview = el as unknown as NativeWebviewLoadProbe
       try {
         if (new URL(webview.getURL()).origin !== new URL(src).origin) throw new Error('unexpected origin')
         guestWebContentsIdRef.current = webview.getWebContentsId()
@@ -306,6 +340,7 @@ function WebviewPane({ accountId, src, visible }: {
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端来源校验失败')
         return
       }
+      readyHandled = true
       setState('ready')
       void provisionControl()
     }
@@ -344,7 +379,7 @@ function WebviewPane({ accountId, src, visible }: {
       }
       if (event.type === 'account.identity') {
         useStore.getState().setNativeAccountIdentity(accountId, event.platformAccountExternalId)
-        void provisionControl()
+        if (!hasUsableGrant) void provisionControl()
         return
       }
       if (event.type === 'account.signed-out') {
@@ -461,8 +496,10 @@ function WebviewPane({ accountId, src, visible }: {
     const unregisterTarget = registerNativeCommandTarget(accountId, commandTarget)
     el.addEventListener('did-start-loading', onStartLoading)
     el.addEventListener('dom-ready', onReady)
+    el.addEventListener('did-stop-loading', onReady)
     el.addEventListener('did-fail-load', onFail)
     el.addEventListener('console-message', onConsole)
+    if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)) onReady()
     return () => {
       disposed = true
       provisionGeneration += 1
@@ -474,6 +511,7 @@ function WebviewPane({ accountId, src, visible }: {
       removeStateListener()
       el.removeEventListener('did-start-loading', onStartLoading)
       el.removeEventListener('dom-ready', onReady)
+      el.removeEventListener('did-stop-loading', onReady)
       el.removeEventListener('did-fail-load', onFail)
       el.removeEventListener('console-message', onConsole)
     }

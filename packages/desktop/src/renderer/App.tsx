@@ -12,7 +12,7 @@ import {
 import { useStore } from './store.js'
 import { AccountTabs } from './components/AccountTabs.js'
 import { AccountsView } from './components/AccountsView.js'
-import { AddAccountDialog } from './components/AddAccountDialog.js'
+import { AddAccountDialog, RelinkAccountDialog } from './components/AddAccountDialog.js'
 import { NativeConversationWorkspace } from './components/NativeConversationWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
@@ -37,6 +37,11 @@ export function App() {
   const [view, setView] = useState<ViewKey>('chat')
   const [addOpen, setAddOpen] = useState(false)
   const [addPlatform, setAddPlatform] = useState<ChatPlatform>('telegram')
+  const [relinkAccount, setRelinkAccount] = useState<{
+    id: string
+    platform: ChatPlatform
+    displayName: string
+  } | null>(null)
   // 整排的宽度。只用来决定功能中心要不要强制收成图标栏——
   // 三栏自己的宽度由 ChatWorkspace 量，两处各管各的，不互相牵连。
   const [rowWidth, setRowWidth] = useState(0)
@@ -321,6 +326,7 @@ export function App() {
           {view !== 'chat' && (
             <AccountsView
               onOpenChat={() => setView('chat')}
+              onRelink={setRelinkAccount}
               onAddAccount={() => {
                 setAddPlatform(activePlatform)
                 setAddOpen(true)
@@ -332,6 +338,9 @@ export function App() {
 
       {addOpen && (
         <AddAccountDialog initialPlatform={addPlatform} onClose={() => setAddOpen(false)} />
+      )}
+      {relinkAccount && (
+        <RelinkAccountDialog account={relinkAccount} onClose={() => setRelinkAccount(null)} />
       )}
     </div>
   )

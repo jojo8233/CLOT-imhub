@@ -1,6 +1,7 @@
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
 import { ipcMain, session, webContents } from 'electron'
 import {
+  NATIVE_BRIDGE_PROTOCOL_VERSION,
   NATIVE_CONTROL_AUTH_SCHEME,
   type NativeControlGrantVerification,
   type NativeControlStateUpdate,
@@ -111,6 +112,15 @@ export class NativeControlHost {
     if (!decision.state) throw new NativeControlRegistryError('账号控制状态不可用')
     this.sendState(guest, decision.state)
     if (decision.grantToRevoke) void this.revokeGrant(decision.grantToRevoke)
+    if (decision.state.state !== 'blocked') {
+      // guest 可能早于 grant 建立就上报过身份。由已验证的主进程在配置完成后
+      // 主动要求重放身份、上下文和 composer，避免 waiting 状态无从推进；
+      // renderer 不再在每个 ready 上重复请求，因而不会形成 ready/identity 闭环。
+      guest.contents.send(COMMAND_CHANNEL, {
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'bridge.request-state',
+      } satisfies NativeHostCommand)
+    }
     return decision.state
   }
 
@@ -172,11 +182,17 @@ export class NativeControlHost {
     if (!guest || guest.contents !== event.sender) return
     const nativeEvent = parseNativeGuestEvent(value)
     if (!nativeEvent) {
-      console.error(`[native-control:${guest.accountId.slice(0, 8)}] 已拒绝无效 guest 事件`)
+      const eventType = record(value) && typeof value.type === 'string' ? value.type : 'unknown'
+      console.error(`[native-control:${guest.accountId.slice(0, 8)}] 已拒绝无效 guest 事件（${eventType}）`)
       this.sendState(guest, blockedState(guest.accountId, '原生客户端发送了无效桥接事件'))
       return
     }
     const decision = this.registry.observeGuestEvent(event.sender.id, guest.accountId, nativeEvent)
+    if (nativeEvent.type === 'command.result' && !nativeEvent.ok) {
+      console.error(
+        `[native-control:${guest.accountId.slice(0, 8)}] ${nativeEvent.command} 失败（${nativeEvent.error?.code ?? 'unknown'}）`,
+      )
+    }
     if (decision.state) this.sendState(guest, decision.state)
     if (decision.forward) this.sendGuestEvent(guest, nativeEvent)
     if (nativeEvent.type === 'account.signed-out') {

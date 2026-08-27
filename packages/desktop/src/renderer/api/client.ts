@@ -113,7 +113,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     res = await fetch(`${BASE}${path}`, {
       ...init,
       headers: {
-        'Content-Type': 'application/json',
+        // Fastify 会把“声明 application/json 但没有 body”的 POST 当成空 JSON，
+        // 在进入路由前直接返回 400。只有真的发送 body 时才声明 JSON。
+        ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}),
         ...init.headers,
       },
