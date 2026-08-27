@@ -7,15 +7,15 @@
 
 ## 1. 保存时结论
 
-M3-3 主实现 PR #16 已于 2026-08-27 合并到 `main`，merge commit 为
-`c8249dd1e179d693449c549a8374806cc27f8a76`。随后已经用真实 Telegram 账号完成一次
+M3-3 主实现 PR #16 与真实验收修复 PR #17 都已合并到 `main`；对应 merge commit 分别为
+`c8249dd1e179d693449c549a8374806cc27f8a76` 和
+`a7fa098dadb8641da5e43369c5d779d663eee8b5`。已经用真实 Telegram 账号完成一次
 Saved Messages/self-chat 验收：外层中文翻译、原生草稿写入、实际发送、canonical message id
 回传，以及首次等待超时后使用同一 attempt 恢复结果均通过。
 
 真实验收中发现并修复了弱网 WebSocket 误超时、control grant 并发失效、状态重放闭环、
 Saved Messages 路由早于 chat 实体，以及 attempt 早于本地消息关联完成就 seal 的竞态。
-telegram-tt 修复已推送到 fork 的既有分支；im-hub 宿主修复位于
-`codex/m3-telegram-composer-real-e2e-fix`。
+telegram-tt 修复已推送到 fork 的既有分支；im-hub 宿主修复已经随 PR #17 进入 `main`。
 
 Issue #11 仍保持开放，因为 private/group/channel/topic、附件、定时发送和多账号等真实矩阵
 尚未完成。不要把本次 Saved Messages 通过扩大表述成完整矩阵通过；Issue #12 也仍保持开放。
@@ -28,23 +28,27 @@ Issue #11 仍保持开放，因为 private/group/channel/topic、附件、定时
   `6c9b79745197060bacd081cba9afa62505d06431`，merge commit
   `c8249dd1e179d693449c549a8374806cc27f8a76`。
   链接：<https://github.com/jojo8233/CLOT-imhub/pull/16>
-- PR #17：承载本次真实验收发现的 im-hub 宿主修复；恢复时重新核对是否已经合并。
+- PR #17：`MERGED`，合并时间 `2026-08-27T01:35:52Z`，merge commit
+  `a7fa098dadb8641da5e43369c5d779d663eee8b5`。承载本次真实验收发现的 im-hub 宿主修复。
   链接：<https://github.com/jojo8233/CLOT-imhub/pull/17>
 - Issue #11：`OPEN`，`[M3-3] telegram-tt 原生 Composer typed bridge`。
   链接：<https://github.com/jojo8233/CLOT-imhub/issues/11>
+  真实 Saved Messages 验收记录：
+  <https://github.com/jojo8233/CLOT-imhub/issues/11#issuecomment-5433245156>
 - Issue #12：`OPEN`，`[M3-4] telegram-tt 持久事件 outbox 与可靠回传`。
   链接：<https://github.com/jojo8233/CLOT-imhub/issues/12>
 
-恢复后先重新运行 `gh pr view 16` 和 `gh issue view 11/12`，不要假定上述状态未变化。
+恢复后先重新运行 `gh pr view 16/17` 和 `gh issue view 11/12`，不要假定上述状态未变化。
 
 ## 3. im-hub Git 状态
 
 - GitHub 仓库：`jojo8233/CLOT-imhub`
 - 主仓库路径：`/Users/mac/Documents/Codex/CLOT fanyi/im-hub`
-- 真实验收修复 worktree：`/private/tmp/im-hub-m3-real-e2e-fix`
-- 分支：`codex/m3-telegram-composer-real-e2e-fix`
-- 后续修复 PR：<https://github.com/jojo8233/CLOT-imhub/pull/17>
-- 基线：`c8249dd1e179d693449c549a8374806cc27f8a76`（PR #16 merge commit）
+- 当前交接 worktree：`/private/tmp/im-hub-m3-real-e2e-fix`
+- 保存本文时的文档分支：`codex/m3-telegram-composer-final-handoff`（从最新 `origin/main` 创建）
+- 真实验收修复分支：`codex/m3-telegram-composer-real-e2e-fix`（已通过 PR #17 合并）
+- 真实验收修复 PR：<https://github.com/jojo8233/CLOT-imhub/pull/17>
+- 当前功能基线：`a7fa098dadb8641da5e43369c5d779d663eee8b5`（PR #17 merge commit）
 - M3-3 实现提交：
   `66869cb77c0fa656f0d3117d059b3eec16889315 feat: connect Telegram native Composer bridge`
 - PR #16 最终文档提交：
@@ -172,12 +176,13 @@ telegram-tt：
    - `docs/superpowers/specs/2026-08-26-m3-telegram-message-identity.md`
    - `docs/superpowers/specs/2026-08-26-m3-account-control.md`
    - `docs/superpowers/specs/2026-08-27-m3-telegram-composer-bridge.md`
-2. 重新核对 PR #16、Issue #11/#12、两个仓库 worktree、HEAD、upstream 和工作区是否干净。
-3. PR #16 已合并；先核对 PR #17，未合并则完成检查并合入，已合并则从最新 `main` 继续。
-4. 把 Saved Messages 真实证据记录到 Issue #11，但在关键矩阵未完成前保持 Issue 开放。
-5. 随后从包含真实验收修复的 im-hub `main` 与 telegram-tt 已推送基线开始 M3-4 Issue #12。
-   在设计持久 outbox 前，先核对服务端当前事件落库、ACK 和 WebSocket 重连代码，不要只按
-   Issue 描述推断现状。
+2. 重新核对 PR #16/#17、Issue #11/#12、两个仓库 worktree、HEAD、upstream 和工作区是否干净。
+3. PR #16/#17 均已合并；从最新 `origin/main` 开始任何新工作，不再从旧功能分支继续开发。
+4. 若继续 M3-3，按 Issue #11 补 private/group/channel/topic、reply、attachment、silent、
+   scheduled 和多账号隔离真实矩阵；Saved Messages 与同 attempt 超时恢复无需重复验收。
+5. 若进入 M3-4，从最新 im-hub `main` 和 telegram-tt 提交
+   `ba24da89abc1e56b4b8c3c68ebafa819e85e5b1d` 开始 Issue #12。在设计持久 outbox 前，先核对
+   服务端当前事件落库、ACK 和 WebSocket 重连代码，不要只按 Issue 描述推断现状。
 
 快速核对命令示例：
 
@@ -205,8 +210,20 @@ gh issue view 12 --repo jojo8233/CLOT-imhub
 - docs/superpowers/specs/2026-08-27-m3-telegram-composer-bridge.md
 - docs/superpowers/plans/2026-08-27-m3-telegram-composer-handoff.md
 
-核对 GitHub PR #16/#17、Issue #11/#12，以及 im-hub、telegram-tt 两个仓库和
-远端分支的实时状态，从最新交接继续。不要修改
-/Users/mac/Claude Code 工作区/代码/im-hub 的既有用户改动。PR #16 与 Saved Messages 真实
-验收已完成；先确认后续修复已经合入，再继续 M3-3 剩余真实矩阵或 M3-4 Issue #12。
+核对 GitHub PR #16/#17、Issue #11/#12，以及 im-hub、telegram-tt 两个仓库和远端分支的
+实时状态，从最新交接继续。不要修改
+/Users/mac/Claude Code 工作区/代码/im-hub 的既有用户改动。PR #16/#17 与 Saved Messages
+真实验收均已完成，不要重复；根据用户当前目标继续 M3-3 剩余真实矩阵，或从最新 main 开始
+M3-4 Issue #12。
 ```
+
+## 10. 清理上下文时的本机状态
+
+- im-hub 服务端曾在 `http://localhost:4000`、telegram-tt Vite 曾在
+  `http://localhost:1234` 运行，Electron 真实验收窗口也曾保持开启。清理上下文后必须重新
+  检查进程和端口，不能假定仍然存活。
+- 隔离的 Electron Telegram partition 已完成真实扫码登录。不要读取、打印或提交其中的会话
+  文件、二维码链接、验证码或 2FA；若会话仍有效，可继续用于剩余真实矩阵。
+- 排查期间只把一个确认损坏的旧 partition 移到了系统废纸篓，操作可恢复；没有清理其他平台
+  会话目录。
+- 本次真实发送只使用 Saved Messages/self-chat，没有向第三方联系人发送测试消息。
