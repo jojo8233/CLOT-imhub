@@ -395,6 +395,15 @@ function WebviewPane({ accountId, src, visible }: {
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
         return
       }
+      if (event.type === 'outbox.status') {
+        useStore.getState().setNativeOutboxStatus(accountId, {
+          pendingCount: event.pendingCount,
+          deadLetterCount: event.deadLetterCount,
+          isSending: event.isSending,
+          lastErrorCode: event.lastErrorCode,
+        })
+        return
+      }
       if (event.type === 'context.changed') {
         const currentContext = useStore.getState().nativeBridgeByAccount[accountId]?.context
         if (event.contextRevision < lastContextRevisionRef.current) return

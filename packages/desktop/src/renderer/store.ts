@@ -39,6 +39,13 @@ export interface NativeAccountBridgeState {
   context: NativeConversationState | null
   /** 原生客户端对当前 revision 的实时可发送状态。 */
   composerCanSend: boolean
+  /** 持久消息 outbox 的非敏感积压与失败指标。 */
+  outbox?: {
+    pendingCount: number
+    deadLetterCount: number
+    isSending: boolean
+    lastErrorCode: string | null
+  }
 }
 
 export type NativeDraftStatus = 'idle' | 'configuring' | 'translating' | 'ready' | 'sending' | 'failed'
@@ -95,6 +102,10 @@ interface State {
   setAccountStatus(accountId: string, status: string): void
   updateConversationTargetLang(id: string, targetLang: string | null): void
   setNativeBridgeConnection(accountId: string, connection: NativeBridgeConnection, error?: string | null): void
+  setNativeOutboxStatus(
+    accountId: string,
+    status: NonNullable<NativeAccountBridgeState['outbox']>,
+  ): void
   setNativeAccountIdentity(accountId: string, platformAccountExternalId: string | null): void
   setNativeContext(accountId: string, context: NativeConversationState | null): void
   resolveNativeConversation(
@@ -205,9 +216,20 @@ export const useStore = create<State>((set) => ({
         composerCanSend: connection === 'ready'
           ? s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false
           : false,
+        outbox: s.nativeBridgeByAccount[accountId]?.outbox,
       },
     },
   })),
+  setNativeOutboxStatus: (accountId, status) => set((s) => {
+    const current = s.nativeBridgeByAccount[accountId]
+    if (!current) return {}
+    return {
+      nativeBridgeByAccount: {
+        ...s.nativeBridgeByAccount,
+        [accountId]: { ...current, outbox: status },
+      },
+    }
+  }),
   setNativeAccountIdentity: (accountId, platformAccountExternalId) => set((s) => ({
     nativeBridgeByAccount: {
       ...s.nativeBridgeByAccount,
@@ -217,6 +239,7 @@ export const useStore = create<State>((set) => ({
         platformAccountExternalId,
         context: s.nativeBridgeByAccount[accountId]?.context ?? null,
         composerCanSend: s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false,
+        outbox: s.nativeBridgeByAccount[accountId]?.outbox,
       },
     },
   })),
@@ -230,6 +253,7 @@ export const useStore = create<State>((set) => ({
           s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context,
         composerCanSend: false,
+        outbox: s.nativeBridgeByAccount[accountId]?.outbox,
       },
     },
     ...(s.activeAccountId === accountId ? {

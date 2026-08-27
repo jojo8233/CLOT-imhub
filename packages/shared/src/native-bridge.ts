@@ -1,7 +1,7 @@
 import type { MediaRef } from './message.js'
 import type { Direction } from './platform.js'
 
-export const NATIVE_BRIDGE_PROTOCOL_VERSION = 2 as const
+export const NATIVE_BRIDGE_PROTOCOL_VERSION = 3 as const
 export type NativeBridgeProtocolVersion = typeof NATIVE_BRIDGE_PROTOCOL_VERSION
 export const NATIVE_EDIT_VERSION_MAX = 2_147_483_647
 
@@ -115,6 +115,15 @@ export interface NativeBridgeErrorEvent extends NativeBridgeFrame {
   message: string
 }
 
+/** guest 持久事件队列的有界运行指标；不包含消息正文或账号凭据。 */
+export interface NativeOutboxStatusEvent extends NativeBridgeFrame {
+  type: 'outbox.status'
+  pendingCount: number
+  deadLetterCount: number
+  isSending: boolean
+  lastErrorCode: string | null
+}
+
 export interface NativeMessageSnapshot {
   platformConversationId: string
   /**
@@ -170,6 +179,7 @@ export type NativeGuestEvent =
   | NativeComposerStateEvent
   | NativeCommandResultEvent
   | NativeBridgeErrorEvent
+  | NativeOutboxStatusEvent
   | NativeMessageUpsertEvent
   | NativeMessageDeletedEvent
   | NativeMessageIdRemappedEvent

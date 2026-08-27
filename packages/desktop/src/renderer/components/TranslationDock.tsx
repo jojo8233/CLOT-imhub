@@ -93,6 +93,13 @@ export function TranslationDock() {
     && Boolean(draft?.translatedText)
     && (Boolean(native?.composerCanSend) || canResolveUnknownAttempt)
   const targetLang = conversation?.target_lang ?? null
+  const outboxNotice = native?.outbox?.deadLetterCount
+    ? `消息回传有 ${native.outbox.deadLetterCount} 条永久失败事件`
+    : native?.outbox?.pendingCount
+      ? `消息回传队列待处理 ${native.outbox.pendingCount} 条`
+      : native?.outbox?.lastErrorCode
+        ? '消息回传持久队列暂时不可用'
+        : null
 
   function commandContext(): NativeCommandContext | null {
     if (!canUse || !activeAccountId || !context) return null
@@ -244,6 +251,17 @@ export function TranslationDock() {
         border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.xl,
         background: theme.color.card, boxShadow: theme.shadow.md,
       }}>
+        {outboxNotice && (
+          <div style={{
+            marginBottom: theme.space.sm,
+            fontSize: theme.font.size.xs,
+            color: native?.outbox?.deadLetterCount || native?.outbox?.lastErrorCode
+              ? theme.color.danger
+              : theme.color.textFaint,
+          }}>
+            {outboxNotice}
+          </div>
+        )}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: theme.space.md, marginBottom: 6,

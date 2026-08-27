@@ -1,7 +1,7 @@
 # M3-3 Telegram 原生 Composer typed bridge
 
 日期：2026-08-27
-状态：代码已实现；真实 Telegram 账号联调与 message outbox/shadow 对账仍待后续验收
+状态：Composer 与 M3-4 message outbox 代码已实现；剩余真实矩阵与 shadow 对账仍待验收
 
 ## 1. 范围
 
@@ -9,8 +9,9 @@
 并移除 fork 内的 `ImHubComposer` 重复翻译输入区。外壳是唯一翻译 UI；Telegram 原生
 Composer 继续是草稿、回复引用、附件、限流和实际发送的事实来源。
 
-本阶段不实现消息 upsert/edit/delete outbox、ACK 重试或 TDLib/fork shadow 对账。这些
-仍属于 M3-4/M3-5，不能因为 Composer 已可控就写成 Telegram 存档闭环已经完成。
+Composer 本身不实现消息 upsert/edit/delete outbox、ACK 重试或 TDLib/fork shadow 对账。
+前两项现由 `2026-08-27-m3-telegram-outbox.md` 定义并实现，shadow 对账仍属于 M3-5；在真实
+故障矩阵完成前，不能因为代码已经接线就写成 Telegram 存档闭环已经验收。
 
 ## 2. 授权后的状态握手
 

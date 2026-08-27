@@ -19,6 +19,35 @@ describe('parseNativeGuestEvent', () => {
     expect(parseNativeGuestEvent({ protocolVersion: 99, type: 'bridge.ready' })).toBeNull()
   })
 
+  it('只接受有界且不含正文的 outbox 状态', () => {
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'outbox.status',
+      pendingCount: 3,
+      deadLetterCount: 1,
+      isSending: true,
+      lastErrorCode: 'server_rejected',
+    })).toMatchObject({ type: 'outbox.status', pendingCount: 3, deadLetterCount: 1 })
+
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'outbox.status',
+      pendingCount: -1,
+      deadLetterCount: 0,
+      isSending: false,
+      lastErrorCode: null,
+    })).toBeNull()
+
+    expect(parseNativeGuestEvent({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'outbox.status',
+      pendingCount: 1_001,
+      deadLetterCount: 0,
+      isSending: false,
+      lastErrorCode: null,
+    })).toBeNull()
+  })
+
   it('接受结构完整的当前会话事件', () => {
     expect(parseNativeGuestEvent({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,

@@ -23,10 +23,11 @@ Telegram fork 在 M3 实现协议适配并做真实多开、媒体、发送和�
 
 ## 2. 协议
 
-协议定义集中在 `packages/shared/src/native-bridge.ts`。M2 初始版本为 1；M3-1 已升级到
-版本 2，canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调
-  `editVersion` 的详细规则见 `2026-08-26-m3-telegram-message-identity.md`。M3-2 新增的
-  `account.signed-out`、短时控制授权和身份状态机见 `2026-08-26-m3-account-control.md`。
+协议定义集中在 `packages/shared/src/native-bridge.ts`。M2 初始版本为 1；M3-1 升级到版本 2，
+引入 canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调 `editVersion`。
+M3-4 当前版本为 3，新增 `outbox.status` 的非敏感队列指标；详细规则分别见
+`2026-08-26-m3-telegram-message-identity.md`、`2026-08-26-m3-account-control.md` 与
+`2026-08-27-m3-telegram-outbox.md`。
 
 guest → host：
 
@@ -37,6 +38,7 @@ guest → host：
 - `composer.state`
 - `command.result`
 - `bridge.error`
+- `outbox.status`（v3）
 - `message.upsert`
 - `message.deleted`
 - `message.id-remapped`
@@ -142,16 +144,17 @@ v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只�
 
 ## 7. M3 接线清单
 
-Telegram fork 需要：
+Telegram fork 接线状态：
 
 - M3-3 已在 chat/topic 变化时发送 `context.changed`，并以单调 revision 拒绝旧命令
 - M3-3 已把原生 rich editor/handleSend 映射到三个 composer 命令
-- 收发、编辑、删除和最终 id 事件进入带重试的 outbox
-- 收到 `event.ack` 后才能从 outbox 移除事件
+- M3-4 已让收发、编辑、删除和最终 id 事件进入 IndexedDB 持久 outbox；详细语义见
+  `2026-08-27-m3-telegram-outbox.md`
+- M3-4 只有收到 `event.ack` 后才从 pending outbox 移除事件，永久拒绝进入 dead-letter
 - M3-3 已删除 fork 内部旧 `ImHubComposer`，TranslationDock 是唯一翻译入口
 - M3-1 已统一 TDLib/fork 的 `chatId:serverMessageId` 规范键并提供历史迁移；开始
   shadow 前仍要用真实 fixture 和账号验证同一消息只落一行，再决定旧后台链路退出时机
-- M3-3 已用稳定 attempt id 和最终 Telegram update 解决 Composer 发送幂等；message outbox
-  的同账号 single-flight/限流仍待后续实现
+- M3-3 已用稳定 attempt id 和最终 Telegram update 解决 Composer 发送幂等；M3-4 的 message
+  outbox 按 Telegram self user id 单飞并有界限流
 - M3-2 已完成短时 account-control grant、实际平台账号身份绑定与 guest JWT 移除
 - M3-2 已完成 Telegram 退出/账号删除时对应本地 partition 与 bridge 能力清理

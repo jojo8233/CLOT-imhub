@@ -6,6 +6,7 @@ import {
 } from '@im-hub/shared'
 
 const MAX_EVENT_BYTES = 900_000
+const MAX_OUTBOX_EVENT_COUNT = 1_000
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -95,6 +96,16 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
       return value as unknown as NativeGuestEvent
     case 'bridge.error':
       if (!nonEmptyString(value.code, 128) || !string(value.message, 2_048)) return null
+      return value as unknown as NativeGuestEvent
+    case 'outbox.status':
+      if (!Number.isSafeInteger(value.pendingCount)
+        || (value.pendingCount as number) < 0
+        || (value.pendingCount as number) > MAX_OUTBOX_EVENT_COUNT
+        || !Number.isSafeInteger(value.deadLetterCount)
+        || (value.deadLetterCount as number) < 0
+        || (value.deadLetterCount as number) > MAX_OUTBOX_EVENT_COUNT
+        || typeof value.isSending !== 'boolean'
+        || !nullableString(value.lastErrorCode, 128)) return null
       return value as unknown as NativeGuestEvent
     case 'message.upsert': {
       if (!nonEmptyString(value.eventId, 128) || !record(value.message)) return null

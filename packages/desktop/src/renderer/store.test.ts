@@ -116,6 +116,24 @@ describe('platform-scoped Zustand navigation', () => {
     })
   })
 
+  it('outbox 指标按账号保存且不改变 Composer 控制状态', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeOutboxStatus('tg-1', {
+      pendingCount: 4,
+      deadLetterCount: 1,
+      isSending: true,
+      lastErrorCode: 'permanent_rejection',
+    })
+    useStore.getState().setNativeAccountIdentity('tg-1', '123456')
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']).toMatchObject({
+      connection: 'ready',
+      platformAccountExternalId: '123456',
+      outbox: { pendingCount: 4, deadLetterCount: 1, isSending: true },
+    })
+    expect(useStore.getState().nativeBridgeByAccount['tg-2']?.outbox).toBeUndefined()
+  })
+
   it('只接受当前会话 revision 的 composer 状态，并以原生框可发送性为准', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
