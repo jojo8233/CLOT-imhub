@@ -88,9 +88,19 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
 - 两个不进入 Telegram 的永久拒绝哨兵首次暴露并发 pump 会重复发送队首、覆盖 ACK timer 的
   竞态；串行化发送泵后，每个事件只发送和 ACK 一次，队列从 pending 收敛到 dead-letter，等待
   超过 10 秒不再误报 `ack_timeout`。探针记录随后精确清理，partition 恢复为空。
+- 真实普通群删除探针只选择此前 M3 创建且可唯一识别的自己发出的测试消息，并两次确认
+  `Delete for everyone`，其中一次在完整重启 Electron 后执行。目标消息仍存在，服务端也没有
+  收到 `/api/native/events`；流程期间还出现开发态 worker 的
+  `Cannot read properties of undefined (reading 'length')` 和短暂 `waiting for network`。因此删除
+  在 Telegram 客户端/平台更新之前被阻断，这不是 `message.deleted` outbox 成功或失败的传输
+  证据。
+- 安全目标发现确认当前普通群不是当前账号创建，已加载状态没有频道，且列表尚未完整加载；没有
+  可证明为自建并可清理的频道/群。本轮没有执行频道编辑/删除或媒体外发，也没有创建新频道。
 
-仍需真实账号故障矩阵：断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、快速连续编辑、
-普通与频道删除、local/final remap、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。
+仍需真实账号故障矩阵：断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、普通与频道删除、
+频道编辑、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。快速连续编辑和
+local/final remap 已有成功证据；普通群删除已有客户端阻断证据，但尚未产生可供 outbox 验收的
+平台 update。
 在这些证据写入 Issue #12 前，不关闭 Issue，也不宣称 M3-4 完整验收。
 
 M3-5 仍负责 TDLib 与 telegram-tt 的 shadow reconciliation、历史缺口扫描，以及客户端未观察到

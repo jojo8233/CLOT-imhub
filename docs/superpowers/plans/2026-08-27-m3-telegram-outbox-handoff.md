@@ -9,8 +9,8 @@
 
 截至 2026-08-27 本次交接保存时：
 
-- im-hub `codex/m3-telegram-outbox` 的最后一个功能/验收提交为
-  `1ddfc09e671067a84907a22d27a7a56ef357caf2`；本 checkpoint 所在提交继续推送到同一分支和
+- im-hub `codex/m3-telegram-outbox` 在本轮删除探针前的最后一个验收/交接提交为
+  `de9ba1242bedad2efa99e11ba680732e2d27a04f`；本 checkpoint 所在提交继续推送到同一分支和
   PR #19。telegram-tt 分支精确停在
   `c60343e98a05936cab898d3dc08069d5e7524e9b`。
 - 两个隔离 worktree 均无未提交改动，并分别与
@@ -20,6 +20,10 @@
 - 本轮 Electron、telegram-tt Vite 和 im-hub server 已停止；下次不能假设任何开发进程仍在运行。
 - 真实普通群文本发送、local-to-final remap、单行去重、快速连续编辑和单调 `editVersion` 已验收；
   PR #16/#17 与 Saved Messages 真实验收也早已完成，全部不要重复。
+- 普通群删除已经对之前 M3 创建的唯一 `EDIT-10` 测试消息做过两次“对所有人删除”确认，其中
+  一次在完整重启 Electron 后执行；消息仍留在 Telegram，且服务端没有收到
+  `/api/native/events`。这不是删除或 outbox 成功证据，后续须先解决/绕过 telegram-tt 删除路径
+  没有产生平台更新的问题，不能继续反复点击同一消息。
 - 共享 workspace `/Users/mac/Claude Code 工作区/代码/im-hub` 的既有用户改动从未被修改、清理、
   暂存或重置。后续继续使用隔离 worktree；如果 `/private/tmp` worktree 已被系统清理，从对应远端
   分支重新创建，不要转而在共享 workspace 工作。
@@ -212,7 +216,8 @@ dead-letter 满容量和运维恢复路径，也不替代真实频道、媒体�
 Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 
 1. 断网后恢复、页面刷新、Electron 进程终止和 ACK 丢失。
-2. 普通/频道删除，以及频道编辑；普通群快速连续编辑与 local-to-final remap 已有上述证据。
+2. 普通/频道删除，以及频道编辑；普通群删除已安全复现“平台消息未删除、没有 outbox 事件”的
+   客户端阻断，普通群快速连续编辑与 local-to-final remap 已有上述成功证据。
 3. 图片、文件、语音等媒体引用。
 4. 两个账号同时积压时的 partition 隔离。
 5. dead-letter 容量与运维恢复路径；基础 permanent rejection 与后续事件继续发送已有上述证据。
@@ -220,7 +225,31 @@ Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 真实矩阵可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved Messages
 验收。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于本提交。
 
-## 9. 恢复顺序
+## 9. 普通群删除安全探针与目标发现
+
+2026-08-27 在用户明确授权后，只把 telegram-tt 仓库既有 `.env` 加载到隔离 worktree 的 Vite
+进程；没有输出、复制或记录任何变量值。外部操作严格限定为此前 M3 验收创建的唯一
+`EDIT-10` 自己发出的测试消息，不发送新的普通群文本，也不触碰其他消息。
+
+- DOM 核验当前会话只有一个正文含 `EDIT-10` 的 `.Message.own`；删除菜单与最终弹窗各只有一个
+  可见 Delete，且 `Delete for everyone` 唯一复选框保持勾选。
+- 删除流程先遇到开发态 worker 异常提示
+  `Cannot read properties of undefined (reading 'length')`，Telegram 一度显示
+  `waiting for network`。关闭提示后第一次确认删除，目标消息仍存在，服务端没有收到
+  `/api/native/events`。
+- 完整停止并重启 Electron、确认 Telegram 会话恢复后，再次打开同一个唯一消息并重新核验上述
+  条件。第二次确认后目标标记仍可见，服务端仍没有收到事件，因此没有任何 deletion 进入
+  im-hub。这条结果只能证明删除动作在 Telegram 客户端/平台更新之前被阻断，不能用来验收
+  `message.deleted` outbox。
+- 安全目标发现只返回类型和权限计数，不输出名称或 id：当前会话是
+  `chatTypeBasicGroup`，但当前账号不是 creator；已加载状态中频道数为 0，且聊天列表未完整加载。
+  因而没有可证明为当前账号自建并可清理的频道/群目标。本轮未执行频道编辑/删除、图片、文件或
+  语音外发，也没有为验收新建频道或扩大外部影响。
+
+最终确认没有发生平台删除；所有 CDP/截图/调试端口临时文件和代码均已移除，server、Vite、
+Electron 已停止，两个隔离 worktree 在写入本 checkpoint 前恢复为干净状态。
+
+## 10. 恢复顺序
 
 1. 读根 `AGENTS.md`、本交接和 outbox 规格。
 2. 刷新 PR #16/#17/#18、Issue #11/#12、两个仓库远端与 worktree 状态。
