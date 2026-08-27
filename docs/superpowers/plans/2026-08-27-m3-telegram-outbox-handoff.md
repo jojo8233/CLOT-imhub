@@ -10,17 +10,21 @@
 截至 2026-08-28 本次交接保存时：
 
 - im-hub `codex/m3-telegram-outbox` 在本轮恢复前的交接提交为
-  `62758708482a698afea9bcb50b7c62a6ccccb095`；本 checkpoint 所在提交继续推送到同一分支和
+  `31f3e5fb5702ca9aaabb8cbec83fce327b1d1f6d`；本 checkpoint 所在提交继续推送到同一分支和
   PR #19。telegram-tt 分支精确停在
-  `675df80d8d4b287bd1afc2dfe544b70d796581f0`。
+  `ed09836f6b73544aa2d16d8645afa138827f0cbc`。
 - 两个隔离 worktree 均无未提交改动，并分别与
   `origin/codex/m3-telegram-outbox`、`imhub/codex/m3-telegram-outbox` 一致。
 - PR #19 为 OPEN、CLEAN、非 Draft，暂无 checks 或 review decision；Issue #11/#12 均 OPEN。
   没有合并 PR，也没有关闭 Issue。
 - 本轮 Electron、telegram-tt Vite 和 im-hub server 已停止；下次不能假设任何开发进程仍在运行。
-- 删除证据完成后的 Vite 缓冲日志另有一条 `SESSION_REVOKED`。本轮没有尝试重新登录或清理
-  partition，也没有证据把它归因于空接收修复；下次真实账号操作前先只读确认鉴权状态，不能假设
-  既有 partition 仍可直接使用。
+- 只读恢复时 guest 从缓存上报 `account.identity`，主进程状态为 `ready`，但 Vite 网络层在
+  `01:12:41` 和 `01:23:38` 再次收到 `SESSION_REVOKED`。根因是 GramJS 把这个错误与主 sender
+  可忽略的 `AUTH_KEY_UNREGISTERED` 一起跳过，导致缓存身份掩盖已撤销的服务端会话。
+  `ed09836f6b73544aa2d16d8645afa138827f0cbc` 只保留 `AUTH_KEY_UNREGISTERED` 的跳过语义，
+  `SESSION_REVOKED`/`USER_DEACTIVATED` 会进入现有 broken → sign-out → bridge 撤权链。
+- 修复没有在真实 partition 上热运行，避免未经用户处理登录就触发现有 signed-out 清理语义；没有
+  尝试验证码、2FA、重登或外发。下次真实账号操作需要先由用户完成重新登录。
 - 真实普通群文本发送、local-to-final remap、单行去重、快速连续编辑和单调 `editVersion` 已验收；
   PR #16/#17 与 Saved Messages 真实验收也早已完成，全部不要重复。
 - 旧 `EDIT-10` 的两次删除确认实际已被 Telegram 平台异步执行；此前看似“消息仍在”的直接原因是
@@ -35,9 +39,9 @@
 - 共享 workspace `/Users/mac/Claude Code 工作区/代码/im-hub` 的既有用户改动从未被修改、清理、
   暂存或重置。后续继续使用隔离 worktree；如果 `/private/tmp` worktree 已被系统清理，从对应远端
   分支重新创建，不要转而在共享 workspace 工作。
-- 下一主线是 Issue #12 剩余真实故障矩阵。普通群删除已有恢复证据；优先在再次确认安全目标后
-  覆盖频道删除与频道编辑，再做媒体、多账号 partition、dead-letter 容量与运维恢复；不要把
-  M3-5 shadow reconciliation 混入 PR #19。
+- 下一主线先是用户重新登录 Telegram；随后继续 Issue #12 剩余真实故障矩阵。普通群删除已有
+  恢复证据；优先在再次确认安全目标后覆盖频道删除与频道编辑，再做媒体、多账号 partition、
+  dead-letter 容量与运维恢复；不要把 M3-5 shadow reconciliation 混入 PR #19。
 - 修改 `src/api/gramjs/**` 后必须完整停止并重启 Electron，不能把 Vite `page reload` 当成
   SharedWorker 已更新的证据。
 
@@ -65,11 +69,12 @@ Saved Messages、普通群 TEXT-A/EDIT-10 验收。以最新交接记录为事�
 - im-hub PR #19 已创建并关联 Issue #12：
   <https://github.com/jojo8233/CLOT-imhub/pull/19>。
 - telegram-tt 最新实现提交为
-  `675df80d8d4b287bd1afc2dfe544b70d796581f0 fix: reconnect after empty GramJS receive`，建立在
+  `ed09836f6b73544aa2d16d8645afa138827f0cbc fix: propagate revoked Telegram sessions`，建立在
+  `675df80d8d4b287bd1afc2dfe544b70d796581f0 fix: reconnect after empty GramJS receive`、
   `c60343e98a05936cab898d3dc08069d5e7524e9b im-hub Outbox: Serialize delivery pump`、
   `6c8d86a33dd4db37081051ccc192a36650777f15 fix: keep Telegram edit bridge in sync` 与
   `94bfc962abc942c331f607209ccb4057ae8d0880 feat: add persistent im-hub message outbox` 之上。
-  四者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
+  五者均已推送到 `jojo8233/telegram-tt` 的 `codex/m3-telegram-outbox`。
 - im-hub 实现已推送到 `codex/m3-telegram-outbox`，由 PR #19 审查；当前不自动合并或关闭 Issue。
 
 ## 2. 仓库与 worktree
@@ -90,7 +95,7 @@ telegram-tt：
 - 隔离 worktree：`/private/tmp/telegram-tt-m3-outbox`
 - 分支：`codex/m3-telegram-outbox`
 - 基线：`ba24da89abc1e56b4b8c3c68ebafa819e85e5b1d`
-- 当前提交：`675df80d8d4b287bd1afc2dfe544b70d796581f0`
+- 当前提交：`ed09836f6b73544aa2d16d8645afa138827f0cbc`
 - 远端：`imhub/codex/m3-telegram-outbox`，与当前提交精确一致
 
 `/Users/mac/Claude Code 工作区/代码/im-hub` 是带有既有用户改动的共享 workspace。本阶段只做过
@@ -121,6 +126,9 @@ telegram-tt：
   拉取或版本读取失败时仍保留原错误与回滚，不猜测成功。
 - GramJS `_recvLoop` 把连接返回空数据视为连接错误，复用既有 reconnect 流程；不再让
   `body.length` 的未捕获异常终止 worker 并使客户端停在 `waiting for network`。
+- 主 sender 只忽略主连接初始化期间的 `AUTH_KEY_UNREGISTERED`；`SESSION_REVOKED` 与
+  `USER_DEACTIVATED` 会发布 broken connection，让现有全局 sign-out 和 `account.signed-out`
+  桥接撤销错误的 ready 状态。
 
 im-hub：
 
@@ -146,9 +154,11 @@ im-hub：
 telegram-tt：
 
 - `npm run check:ts` 通过。
-- `src/lib/gramjs/network/MTProtoSender.test.ts` 新增空接收重连回归；与既有
-  `src/lib/gramjs/extensions/PromisedWebSockets.test.ts`、`src/util/imhub.test.ts` 一起为 3 个文件、
-  3 个测试通过。
+- `src/lib/gramjs/network/MTProtoSender.test.ts` 覆盖空接收重连、撤销/停用会话进入 broken，以及
+  主 sender 保留 `AUTH_KEY_UNREGISTERED` 原语义；`src/util/imhubMessages.test.ts` 覆盖普通 outgoing
+  文本快照与 final delete 入队。连同既有 WebSocket 和 bridge 测试为 4 个文件、8 个测试通过。
+- im-hub `packages/server/src/api/routes/native.test.ts` 22 个测试通过，使用派生 `_test` 数据库验证
+  native grant、upsert、delete、remap 与拒绝路径。
 - `git diff --check` 通过。
 - 单泵竞态修复后再次运行 `npm run check:ts`、既有聚焦测试 1/1 与 `git diff --check`，均通过。
 
@@ -266,21 +276,47 @@ typed bridge、HTTP 与数据库状态。
   做不外发的状态/单元诊断，不能再发送或删除同类消息来碰运气。
 - 安全目标发现仍只有非 creator 的普通群，没有可证明为当前账号自建并可清理的频道/群。本轮未
   执行频道编辑/删除、图片、文件或语音外发，也没有新建频道或扩大外部影响。
-- 删除证据完成后，Vite 的缓冲输出在 `00:23:20` 记录了 `SESSION_REVOKED`。这与已修复的空接收
-  异常不同，当前证据不能判断是既有 Telegram 授权状态变化还是其他运行时原因；没有重登、删除
-  partition 或继续外发。下次恢复应先只读确认登录状态，再决定是否需要用户处理鉴权。
+- 删除证据完成后，Vite 的缓冲输出在 `00:23:20` 记录了 `SESSION_REVOKED`。后续只读恢复确认它
+  是持续存在但被缓存 identity 掩盖的服务端会话撤销；根因、修复与未热运行边界见下一节。
 
 所有阶段诊断代码均已撤销；CDP、截图与调试端口临时文件在收尾时精确删除，server、Vite、
 Electron 已停止。telegram-tt 修复已推送，im-hub 仅保留本交接与规格更新等待提交。
 
-## 10. 恢复顺序
+## 10. 无外发鉴权与消息链诊断
+
+2026-08-28 继续前先把操作限定为只读鉴权和本地自动测试，没有发送、编辑或删除 Telegram 消息：
+
+- 隔离 server、Vite 与 Electron 启动后，guest 上报 `bridge.ready`、`account.identity`，主进程控制
+  状态为 `ready`，持久 outbox 为 `pending=0, dead=0, sending=false`。这只证明缓存身份和 bridge
+  可用，不证明 Telegram 服务端 auth key 仍有效。
+- 同一运行窗口的 Vite 日志两次出现 `SESSION_REVOKED`，但没有 `account.signed-out`；主进程仍为
+  ready。`MTProtoSender._recvLoop` 对 `AUTH_KEY_UNREGISTERED`、`SESSION_REVOKED` 和
+  `USER_DEACTIVATED` 统一调用 `_handleBadAuthKey(true)`，其中 `true` 会让 main sender 直接返回。
+- telegram-tt `ed09836f6b73544aa2d16d8645afa138827f0cbc` 只在错误确为
+  `AUTH_KEY_UNREGISTERED` 时传入跳过标志；撤销或停用会话会发布 `connectionStateBroken`，现有全局
+  updater 随后执行 sign-out，并让 im-hub bridge 撤销控制能力。单元回归同时锁住三个错误分支。
+- 修复后的 worker 没有在真实 partition 上启动，因为现有 sign-out 语义会清除该 partition 的
+  storage/cache。进程已在热重载只提示 page reload、旧 SharedWorker 仍存活时停止；没有触发重登、
+  验证码、2FA 或新的外部状态变化。
+- `imhubMessages` 新测试证明普通 outgoing 文本会生成完整 `message.upsert` 快照，final id 删除会
+  生成 `message.deleted`；服务端 native route 22 个测试也证明 upsert/delete/remap 落库链正常。
+  因而本轮没有复现删除专用新标记的 reporter 或服务端代码缺陷。
+- 已 ACK 的 outbox 记录按设计从 IndexedDB 删除，服务端也不持久化 eventId 审计，所以此前新标记
+  “数据库 0 行”无法在事后唯一归因于未入队、会话撤销时序或观察窗口。它现在作为不确定的历史
+  观察保留，不再写成已确认的中央 updater 故障，也不通过再次外发来补证据。
+
+下一步必须由用户完成 Telegram 重新登录。重新登录前不要启动修复后的真实 Electron 验收，也不要
+继续频道/媒体等外部矩阵。
+
+## 11. 恢复顺序
 
 1. 读根 `AGENTS.md`、本交接和 outbox 规格。
 2. 刷新 PR #16/#17/#18、Issue #11/#12、两个仓库远端与 worktree 状态。
 3. 检查 PR #19 的 checks/review；不要在没有新证据时关闭 Issue #12。
-4. 在明确限定安全目标后执行 Issue #12 真实故障矩阵，并把可审计结果写入 Issue；不要重复
+4. 由用户完成 Telegram 重新登录；不得读取、记录或代填验证码/2FA。
+5. 在明确限定安全目标后执行 Issue #12 真实故障矩阵，并把可审计结果写入 Issue；不要重复
    Saved Messages 验收。
-5. 不操作共享 workspace 的既有用户改动，不重做 PR #16/#17。
+6. 不操作共享 workspace 的既有用户改动，不重做 PR #16/#17。
 
 快速核对：
 

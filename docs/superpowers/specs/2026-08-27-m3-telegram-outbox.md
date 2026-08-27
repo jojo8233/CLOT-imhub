@@ -83,8 +83,10 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
 - im-hub：`pnpm typecheck` 通过；desktop 9 个测试文件、65 个测试通过；全量
   `pnpm test` 为 34 个文件、331 个测试通过、1 个既有 todo；desktop build 通过；
   `git diff --check` 通过。
-- telegram-tt：`npm run check:ts` 通过；空接收重连、既有 WebSocket 握手与 im-hub bridge 共
-  3 个聚焦测试通过；`git diff --check` 通过。
+- telegram-tt：`npm run check:ts` 通过；空接收重连、撤销/停用会话传播、
+  `AUTH_KEY_UNREGISTERED` 保留语义、普通 outgoing/delete reporter、既有 WebSocket 与 bridge 共
+  4 个聚焦文件、8 个测试通过；`git diff --check` 通过。服务端 native route 22 个测试也在派生
+  `_test` 数据库通过。
 - 两个不进入 Telegram 的永久拒绝哨兵首次暴露并发 pump 会重复发送队首、覆盖 ACK timer 的
   竞态；串行化发送泵后，每个事件只发送和 ACK 一次，队列从 pending 收敛到 dead-letter，等待
   超过 10 秒不再误报 `ack_timeout`。探针记录随后精确清理，partition 恢复为空。
@@ -96,13 +98,20 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
   `1 live / 0 deleted` 收敛为 `0 live / 1 deleted`。同一安全群中的一条删除专用新标记只确认
   一次“对所有人删除”后也从 Telegram 消失，outbox 为 `pending=0, dead=0`；但新标记没有中央
   数据库行，因此它只作为平台删除恢复证据，不伪装成新消息的完整 bridge 落库验收。
+- 后续无外发诊断确认 guest 的缓存 identity 仍可让主进程进入 ready，但网络层持续收到
+  `SESSION_REVOKED`。telegram-tt `ed09836f6b73544aa2d16d8645afa138827f0cbc` 让撤销/停用会话发布
+  broken connection，再由现有 sign-out 与 `account.signed-out` 撤权；只有主连接初始化期间的
+  `AUTH_KEY_UNREGISTERED` 保持跳过。
+- 普通 outgoing 快照、final delete reporter 和服务端 native 落库自动测试均通过，本轮没有复现
+  删除专用新标记的代码缺陷。已 ACK outbox 和服务端缺少 eventId 审计使历史 0 行无法唯一归因，
+  该结果保持为不确定观察，不通过再次外发补证据。
 - 安全目标发现确认当前普通群不是当前账号创建，已加载状态没有频道，且列表尚未完整加载；没有
   可证明为自建并可清理的频道/群。本轮没有执行频道编辑/删除或媒体外发，也没有创建新频道。
 
-仍需真实账号故障矩阵：断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、频道删除与频道
+当前 Telegram 服务端会话已撤销，继续真实矩阵前必须由用户重新登录。仍需真实账号故障矩阵：
+断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、频道删除与频道
 编辑、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。快速连续编辑、local/final
-remap 和普通群删除已有成功证据；删除专用新标记未进入中央 updater 的原因仍须用不外发诊断
-解释，不能把平台侧消失写成新的 upsert/delete 数据库闭环。
+remap 和普通群删除已有成功证据；删除专用新标记不能作为新的 upsert/delete 数据库闭环。
 在这些证据写入 Issue #12 前，不关闭 Issue，也不宣称 M3-4 完整验收。
 
 M3-5 仍负责 TDLib 与 telegram-tt 的 shadow reconciliation、历史缺口扫描，以及客户端未观察到

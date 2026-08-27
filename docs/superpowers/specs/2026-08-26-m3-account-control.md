@@ -64,6 +64,10 @@ telegram-tt 从全局状态读取 `currentUserId`，通过 typed bridge 发
 3. 身份不一致、signed-out、过期或服务端返回 401/403：`blocked`，立即停止命令与代理。
 4. 身份后来恢复一致但旧 grant 已撤销：回到 `waiting`，由外壳重新申请 grant。
 
+GramJS 主 sender 只对连接初始化期间的 `AUTH_KEY_UNREGISTERED` 保留跳过语义。
+`SESSION_REVOKED` 与 `USER_DEACTIVATED` 必须发布 `connectionStateBroken`，由现有全局 sign-out
+进入 `account.signed-out`，不能让缓存的 self id 继续把已撤销会话显示为 `ready`。
+
 主进程在发送原生命令前再次调用服务端 verify，避免服务端撤销后仍继续发送。同步会话、
 回传事件和翻译代理都只从 registry 取得 grant；服务端 401/403 会同时阻断本地状态。所有
 blocked 与 webview 加载失败路径向 UI 发固定、无敏感信息的提示，并以账号 UUID 的前八位
@@ -93,7 +97,8 @@ telegram-tt 不再读取 `window.__IM_HUB__`，也不直接向 im-hub 发 fetch/
 
 自动测试覆盖 token 类型隔离、签名/过期、owner/manager/auditor、身份变更与显式撤销、
 Bearer 绕过、跨账号 grant、翻译代理、主进程等待/匹配/不匹配/过期/signed-out 状态，以及
-partition/account 解析。`0006` 只在按规则派生的测试库执行验证。
+partition/account 解析。telegram-tt 回归另覆盖 `SESSION_REVOKED`/`USER_DEACTIVATED` 进入 broken，
+同时锁住主 sender 的 `AUTH_KEY_UNREGISTERED` 既有语义。`0006` 只在按规则派生的测试库执行验证。
 
 M3-3 已完成 context/composer 与发送 attempt 幂等，M3-4 已完成持久 message outbox 接线；
 真实 Telegram 故障矩阵、TDLib + fork shadow 对账和安装包分发仍按 M3-4/M3-5 及后续发布
