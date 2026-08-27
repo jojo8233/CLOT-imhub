@@ -67,7 +67,7 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 
 | 平台 | 目标路线 | 当前基线 | 计划阶段 |
 |---|---|---|---|
-| Telegram | 补丁版 `telegram-tt` + Electron webview | 原生 webview 骨架与翻译补丁已有；消息回传未完成 | M3 |
+| Telegram | 补丁版 `telegram-tt` + Electron webview | bridge/composer/outbox 代码已接线；真实故障矩阵与 shadow 对账待完成 | M3 |
 | Signal | 补丁版 Signal Desktop，以独立 profile 多开 | `signal-cli` 适配器可用；原生交付路线尚未完成 | M5 |
 | WhatsApp | 补丁版或受控网页客户端，以独立 partition 多开 | 只有平台类型预留 | M6 |
 | Zoom | 后续单独评估 Team Chat 官方能力 | 只有平台类型预留 | M8 |

@@ -258,8 +258,9 @@ Telegram：
 4. **完成剩余 M3 一致性门槛**：M3-1 已加入 TDLib/fork 统一 Telegram 消息键、Bridge v2
    与 `0005` 迁移；M3-2 已移除 guest JWT，加入五分钟 control grant、Telegram self id
    绑定及退出/删除分区清理；M3-3 已接通 chat/topic context、原生 Composer 和稳定发送
-   attempt。上线前仍要完成 message outbox，并用真实账号 fixture/shadow 对账确认迁移、媒体、
-   超时重试和多账号隔离。这些完成前仍不能作为生产闭环。
+   attempt；M3-4 已实现 IndexedDB message outbox、ACK/退避、dead-letter 与运行指标。上线前
+   仍要用真实账号故障矩阵和 fixture/shadow 对账确认迁移、媒体、超时重试和多账号隔离。
+   这些完成前仍不能作为生产闭环。
 
 ---
 
@@ -270,16 +271,16 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
 - **两条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
   已进入开发态。Signal 原生路线计划 M5，WhatsApp
-  计划 M6，Zoom 延后到 M8。M3-3 已接通 Telegram context/composer 事件，但消息 outbox、
-  真实账号验收和安装包分发仍未完成，不能当成已上线能力。
-- **Composer 已接线、消息回传未完成**：telegram-tt 已发 `bridge.ready/account.identity`、
+  计划 M6，Zoom 延后到 M8。M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
+  但真实故障矩阵、shadow 对账和安装包分发仍未完成，不能当成已上线能力。
+- **Composer 与消息回传代码已接线、真实闭环未验收**：telegram-tt 已发 `bridge.ready/account.identity`、
   `context.changed`、`composer.state` 和 command result；TranslationDock 可驱动原生 rich editor
-  与发送 attempt。telegram-tt 仍不发 message upsert/edit/delete outbox，所以右栏长期存档与
-  shadow 对账仍依赖后续 M3，不是完整消息闭环。
-- **当前没有双路消息重复，canonical 基础已就位但 shadow 尚未开始**：telegram-tt
-  尚未回传事件，所以 TDLib 与原生链路还不会同时落库。M3-1 已统一
-  `chatId:serverMessageId`、临时命名空间和 `0005` 迁移；必须再完成真实 fixture 与
-  shadow 对账，才能确认历史数据和两条实时链路没有重复。
+  与发送 attempt。telegram-tt 也会把 upsert/edit/delete/remap 先写 IndexedDB，再按 ACK
+  可靠回传；断网、崩溃、媒体和多账号矩阵尚未完成，因此仍不是已验收的完整消息闭环。
+- **双来源已具备接线条件，canonical 去重仍待 shadow 实证**：TDLib 与 telegram-tt 现在都可能
+  向同一账号落消息。M3-1 已统一 `chatId:serverMessageId`、临时命名空间和 `0005` 迁移，服务端
+  也按规范键幂等处理；必须再完成真实 fixture 与 shadow 对账，才能确认两条实时链路没有重复
+  或错误覆盖。在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。

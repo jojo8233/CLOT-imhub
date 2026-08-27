@@ -75,9 +75,10 @@
    一级、平台内账号二级导航，并保留右侧客户档案。
 2. **M2 建立通用桥接（已实现）**：受控 preload、版本化命令/事件、当前会话、固定
    输入坞状态机、服务端 owner 校验、归一化、编辑/删除与 id alias 去重。协议和边界见
-   `2026-08-26-m2-native-bridge.md`；平台客户端尚未接线，不能写成 Telegram 已闭环。
-3. **M3 完成 Telegram 闭环**：现有持久化 partition webview 接入通用桥接，验证
-   多开、翻译、图片/贴纸、发送和长期存档。
+   `2026-08-26-m2-native-bridge.md`。
+3. **M3 完成 Telegram 闭环（执行中）**：持久化 partition webview、账号控制、原生 Composer
+   与 IndexedDB 消息 outbox 已接入通用桥接；仍须验证多开、故障恢复、图片/贴纸、长期存档
+   和 TDLib/telegram-tt shadow 对账，不能把代码接线写成已验收闭环。
 4. **M5/M6 再接 Signal 与 WhatsApp**：复用已验证的宿主与桥接协议；Zoom 延后。
 
 ## Signal 窗口覆盖原型的历史与边界

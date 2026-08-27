@@ -19,7 +19,8 @@ M2 只建立平台无关基础，不宣称任何一个平台已经完成原生�
 Telegram fork 在 M3 实现协议适配并做真实多开、媒体、发送和存档验收。现有 TDLib
 与 signal-cli 适配器继续保留为后台归档/回退链路，不能因通用入口已经存在就退出。
 用户界面已经只有原生会话入口，不存在“自绘工作台与原生客户端同时给用户使用”的
-双 UI；telegram-tt 当前也尚未发消息事件，因此此刻没有双路回传造成的重复消息。
+双 UI。M3-4 已让 telegram-tt 发消息事件；TDLib 与原生链路现在可能形成双来源，服务端按
+canonical key 幂等处理，但真实 fixture/shadow 对账尚未完成，不能提前宣称没有重复风险。
 
 ## 2. 协议
 
@@ -114,8 +115,8 @@ transaction advisory lock 覆盖多实例；发布前在行锁内重读规范消
 事件覆盖新编辑。纯媒体消息存档但不派发空正文翻译。
 
 v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只接受更大的版本；旧适配器
-仍可传 null 并回退到 `editedAt`。telegram-tt outbox 尚未实际产生该序号，所以真实快速
-连续编辑仍要在 M3-4/M3-5 验收后才能宣称闭环。
+仍可传 null 并回退到 `editedAt`。M3-4 已把 Telegram edit update 的 MTProto `pts` 写入
+telegram-tt outbox；真实快速连续编辑仍要在 M3-4 故障矩阵和 M3-5 对账后才能宣称闭环。
 
 ## 5. 输入坞状态与隔离
 
