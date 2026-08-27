@@ -28,6 +28,8 @@ Issue #11 仍保持开放，因为 private/group/channel/topic、附件、定时
   `6c9b79745197060bacd081cba9afa62505d06431`，merge commit
   `c8249dd1e179d693449c549a8374806cc27f8a76`。
   链接：<https://github.com/jojo8233/CLOT-imhub/pull/16>
+- PR #17：承载本次真实验收发现的 im-hub 宿主修复；恢复时重新核对是否已经合并。
+  链接：<https://github.com/jojo8233/CLOT-imhub/pull/17>
 - Issue #11：`OPEN`，`[M3-3] telegram-tt 原生 Composer typed bridge`。
   链接：<https://github.com/jojo8233/CLOT-imhub/issues/11>
 - Issue #12：`OPEN`，`[M3-4] telegram-tt 持久事件 outbox 与可靠回传`。
@@ -41,6 +43,7 @@ Issue #11 仍保持开放，因为 private/group/channel/topic、附件、定时
 - 主仓库路径：`/Users/mac/Documents/Codex/CLOT fanyi/im-hub`
 - 真实验收修复 worktree：`/private/tmp/im-hub-m3-real-e2e-fix`
 - 分支：`codex/m3-telegram-composer-real-e2e-fix`
+- 后续修复 PR：<https://github.com/jojo8233/CLOT-imhub/pull/17>
 - 基线：`c8249dd1e179d693449c549a8374806cc27f8a76`（PR #16 merge commit）
 - M3-3 实现提交：
   `66869cb77c0fa656f0d3117d059b3eec16889315 feat: connect Telegram native Composer bridge`
@@ -170,7 +173,7 @@ telegram-tt：
    - `docs/superpowers/specs/2026-08-26-m3-account-control.md`
    - `docs/superpowers/specs/2026-08-27-m3-telegram-composer-bridge.md`
 2. 重新核对 PR #16、Issue #11/#12、两个仓库 worktree、HEAD、upstream 和工作区是否干净。
-3. PR #16 已合并；先核对并合并 `codex/m3-telegram-composer-real-e2e-fix` 的后续修复 PR。
+3. PR #16 已合并；先核对 PR #17，未合并则完成检查并合入，已合并则从最新 `main` 继续。
 4. 把 Saved Messages 真实证据记录到 Issue #11，但在关键矩阵未完成前保持 Issue 开放。
 5. 随后从包含真实验收修复的 im-hub `main` 与 telegram-tt 已推送基线开始 M3-4 Issue #12。
    在设计持久 outbox 前，先核对服务端当前事件落库、ACK 和 WebSocket 重连代码，不要只按
@@ -184,6 +187,7 @@ git -C "/private/tmp/im-hub-m3-real-e2e-fix" rev-parse HEAD origin/main
 git -C "/private/tmp/telegram-tt-m3-composer.psbf7o" status --short --branch
 git -C "/private/tmp/telegram-tt-m3-composer.psbf7o" rev-parse HEAD imhub/codex/m3-telegram-composer
 gh pr view 16 --repo jojo8233/CLOT-imhub
+gh pr view 17 --repo jojo8233/CLOT-imhub
 gh issue view 11 --repo jojo8233/CLOT-imhub
 gh issue view 12 --repo jojo8233/CLOT-imhub
 ```
@@ -201,7 +205,7 @@ gh issue view 12 --repo jojo8233/CLOT-imhub
 - docs/superpowers/specs/2026-08-27-m3-telegram-composer-bridge.md
 - docs/superpowers/plans/2026-08-27-m3-telegram-composer-handoff.md
 
-核对 GitHub PR #16、Issue #11/#12、真实验收修复 PR，以及 im-hub、telegram-tt 两个仓库和
+核对 GitHub PR #16/#17、Issue #11/#12，以及 im-hub、telegram-tt 两个仓库和
 远端分支的实时状态，从最新交接继续。不要修改
 /Users/mac/Claude Code 工作区/代码/im-hub 的既有用户改动。PR #16 与 Saved Messages 真实
 验收已完成；先确认后续修复已经合入，再继续 M3-3 剩余真实矩阵或 M3-4 Issue #12。
