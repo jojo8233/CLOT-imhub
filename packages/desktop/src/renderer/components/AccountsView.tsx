@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { api, NetworkError } from '../api/client.js'
-import { isChatPlatform } from '../navigation.js'
+import { api, getCurrentUser, NetworkError } from '../api/client.js'
+import { isChatPlatform, type ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
@@ -12,9 +12,10 @@ import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
 /** 在线是唯一"一切正常"的状态，只有它配得上柠檬绿；其余一律用各自的告警色 */
 const online2 = (status: string): boolean => status === 'connected'
 
-export function AccountsView({ onOpenChat, onAddAccount }: {
+export function AccountsView({ onOpenChat, onAddAccount, onRelink }: {
   onOpenChat(): void
   onAddAccount(): void
+  onRelink(account: { id: string; platform: ChatPlatform; displayName: string }): void
 }) {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
@@ -23,6 +24,7 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
   const setAccounts = useStore(s => s.setAccounts)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<{ id: string; name: string; platform: string } | null>(null)
+  const currentUser = getCurrentUser()
 
   async function refresh(): Promise<void> {
     try { setAccounts((await api.listAccounts()).accounts) } catch { /* 下次进页面会重拉 */ }
@@ -136,6 +138,17 @@ export function AccountsView({ onOpenChat, onAddAccount }: {
                       <CardButton onClick={() => {}} disabled grow>未来接入</CardButton>
                     )}
                     <CardButton onClick={() => setRenaming(a.id)}>改名</CardButton>
+                    {chatPlatform
+                      && a.status !== 'connected'
+                      && a.owner_user_id === currentUser?.id && (
+                      <CardButton onClick={() => onRelink({
+                        id: a.id,
+                        platform: chatPlatform,
+                        displayName: a.display_name,
+                      })}>
+                        重新关联
+                      </CardButton>
+                    )}
                     <CardButton
                       onClick={() => setDeleting({ id: a.id, name: a.display_name, platform: a.platform })}
                       danger

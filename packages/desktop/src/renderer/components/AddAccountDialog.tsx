@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { api, NetworkError } from '../api/client.js'
 import type { ChatPlatform } from '../navigation.js'
@@ -14,6 +14,12 @@ const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
 ]
 
 type Step = 'pick' | 'linking'
+
+interface RelinkAccount {
+  id: string
+  platform: ChatPlatform
+  displayName: string
+}
 
 /**
  * 添加账号：选平台 → 建账号 → 扫码 → 上线。
@@ -206,6 +212,106 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
           <LinkingStep
             accountId={accountId!}
             platform={linkingPlatform}
+            challenge={mine}
+            done={mineDone}
+            onClose={onClose}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 已存在但未连上的账号重新进入同一套扫码/验证码/2FA 流程。 */
+export function RelinkAccountDialog({ account, onClose }: {
+  account: RelinkAccount
+  onClose(): void
+}) {
+  const challenge = useStore(s => s.authChallenge)
+  const done = useStore(s => s.authDone)
+  const clearAuth = useStore(s => s.clearAuth)
+  const [error, setError] = useState<string | null>(null)
+  const relinkRequest = useRef<{ accountId: string; promise: Promise<void> } | null>(null)
+
+  const mine = challenge?.accountId === account.id ? challenge : null
+  const mineDone = done?.accountId === account.id ? done : null
+
+  useEffect(() => {
+    let active = true
+    clearAuth()
+    if (relinkRequest.current?.accountId !== account.id) {
+      relinkRequest.current = { accountId: account.id, promise: api.relinkAccount(account.id) }
+    }
+    void relinkRequest.current.promise.catch((e: unknown) => {
+      if (active) {
+        setError(e instanceof NetworkError ? '连不上服务端' : (e instanceof Error ? e.message : '重新关联失败'))
+      }
+    })
+    return () => {
+      active = false
+      clearAuth()
+    }
+  }, [account.id, clearAuth])
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(41,43,41,.38)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        className="ih-fade"
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 620, maxWidth: '90vw', background: theme.color.card,
+          borderRadius: theme.radius.xxl, boxShadow: theme.shadow.lg, overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          padding: `${theme.space.xl}px ${theme.space.xl}px ${theme.space.lg}px`,
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+          borderBottom: `1px solid ${theme.color.border}`,
+        }}>
+          <div>
+            <div style={{ fontSize: theme.font.size.xl, fontWeight: theme.font.weight.heavy, letterSpacing: -.5 }}>
+              重新关联「{account.displayName}」
+            </div>
+            <div style={{ fontSize: theme.font.size.sm, color: theme.color.textMuted, marginTop: 2 }}>
+              重新建立服务端平台会话，原生客户端登录态保持独立
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="ih-btn"
+            style={{
+              width: 34, height: 34, borderRadius: '50%',
+              border: `1px solid ${theme.color.border}`, background: theme.color.white,
+              color: theme.color.textMuted, fontSize: 15,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {error ? (
+          <>
+            <div style={{
+              margin: theme.space.xl, padding: theme.space.md,
+              background: theme.color.dangerSoft, borderRadius: theme.radius.md,
+              fontSize: theme.font.size.sm, color: theme.color.danger,
+            }}>
+              {error}
+            </div>
+            <DialogFooter>
+              <FooterButton onClick={onClose} kind="primary">关闭</FooterButton>
+            </DialogFooter>
+          </>
+        ) : (
+          <LinkingStep
+            accountId={account.id}
+            platform={account.platform}
             challenge={mine}
             done={mineDone}
             onClose={onClose}
