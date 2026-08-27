@@ -89,10 +89,33 @@ telegram-tt：
 - `git diff --check` 通过。
 - 依照 telegram-tt 仓库约定，本补丁没有新增测试文件。
 
-测试没有读取或打印 `.env`、平台会话目录、二维码、验证码或 2FA。全量 im-hub 测试直接使用
-测试自身配置；没有把测试指向开发库或生产库。
+上述自动测试没有加载或打印 `.env`、平台会话目录、二维码、验证码或 2FA。全量 im-hub 测试
+直接使用测试自身配置；没有把测试指向开发库或生产库。下述本地探针经用户授权只把既有环境
+加载到对应进程，从未输出、复制或记录变量值。
 
-## 5. 尚未完成
+## 5. 本地非破坏性持久化探针
+
+2026-08-27 在用户明确授权仅向本机进程加载既有环境后，启动隔离 worktree 的 server、
+telegram-tt Vite 和 Electron，并复用既有已登录 partition。Bridge v3 建立后首先报告
+`pending=0, dead=0, sending=false, error=none`，确认重启后的空队列状态重放。
+
+由于不重复 Saved Messages、也不向第三方发送新消息，本次使用了一个正文为空且绝不进入
+Telegram 的开发态哨兵 delete 事件：
+
+- 主进程在 HTTP 前只对固定哨兵模拟 retryable 失败，记录变为 `pending=1`，并观察到
+  `retryable_rejection` 与一次 `ack_timeout`。
+- 停止 Electron、移除首次入队代码后重新启动；同一 partition 仍恢复 `pending=1` 并重试，
+  证明记录跨页面/进程终止持久存在。
+- 主进程随后只对该哨兵返回 accepted ACK；状态从 `pending=1` 回到 `pending=0`，dead-letter
+  始终为 0。
+- 哨兵没有进入 Telegram、HTTP 或数据库；所有临时代码和诊断日志均已移除，三个开发进程均
+  已关闭，两个 worktree 恢复干净。
+
+这只证明真实 Electron partition 中 IndexedDB 持久化、retryable/ACK timeout 状态和 ACK 删除
+链路可运行，不能替代中央 Telegram updater、真实消息内容或完整故障矩阵，因此 Issue #12
+验收框仍保持未勾选。
+
+## 6. 尚未完成
 
 Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 
@@ -105,7 +128,7 @@ Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
 真实矩阵可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved Messages
 验收。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于本提交。
 
-## 6. 恢复顺序
+## 7. 恢复顺序
 
 1. 读根 `AGENTS.md`、本交接和 outbox 规格。
 2. 刷新 PR #16/#17/#18、Issue #11/#12、两个仓库远端与 worktree 状态。
