@@ -5,6 +5,43 @@
 用途：这是 M3-4 代码实现和自动验证后的最新恢复入口。恢复时仍须重新核对 Git、GitHub 与
 真实账号状态；本文不替代实时检查，也不把尚未完成的真实故障矩阵写成已验收。
 
+## 0. 清理上下文前 checkpoint
+
+截至 2026-08-27 本次交接保存时：
+
+- im-hub `codex/m3-telegram-outbox` 的最后一个功能/验收提交为
+  `1ddfc09e671067a84907a22d27a7a56ef357caf2`；本 checkpoint 所在提交继续推送到同一分支和
+  PR #19。telegram-tt 分支精确停在
+  `6c8d86a33dd4db37081051ccc192a36650777f15`。
+- 两个隔离 worktree 均无未提交改动，并分别与
+  `origin/codex/m3-telegram-outbox`、`imhub/codex/m3-telegram-outbox` 一致。
+- PR #19 为 OPEN、CLEAN、非 Draft，暂无 checks 或 review decision；Issue #11/#12 均 OPEN。
+  没有合并 PR，也没有关闭 Issue。
+- 本轮 Electron、telegram-tt Vite 和 im-hub server 已停止；下次不能假设任何开发进程仍在运行。
+- 真实普通群文本发送、local-to-final remap、单行去重、快速连续编辑和单调 `editVersion` 已验收；
+  PR #16/#17 与 Saved Messages 真实验收也早已完成，全部不要重复。
+- 共享 workspace `/Users/mac/Claude Code 工作区/代码/im-hub` 的既有用户改动从未被修改、清理、
+  暂存或重置。后续继续使用隔离 worktree；如果 `/private/tmp` worktree 已被系统清理，从对应远端
+  分支重新创建，不要转而在共享 workspace 工作。
+- 下一主线是 Issue #12 剩余真实故障矩阵。优先在再次确认安全目标后覆盖普通/频道删除与频道
+  编辑，再做媒体、多账号 partition、permanent rejection/dead-letter；不要把 M3-5 shadow
+  reconciliation 混入 PR #19。
+- 修改 `src/api/gramjs/**` 后必须完整停止并重启 Electron，不能把 Vite `page reload` 当成
+  SharedWorker 已更新的证据。
+
+清理上下文后可直接粘贴下面这段作为新任务：
+
+```text
+从 jojo8233/CLOT-imhub 的最新 origin/main 和现有 PR #19 继续 M3-4。先读 AGENTS.md、
+docs/superpowers/plans/2026-08-27-m3-telegram-outbox-handoff.md，以及 telegram-tt 仓库自己的
+CLAUDE.md/AGENTS.md；实时核对 PR #19、Issue #11/#12 和两个远端分支。优先复用隔离 worktree
+/private/tmp/im-hub-m3-outbox 与 /private/tmp/telegram-tt-m3-outbox；若已被清理，从远端
+codex/m3-telegram-outbox 分支重建。不要修改共享 workspace 的既有用户改动，不要重复 PR #16/#17、
+Saved Messages、普通群 TEXT-A/EDIT-10 验收。以最新交接记录为事实入口，继续 Issue #12 尚未完成的
+真实故障矩阵；任何可能向外部发送/删除消息的步骤先限定安全目标。不要合并 PR 或关闭 Issue，除非
+我再次明确授权。
+```
+
 ## 1. 当前结论
 
 - PR #16、#17、#18 均已合并；最新 `origin/main` 为 PR #18 merge commit
