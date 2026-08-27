@@ -18,6 +18,9 @@
 - PR #19 为 OPEN、CLEAN、非 Draft，暂无 checks 或 review decision；Issue #11/#12 均 OPEN。
   没有合并 PR，也没有关闭 Issue。
 - 本轮 Electron、telegram-tt Vite 和 im-hub server 已停止；下次不能假设任何开发进程仍在运行。
+- 删除证据完成后的 Vite 缓冲日志另有一条 `SESSION_REVOKED`。本轮没有尝试重新登录或清理
+  partition，也没有证据把它归因于空接收修复；下次真实账号操作前先只读确认鉴权状态，不能假设
+  既有 partition 仍可直接使用。
 - 真实普通群文本发送、local-to-final remap、单行去重、快速连续编辑和单调 `editVersion` 已验收；
   PR #16/#17 与 Saved Messages 真实验收也早已完成，全部不要重复。
 - 旧 `EDIT-10` 的两次删除确认实际已被 Telegram 平台异步执行；此前看似“消息仍在”的直接原因是
@@ -247,7 +250,8 @@ typed bridge、HTTP 与数据库状态。
 - telegram-tt `675df80d8d4b287bd1afc2dfe544b70d796581f0` 在 `recv()` 后检查空数据并抛入现有 catch，
   由 `handleConnectionError()` 执行 reconnect；对应单元测试证明空接收会调用重连而不是从
   `_recvLoop` 泄漏异常。
-- 完整停止并重启 Electron 后连接保持稳定，没有再次出现同类未捕获 worker 异常。服务端随后
+- 完整停止并重启 Electron 后在本轮删除验收窗口内保持稳定，没有再次出现同类未捕获 worker
+  异常。服务端随后
   收到一次 `/api/native/events` 200，数据库中的 `EDIT-10` 由 `1 live / 0 deleted` 收敛为
   `0 live / 1 deleted`。结合新标记没有任何数据库行，这是旧删除 update 在恢复连接后补传的
   证据；该结论不依赖消息或会话 id，也没有把 M3-5 主动 shadow reconciliation 混入 PR。
@@ -262,6 +266,9 @@ typed bridge、HTTP 与数据库状态。
   做不外发的状态/单元诊断，不能再发送或删除同类消息来碰运气。
 - 安全目标发现仍只有非 creator 的普通群，没有可证明为当前账号自建并可清理的频道/群。本轮未
   执行频道编辑/删除、图片、文件或语音外发，也没有新建频道或扩大外部影响。
+- 删除证据完成后，Vite 的缓冲输出在 `00:23:20` 记录了 `SESSION_REVOKED`。这与已修复的空接收
+  异常不同，当前证据不能判断是既有 Telegram 授权状态变化还是其他运行时原因；没有重登、删除
+  partition 或继续外发。下次恢复应先只读确认登录状态，再决定是否需要用户处理鉴权。
 
 所有阶段诊断代码均已撤销；CDP、截图与调试端口临时文件在收尾时精确删除，server、Vite、
 Electron 已停止。telegram-tt 修复已推送，im-hub 仅保留本交接与规格更新等待提交。
