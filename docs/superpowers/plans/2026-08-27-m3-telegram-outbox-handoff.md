@@ -390,3 +390,44 @@ gh pr view 19 --repo jojo8233/CLOT-imhub
 gh issue view 11 --repo jojo8233/CLOT-imhub
 gh issue view 12 --repo jojo8233/CLOT-imhub
 ```
+
+## 12. 最新续验 checkpoint：真实回复暴露 temp id 跨重启碰撞
+
+2026-08-28 在用户再次确认后，只在此前媒体验收对应的 Telegram 私聊中回复一条现有己方消息，
+发送固定标记 `IMHUB-M3-OUTBOX-20260828-REPLY-1`，并按约定保留该消息、没有删除。执行前通过
+数据库关联与 Telegram DOM 同时确认目标唯一、条目为 private、会话 hash 一致、Composer 可用；
+没有进入列表中显示为 `2 members` 的群聊。
+
+本次平台侧结果成功：新消息有唯一 final message id，outgoing status 为 `succeeded`，消息内存在
+reply preview，Composer 和 reply 状态均清空。服务端随后按顺序收到 remap 与 final upsert 两个
+`/api/native/events` 请求并各返回 200，外壳没有 pending、dead-letter 或 retry 错误提示。
+
+数据库闭环失败，因此回复矩阵仍不能勾选：
+
+- 固定标记精确正文计数为 0；按 Telegram DOM 的 final message id 关联时能找到 1 行，但该行仍是
+  08:00:52 的旧正文长度、`reply_to_platform_message_id=null` 且 `deleted_at` 非空。
+- telegram-tt 的 GramJS local message id 由“会话 last id + 模块内计数器”组成；完整页面重启会
+  重置计数器。旧设计 `<chatId>:temp:telegram-tt:<localId>` 因而复用了早先已删除消息的 temp 键。
+- remap 把旧 temp 行改到新 final id；紧随其后的 base upsert按既有幂等语义只判重复，不覆盖旧正文
+  或删除状态。两次 HTTP 200 与 outbox 清空只证明事件被接受，不能证明消息快照正确。
+
+修复限定在身份生成与兼容解析，不直接改写现有数据库行：
+
+- telegram-tt `95a65e5ba9166193abd582470f8133303c2ea72b` 的新 temp 键为
+  `<chatId>:temp:telegram-tt:<32-hex instanceId>:<localId>`；每个页面实例使用独立随机命名空间，
+  同一次发送的 local upsert 与 remap 仍共享同一键。
+- im-hub shared parser 同时接受新键和旧四段键，已有 IndexedDB pending 记录仍可补传；新旧键都继续
+  受 canonical chat/source/local id 校验。
+- 没有采用“自动覆盖不同 sentAt 的既有 final 行并清除 deleted/translation”的自愈方案，因为它会
+  对持久数据做不可逆改写。错误行原样保留为审计证据。
+
+修复后的自动验证：im-hub `pnpm typecheck` 通过；shared canonical id 聚焦测试 1 个文件、6 个用例
+通过；native route 22 个测试在派生 `_test` 库通过，并由现有 remap 用例覆盖新 temp 键；telegram-tt
+`npm run check:ts` 通过；两个 worktree 的 `git diff --check` 通过。没有重跑已完成的真实故障矩阵。
+
+下一步只做一次修复后回复复验，并需要用户对第二条固定标记
+`IMHUB-M3-OUTBOX-20260828-REPLY-2` 重新确认；冷启动两个 worktree 后，应同时看到 Telegram final/
+reply preview、服务端 remap/final upsert 200、数据库 exact body=1、reply key 非空、live=1，以及
+outbox `pending=0/dead=0`。不要删除 `REPLY-1`，不要操作其他已完成矩阵。语音继续按用户决定跳过；
+双账号同时积压仍因只有一个已绑定真实 identity 而阻塞。PR #19 与 Issue #12 保持打开，不合并、
+不关闭。

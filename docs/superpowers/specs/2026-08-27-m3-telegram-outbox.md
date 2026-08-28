@@ -17,7 +17,9 @@ Electron 主进程和 im-hub 服务端。只有收到 `event.ack` 后才从 pend
 ## 2. 中央事件来源
 
 - `newMessage` 在全局状态合并完成后生成 upsert；本地发送回显使用
-  `<chatId>:temp:telegram-tt:<localId>`。
+  `<chatId>:temp:telegram-tt:<instanceId>:<localId>`。`instanceId` 是每次页面实例启动时生成的
+  128-bit 随机十六进制值，隔离 telegram-tt 模块重载后会从头计数的 local id；服务端仍解析旧的
+  四段 temp 键，以便已有 IndexedDB pending 记录可以继续补传。
 - `updateMessageSendSucceeded` 先生成 local-to-server remap，再生成最终消息 upsert；最终键为
   `<chatId>:<serverMessageId>`。
 - `UpdateEditMessage` 与 `UpdateEditChannelMessage` 把 MTProto `pts` 带到 renderer，作为
@@ -134,8 +136,13 @@ guest。该提示不把原生 Composer 标成断开，也不阻塞后续 Telegra
   Worker 错误仍传播，并有单元回归。
 - 数据库虽登记两个 Telegram 账号，但只有一个已绑定的真实 Telegram identity；在没有第二个真实
   登录身份时不能伪造“双账号同时积压”验收。
+- 第一次真实回复标记在 Telegram 侧获得最终消息 id、成功状态和回复预览，remap/final upsert 也都
+  得到 HTTP 200；但页面重启后复用的 local id 命中了旧的已删除 temp 行，导致最终 base upsert 被
+  幂等层判成重复。该次数据库行仍是旧正文、旧时间和 deleted 状态，不能作为回复验收证据。
+  telegram-tt 临时键现加入页面实例命名空间，shared/parser 保留旧键兼容；修复后的第二次真实回复
+  仍需单独确认后冷启动验证，不能把第一次平台成功冒充成 bridge 落库闭环。
 
-当前会话已经由用户重新登录。仍需真实账号矩阵中的语音、回复，以及两个真实账号同时积压时的
+当前会话已经由用户重新登录。仍需真实账号矩阵中的语音、修复后的回复复验，以及两个真实账号同时积压时的
 partition 隔离；语音本轮明确跳过，双账号受缺少第二个登录 identity 阻塞。快速连续编辑、
 local/final remap、普通群删除、私密频道文本/编辑/删除、图片、文件、刷新、进程终止、ACK 丢失、
 断网恢复和 dead-letter 容量恢复已有上述分级证据。

@@ -463,7 +463,7 @@ describe('native bridge routes', () => {
         event: {
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'message.id-remapped', eventId: 'remap-1',
-          oldPlatformMessageId: `${telegramChatId}:temp:telegram-tt:1.000001`,
+          oldPlatformMessageId: `${telegramChatId}:temp:telegram-tt:0123456789abcdef0123456789abcdef:1.000001`,
           newPlatformMessageId: canonicalMessageId,
         },
       },

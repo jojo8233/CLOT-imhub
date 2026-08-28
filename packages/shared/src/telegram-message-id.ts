@@ -6,6 +6,7 @@ const TELEGRAM_CHAT_ID_MAX = (1n << 63n) - 1n
 const CANONICAL_INTEGER = /^-?(?:0|[1-9]\d*)$/
 const CANONICAL_LOCAL_ID = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/
 const NEGATIVE_ZERO = /^-0(?:\.0+)?$/
+const TELEGRAM_TT_INSTANCE_ID = /^[0-9a-f]{32}$/
 
 export type TelegramMessageSource = 'tdlib' | 'telegram-tt'
 
@@ -17,6 +18,7 @@ export type ParsedTelegramMessageKey = {
 } | {
   kind: 'temporary'
   source: TelegramMessageSource
+  instanceId?: string
   localMessageId: string
 })
 
@@ -78,8 +80,15 @@ export function telegramTemporaryMessageKey(
   chatId: NumericId,
   source: TelegramMessageSource,
   localMessageId: NumericId,
+  instanceId?: string,
 ): string {
   const id = normalizeLocalMessageId(localMessageId, `${source} local message id`)
+  if (instanceId !== undefined) {
+    if (source !== 'telegram-tt' || !TELEGRAM_TT_INSTANCE_ID.test(instanceId)) {
+      throw new Error('Telegram temporary message instance id is invalid')
+    }
+    return `${normalizeTelegramChatId(chatId)}:temp:${source}:${instanceId}:${id}`
+  }
   return `${normalizeTelegramChatId(chatId)}:temp:${source}:${id}`
 }
 
@@ -134,6 +143,21 @@ export function parseTelegramMessageKey(messageKey: string): ParsedTelegramMessa
       const localMessageId = normalizeLocalMessageId(rawLocalMessageId, 'Telegram local message id')
       if (`${chatId}:temp:${rawSource}:${localMessageId}` !== messageKey) return null
       return { chatId, kind: 'temporary', source: rawSource, localMessageId }
+    }
+
+    if (parts.length === 5 && parts[1] === 'temp') {
+      const [rawChatId, , rawSource, instanceId, rawLocalMessageId] = parts
+      if (rawChatId === undefined
+        || rawSource !== 'telegram-tt'
+        || instanceId === undefined
+        || !TELEGRAM_TT_INSTANCE_ID.test(instanceId)
+        || rawLocalMessageId === undefined) return null
+      const chatId = normalizeTelegramChatId(rawChatId)
+      const localMessageId = normalizeLocalMessageId(rawLocalMessageId, 'Telegram local message id')
+      if (`${chatId}:temp:${rawSource}:${instanceId}:${localMessageId}` !== messageKey) return null
+      return {
+        chatId, kind: 'temporary', source: rawSource, instanceId, localMessageId,
+      }
     }
   } catch {
     return null
