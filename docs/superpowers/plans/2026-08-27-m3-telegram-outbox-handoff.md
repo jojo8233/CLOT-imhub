@@ -28,9 +28,15 @@
   根因与修复见 `a279a6e`；它不是 outbox、鉴权或重连失败。
 - im-hub `pnpm typecheck`、34 文件 332 tests（另 1 个既有 todo）和 desktop build 通过；
   telegram-tt `npm run check:ts`、6 文件 13 tests 通过。
-- 当前只发现一个已绑定的真实 Telegram identity，无法诚实完成两个真实账号同时积压的 partition
-  验收。回复已完成修复后冷启动闭环；语音按用户决定跳过，剩余真实阻塞仅为双真实账号并发。不要
-  重复 PR #16/#17、Saved Messages、普通群 TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
+- 用户已接入两个互不相同的真实 Telegram identity；两个独立 webview 均保持登录，两个账号绑定的
+  control grant 均验证为 200。回复已完成修复后冷启动闭环；语音按用户决定跳过，剩余真实步骤是
+  两个账号同时积压的 partition 隔离。当前尚未为该步骤发送任何 Telegram 消息，不能提前写成完成；
+  不要重复 PR #16/#17、Saved Messages、普通群 TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
+- 第二账号首次接入时发现真实 partition 为 `pending=66, dead=0`，服务端每分钟对缺失的历史 delete/
+  remap 返回 409，严格有序队列因而一直保留队首。im-hub `4d2a8f8` 把中央库缺失的 delete/remap
+  作为幂等 no-op 返回 `accepted=true, duplicate=true`，并增加无 publish 的回归测试。修复后仅冷启
+  Electron、未清 IndexedDB 或会话，第二分区从 66 收敛到 0；切回第一分区仍为 0，二者均
+  `dead=0`、bridge ready。全量 34 文件、335 tests（另 1 个既有 todo）与 `pnpm typecheck` 通过。
 - 收尾时两次未处理的 `SESSION_REVOKED` 字符串已定位到唯一会直接构造同名普通 Error 的路径：
   非主 DC 文件 sender 60 秒超时，而外层只重试 `RPCError`，导致内部超时冒充会话撤销。telegram-tt
   `77788bd` 改用独立内部错误类型，按既有上限清理/重建 exported sender，耗尽后收敛为现有
@@ -41,20 +47,21 @@
 ### 清理上下文前最终状态
 
 - 本 checkpoint 覆盖的 im-hub 修复代码基线为
-  `03b9644bcbc17b605efdd086f5507d8bd0a1a54c`，telegram-tt 修复代码基线为
+  `4d2a8f8`，telegram-tt 修复代码基线为
   `77788bd20c83bdee5b1774c9ababe3aaea45435d`；两者分别已推送到对应的
   `codex/m3-telegram-outbox` 远端分支。
 - PR #19 证据评论：<https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5447923098>；
   Issue #12 故障矩阵评论：
   <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5447924313>。
-- Electron、telegram-tt Vite 和 im-hub server 已停止；4000、1234、5173 均无监听。容量/ACK
-  探针、临时 Vitest 配置、评论草稿和合成数据库记录均已精确清理。Telegram 登录数据保留在隔离
-  partition，未被清除。
+- 本轮续验时 Electron、telegram-tt Vite 和 im-hub server 仍从两个隔离 worktree 运行；后续恢复
+  不能假设这些进程仍存活。容量/ACK 探针、临时 Vitest 配置、评论草稿和合成数据库记录均已精确
+  清理；Telegram 登录数据保留在隔离 partition，未被清除。
 - 共享 workspace 的既有用户改动从未被修改、暂存、重置或清理。恢复时优先继续使用
   `/private/tmp/im-hub-m3-outbox` 与 `/private/tmp/telegram-tt-m3-outbox`；若系统已清理它们，分别
   从两个远端的 `codex/m3-telegram-outbox` 重建。
 - 下次先做只读实时核对；回复已完成，不要重发。语音是用户明确跳过项，不要为了凑齐矩阵主动要求
-  重测；没有第二个真实 Telegram identity 时，不得用同一身份伪造多账号隔离证据。
+  重测。双账号最终积压步骤开始前，因 Electron 冷启动已清除会话选择，必须请用户在两个账号各自
+  重新打开安全的一对一私聊，并对明确的两条固定标记做操作时确认；未经确认不得外发。
 
 清理上下文后可直接粘贴下面这段作为新任务；它取代本文后面的历史续接提示：
 
@@ -66,9 +73,11 @@ telegram-tt 自己的 CLAUDE.md/AGENTS.md；实时核对 PR #19、Issue #11/#12 
 codex/m3-telegram-outbox 重建。不要修改共享 workspace 的既有用户改动，不要重复 PR #16/#17、
 Saved Messages、普通群 TEXT-A/EDIT-10，也不要重复已经完成的私密频道文本/编辑/删除、图片、
 文件、刷新、Electron 终止、ACK 丢失、断网恢复和 dead-letter 容量探针。语音按用户决定跳过；
-回复已完成修复后冷启动闭环；当前剩余真实阻塞是两个真实 Telegram identity 同时积压的 partition
-隔离。收尾的裸 SESSION_REVOKED 已定位为 exported sender timeout 误用主会话文案，由 telegram-tt
-77788bd 修复并完成只读冷启动验证，不要再重复。任何可能外发或
+回复已完成修复后冷启动闭环；两个不同的真实 Telegram identity 已接入，第二账号的 66 条历史孤儿
+delete/remap 已由 im-hub 4d2a8f8 的幂等 ACK 修复在冷启动后排空，两个分区均为 pending/dead 0。
+当前剩余真实步骤是两账号同时积压的 partition 隔离，尚未为此发送消息。收尾的裸
+SESSION_REVOKED 已定位为 exported sender timeout 误用主会话文案，由 telegram-tt 77788bd 修复并
+完成只读冷启动验证，不要再重复。任何可能外发或
 删除消息的步骤必须先限定安全目标；没有第二身份时不得伪造双账号证据。不要合并 PR 或关闭 Issue，
 除非用户再次明确授权。
 ```
