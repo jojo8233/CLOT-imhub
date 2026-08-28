@@ -142,6 +142,11 @@ guest。该提示不把原生 Composer 标成断开，也不阻塞后续 Telegra
   也保持为独立唯一行。为避免新增外发，重放 existing/A1 与 new/A2 已有真实消息的同一确定性 base
   upsert；本机服务端停机时两个 partition 同时各为 `pending=1/dead=0`，恢复并重新挂载后各自为
   `0/0`，中央库聚合不变，证明账号隔离与重复接受幂等。
+- 主 DC 渐进媒体分片的 60 秒取消使用 `USER_CANCELED` 作为控制信号。worker method response 会把
+  它序列化成 `{ message }`；service-worker `requestPart` 监听器必须在媒体边界精准收敛该信号，
+  窗口级全局错误处理也使用相同忽略集合兜底。telegram-tt `aebe8e1` 同时覆盖两层，并用正反向测试
+  保证其他错误仍传播。两个真实账户打开含媒体私聊并跨过 60 秒和约 8 分钟复发窗口后，无
+  `USER_CANCELED`、Unhandled rejection 或弹窗，账号和 outbox 均保持正常。
 - 第一次真实回复标记在 Telegram 侧获得最终消息 id、成功状态和回复预览，remap/final upsert 也都
   得到 HTTP 200；但页面重启后复用的 local id 命中了旧的已删除 temp 行，导致最终 base upsert 被
   幂等层判成重复。该次数据库行仍是旧正文、旧时间和 deleted 状态，不能作为回复验收证据。
@@ -157,7 +162,8 @@ sender 超时复用主会话错误文案且未进入 `RPCError` 重试分支；t
 快速连续编辑、
 local/final remap、普通群删除、私密频道文本/编辑/删除、图片、文件、刷新、进程终止、ACK 丢失、
 断网恢复和 dead-letter 容量恢复已有上述分级证据。
-在这些证据写入 Issue #12 前，不关闭 Issue，也不宣称 M3-4 完整验收。
+上述证据已写入 Issue #12；按用户要求仍保持 OPEN，不关闭，也不把 M3-5 shadow 对账
+和安装包分发写成 M3-4 已上线。
 
 M3-5 仍负责 TDLib 与 telegram-tt 的 shadow reconciliation、历史缺口扫描，以及客户端未观察到
 平台 update 时的主动修复；持久 outbox 只保证已经观察并成功写入 IndexedDB 的事件可靠补传。

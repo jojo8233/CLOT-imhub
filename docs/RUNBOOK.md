@@ -277,8 +277,9 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
   已进入开发态。Signal 原生路线计划 M5，WhatsApp
   计划 M6，Zoom 延后到 M8。M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
-  但真实故障矩阵、shadow 对账和安装包分发仍未完成，不能当成已上线能力。
-- **Composer 与消息回传代码已接线、真实闭环未验收**：telegram-tt 已发 `bridge.ready/account.identity`、
+  约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。
+- **Composer 与消息回传已完成约定范围真实验收，生产闭环仍有后续门槛**：telegram-tt 已发
+  `bridge.ready/account.identity`、
   `context.changed`、`composer.state` 和 command result；TranslationDock 可驱动原生 rich editor
   与发送 attempt。telegram-tt 也会把 upsert/edit/delete/remap 先写 IndexedDB，再按 ACK
   可靠回传，并可按当前账号重试或经确认清除 dead-letter。断网、刷新、Electron 强制终止、ACK
@@ -293,7 +294,10 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   重试耗尽后收敛为 `USER_CANCELED`，真实主连接 broken 语义保持不变；修复后只读冷启动与旧 60 秒
   窗口验证通过。旧媒体 exported sender 返回 `AUTH_KEY_UNREGISTERED` 时原先没有进入相同恢复集合，
   会被开发态全局 error handler 显示成周期弹窗；telegram-tt `cc28648` 现在会有界清理并重新借用
-  sender，真正主连接的失效处理仍不变。
+  sender，真正主连接的失效处理仍不变。主 DC 渐进媒体分片的 60 秒取消信号还可能经 method
+  response 漏到窗口级错误处理，形成 `USER_CANCELED undefined` 弹窗；telegram-tt `aebe8e1` 在
+  `requestPart` 媒体层精准收敛该取消信号，并以同一忽略集合为窗口全局处理兜底，其他错误继续
+  上报。类型检查、12 文件 134 tests 和双账户跨 60 秒/约 8 分钟媒体窗口均通过。
 - **双来源已具备接线条件，canonical 去重仍待 shadow 实证**：TDLib 与 telegram-tt 现在都可能
   向同一账号落消息。M3-1 已统一 `chatId:serverMessageId`、临时命名空间和 `0005` 迁移，服务端
   也按规范键幂等处理；必须再完成真实 fixture 与 shadow 对账，才能确认两条实时链路没有重复

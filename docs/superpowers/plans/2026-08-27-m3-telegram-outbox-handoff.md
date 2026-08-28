@@ -1,11 +1,11 @@
 # M3-4 Telegram 持久事件 outbox 交接记录
 
-日期：2026-08-28
+日期：2026-08-29
 
 用途：这是 M3-4 代码实现和自动验证后的最新恢复入口。恢复时仍须重新核对 Git、GitHub 与
-真实账号状态；本文不替代实时检查，也不把尚未完成的真实故障矩阵写成已验收。
+真实账号状态；本文不替代实时检查，也不把后续 M3-5 shadow 对账写成 M3-4 已上线。
 
-## 最新续验 checkpoint（2026-08-28）
+## 最新续验 checkpoint（2026-08-29）
 
 本节晚于下面的历史 checkpoint，并取代其中“会话仍撤销、需先重新登录”和“频道/媒体/容量尚未
 执行”的旧状态：
@@ -66,14 +66,28 @@
   `pending=1, dead=0`，identity/context 绑定仍正确。服务端重启后因已知 WebSocket 不自动重连只
   刷新 host 一次，依次挂载两个 webview 后均收敛到 `pending=0, dead=0`；数据库聚合完全不变，
   证明重复接受幂等且 partition 未串写。没有新增、编辑或删除 Telegram 消息，也没有清理登录数据。
+- 用户随后报告开发态周期弹出 `USER_CANCELED undefined`。Vite 在 00:03:54、00:11:50 将它记录为
+  窗口级 unhandled rejection；同期账户、bridge、服务端和 outbox 正常。主 DC 渐进媒体分片超过
+  60 秒会用 `USER_CANCELED` 结束当前下载，worker method response 把它还原成只有 `message`、
+  没有 stack 的普通 API error，因此弹窗显示 `undefined`。现有忽略集合此前只覆盖 worker 自己的
+  `unhandledError` payload；异步 service-worker `requestPart` 监听器没有捕获 method response
+  rejection，最终进入窗口级开发错误弹窗。telegram-tt `aebe8e1` 新增统一窄判断，在渐进媒体层把
+  该取消信号收敛为无当前分片，并在窗口全局处理增加同一集合的防御性过滤；非匹配错误继续抛出、
+  记录和弹窗。两个测试在修复前稳定失败，修复后四个正反向用例通过；`npm run check:ts` 与全量
+  12 文件 134 tests 通过。完整重启 Vite/Electron 后，两个真实账户均恢复 ready、identity/context
+  绑定正确；各自 A1/A2 安全私聊加载 20 条消息和真实媒体。跨过 60 秒及此前约 8 分钟复发窗口，
+  没有新的 `USER_CANCELED`、Unhandled rejection、401、弹窗或 Electron 异常，两个 outbox 均为
+  `pending=0, dead=0`。本轮没有外发、编辑或删除消息，也没有清理登录 partition。
 
 ### 清理上下文前最终状态
 
 - 本 checkpoint 覆盖的 im-hub 行为修复代码基线为 `4d2a8f8`，本轮前的分支文档基线为
-  `1743d30`；telegram-tt 修复代码基线为 `cc28648`。两者均已推送到对应的
+  `c914a26`；telegram-tt 修复代码基线为 `aebe8e1`。两者均已推送到对应的
   `codex/m3-telegram-outbox` 远端分支。
-- PR #19 双账户证据评论：
-  <https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5455315352>；Issue #12 对应评论：
+- PR #19 最新媒体弹窗证据评论：
+  <https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5456177109>；Issue #12 对应评论：
+  <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5456178736>。此前双账户证据仍见
+  PR <https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5455315352> 与 Issue
   <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5455317071>。PR 与 Issue 都保持
   OPEN，没有合并或关闭。
 - 本轮续验时 Electron、telegram-tt Vite 和 im-hub server 仍从两个隔离 worktree 运行；后续恢复
@@ -84,8 +98,9 @@
   从两个远端的 `codex/m3-telegram-outbox` 重建。
 - 下次先做只读实时核对；回复与双真实账户 partition 均已完成，不要重发 A1/A2 或其他验收标记，
   也不要删除已保留的三条消息。语音是用户明确跳过项，不要为了凑齐矩阵主动要求重测。M3-5 的
-  TDLib/fork shadow reconciliation 是后续独立范围，不要混入 PR #19。只有用户再次明确授权时才
-  合并 PR 或关闭 Issue。
+  TDLib/fork shadow reconciliation 是后续独立范围，不要混入 PR #19。`USER_CANCELED` 渐进媒体
+  弹窗也已由 `aebe8e1` 完成自动与双账户真实复验，不要重复打开或发送标记补证。只有用户再次明确
+  授权时才合并 PR 或关闭 Issue。
 
 清理上下文后可直接粘贴下面这段作为新任务；它取代本文后面的历史续接提示：
 
@@ -105,8 +120,10 @@ delete/remap 已由 im-hub 4d2a8f8 的幂等 ACK 修复在冷启动后排空。�
 SESSION_REVOKED 已定位为 exported sender timeout 误用主会话文案，由 telegram-tt 77788bd 修复并
 完成只读冷启动验证，不要再重复。开发态周期弹出的 `AUTH_KEY_UNREGISTERED` 是旧媒体 exported
 sender 未进入恢复集合，由 telegram-tt cc28648 加入有界 cleanup/reborrow 并覆盖回归测试；主 sender
-语义未改。语音按用户决定跳过，M3-5 shadow 对账另行进行。不要合并 PR 或关闭 Issue，除非用户
-再次明确授权。
+语义未改。后续的 `USER_CANCELED undefined` 周期弹窗来自渐进媒体 method response rejection 漏出
+到窗口级全局处理，由 telegram-tt aebe8e1 在媒体层精准收敛并增加全局兜底；四个正反向用例通过；
+两个账户跨 60 秒/约 8 分钟窗口复验也通过，不要重复。语音按用户决定跳过，M3-5 shadow 对账
+另行进行。不要合并 PR 或关闭 Issue，除非用户再次明确授权。
 ```
 
 ## 0. 前次清理上下文 checkpoint（历史）
