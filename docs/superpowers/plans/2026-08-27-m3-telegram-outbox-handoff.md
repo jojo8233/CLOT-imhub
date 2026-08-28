@@ -54,25 +54,38 @@
   跨过此前约 10 分钟的复发间隔，未再出现 `AUTH_KEY_UNREGISTERED`。22:54 的四个媒体请求仅收敛为
   已列入忽略集合的 `USER_CANCELED`，没有 401、connection broken 或弹窗；两个账号最终均为
   `pending=0, dead=0`、bridge ready、Composer 可用。本轮仍未发送消息。
+- 双真实账户最终 partition 续验已完成。用户在操作时确认两个目标都是安全的一对一会话，并确认
+  保留 `IMHUB-M3-OUTBOX-20260828-A1` / `A2`；existing 账户经 im-hub Composer 发出 A1，用户在
+  new 账户独立手动发出 A1、A2。额外的 new/A1 已由用户确认是独立操作，不是串号，三条均保留。
+  Telegram DOM 中两个 webview 的 identity/current conversation 都与各自 host 绑定一致，A1 在
+  existing/new 各为唯一 own，A2 只在 new 为唯一 own；existing/A1 与 new/A2 相隔 20 秒。数据库
+  聚合分别为 `A1|existing|out|1|1|1|1`、`A1|new|out|1|1|1|1`、
+  `A2|new|out|1|1|1|1`。可逆 draft 路由探针只命中 existing，new 始终为空，随后两边均清空且
+  没有发送。为补齐同一时刻积压而不再外发 Telegram 消息，短暂停止本机服务端，把 existing/A1
+  与 new/A2 的同一确定性 base upsert 重放到各自真实 identity partition；两边同时观测到
+  `pending=1, dead=0`，identity/context 绑定仍正确。服务端重启后因已知 WebSocket 不自动重连只
+  刷新 host 一次，依次挂载两个 webview 后均收敛到 `pending=0, dead=0`；数据库聚合完全不变，
+  证明重复接受幂等且 partition 未串写。没有新增、编辑或删除 Telegram 消息，也没有清理登录数据。
 
 ### 清理上下文前最终状态
 
-- 本 checkpoint 覆盖的 im-hub 修复代码基线为
-  `4d2a8f8`，telegram-tt 修复代码基线为
-  `cc28648`；两者分别已推送到对应的
+- 本 checkpoint 覆盖的 im-hub 行为修复代码基线为 `4d2a8f8`，本轮前的分支文档基线为
+  `1743d30`；telegram-tt 修复代码基线为 `cc28648`。两者均已推送到对应的
   `codex/m3-telegram-outbox` 远端分支。
-- PR #19 证据评论：<https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5447923098>；
-  Issue #12 故障矩阵评论：
-  <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5447924313>。
+- PR #19 双账户证据评论：
+  <https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5455315352>；Issue #12 对应评论：
+  <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5455317071>。PR 与 Issue 都保持
+  OPEN，没有合并或关闭。
 - 本轮续验时 Electron、telegram-tt Vite 和 im-hub server 仍从两个隔离 worktree 运行；后续恢复
   不能假设这些进程仍存活。容量/ACK 探针、临时 Vitest 配置、评论草稿和合成数据库记录均已精确
   清理；Telegram 登录数据保留在隔离 partition，未被清除。
 - 共享 workspace 的既有用户改动从未被修改、暂存、重置或清理。恢复时优先继续使用
   `/private/tmp/im-hub-m3-outbox` 与 `/private/tmp/telegram-tt-m3-outbox`；若系统已清理它们，分别
   从两个远端的 `codex/m3-telegram-outbox` 重建。
-- 下次先做只读实时核对；回复已完成，不要重发。语音是用户明确跳过项，不要为了凑齐矩阵主动要求
-  重测。双账号最终积压步骤开始前，因 Electron 冷启动已清除会话选择，必须请用户在两个账号各自
-  重新打开安全的一对一私聊，并对明确的两条固定标记做操作时确认；未经确认不得外发。
+- 下次先做只读实时核对；回复与双真实账户 partition 均已完成，不要重发 A1/A2 或其他验收标记，
+  也不要删除已保留的三条消息。语音是用户明确跳过项，不要为了凑齐矩阵主动要求重测。M3-5 的
+  TDLib/fork shadow reconciliation 是后续独立范围，不要混入 PR #19。只有用户再次明确授权时才
+  合并 PR 或关闭 Issue。
 
 清理上下文后可直接粘贴下面这段作为新任务；它取代本文后面的历史续接提示：
 
@@ -85,14 +98,15 @@ codex/m3-telegram-outbox 重建。不要修改共享 workspace 的既有用户�
 Saved Messages、普通群 TEXT-A/EDIT-10，也不要重复已经完成的私密频道文本/编辑/删除、图片、
 文件、刷新、Electron 终止、ACK 丢失、断网恢复和 dead-letter 容量探针。语音按用户决定跳过；
 回复已完成修复后冷启动闭环；两个不同的真实 Telegram identity 已接入，第二账号的 66 条历史孤儿
-delete/remap 已由 im-hub 4d2a8f8 的幂等 ACK 修复在冷启动后排空，两个分区均为 pending/dead 0。
-当前剩余真实步骤是两账号同时积压的 partition 隔离，尚未为此发送消息。收尾的裸
+delete/remap 已由 im-hub 4d2a8f8 的幂等 ACK 修复在冷启动后排空。双真实账户最终 partition 也已
+完成：existing/A1 与 new/A2 的真实消息归属唯一；复用二者的确定性 base upsert，在本机服务端停机
+窗口同时观测到两个 partition 各 pending 1/dead 0，恢复后各自收敛为 0/0，数据库无新增副本。用户
+在 new 另有一条独立手动 A1，已确认不是串号，A1/A2 全部保留且不要重发或删除。收尾的裸
 SESSION_REVOKED 已定位为 exported sender timeout 误用主会话文案，由 telegram-tt 77788bd 修复并
 完成只读冷启动验证，不要再重复。开发态周期弹出的 `AUTH_KEY_UNREGISTERED` 是旧媒体 exported
 sender 未进入恢复集合，由 telegram-tt cc28648 加入有界 cleanup/reborrow 并覆盖回归测试；主 sender
-语义未改。任何可能外发或
-删除消息的步骤必须先限定安全目标；没有第二身份时不得伪造双账号证据。不要合并 PR 或关闭 Issue，
-除非用户再次明确授权。
+语义未改。语音按用户决定跳过，M3-5 shadow 对账另行进行。不要合并 PR 或关闭 Issue，除非用户
+再次明确授权。
 ```
 
 ## 0. 前次清理上下文 checkpoint（历史）

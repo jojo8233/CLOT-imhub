@@ -1,7 +1,7 @@
 # M3-4 Telegram 持久事件 outbox 与可靠回传
 
 日期：2026-08-27
-状态：代码、自动验证与修复后回复闭环已完成；真实账号故障矩阵仍受双账号阻塞，语音按用户决定跳过
+状态：代码、自动验证与约定范围的真实故障矩阵已完成；语音按用户决定跳过，M3-5 shadow 对账另行进行
 
 ## 1. 范围
 
@@ -137,8 +137,11 @@ guest。该提示不把原生 Composer 标成断开，也不阻塞后续 Telegra
 - Wi-Fi 断开约 10–15 秒再恢复后，Telegram 列表和 im-hub 均自动恢复。恢复时一个失效 Blob 的装饰
   性图片取色触发开发版全局弹窗；telegram-tt `a279a6e` 对明确的图片解码错误降级到主题色，其他
   Worker 错误仍传播，并有单元回归。
-- 数据库虽登记两个 Telegram 账号，但只有一个已绑定的真实 Telegram identity；在没有第二个真实
-  登录身份时不能伪造“双账号同时积压”验收。
+- 两个不同的真实 Telegram identity 均已绑定并各自打开安全的一对一会话。existing/A1 与 new/A2
+  的 Telegram DOM、host identity/context 和中央库行均一一对应；用户另外在 new 手动发送的 A1
+  也保持为独立唯一行。为避免新增外发，重放 existing/A1 与 new/A2 已有真实消息的同一确定性 base
+  upsert；本机服务端停机时两个 partition 同时各为 `pending=1/dead=0`，恢复并重新挂载后各自为
+  `0/0`，中央库聚合不变，证明账号隔离与重复接受幂等。
 - 第一次真实回复标记在 Telegram 侧获得最终消息 id、成功状态和回复预览，remap/final upsert 也都
   得到 HTTP 200；但页面重启后复用的 local id 命中了旧的已删除 temp 行，导致最终 base upsert 被
   幂等层判成重复。该次数据库行仍是旧正文、旧时间和 deleted 状态，不能作为回复验收证据。
@@ -147,8 +150,8 @@ guest。该提示不把原生 Composer 标成断开，也不阻塞后续 Telegra
   非空 reply key、唯一平台键、live 与出站方向均为 1，桌面壳没有 pending/dead/retry/rejected 提示。
   第一次错误行仍原样保留，没有用覆盖旧数据的方式制造通过结果。
 
-本次用户重新登录后的会话已完成修复后回复复验；语音本轮明确跳过，双账号同时积压的 partition
-隔离仍受缺少第二个登录 identity 阻塞。收尾日志中的裸 `SESSION_REVOKED` 已定位为非主 DC 文件
+本次用户重新登录后的会话已完成修复后回复和双真实账户 partition 复验；语音本轮明确跳过。收尾
+日志中的裸 `SESSION_REVOKED` 已定位为非主 DC 文件
 sender 超时复用主会话错误文案且未进入 `RPCError` 重试分支；telegram-tt `77788bd` 使用独立内部
 超时类型并保留真实主连接 broken 语义。类型检查、主连接回归与跨旧 60 秒窗口的只读冷启动通过。
 快速连续编辑、

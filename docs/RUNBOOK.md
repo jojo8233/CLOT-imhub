@@ -261,8 +261,10 @@ Telegram：
    attempt；M3-4 已实现 IndexedDB message outbox、ACK/退避、dead-letter、运行指标，以及按当前
    账号重试/明确清理 dead-letter 的恢复操作。刷新、进程终止、ACK 丢失、断网恢复、私密频道文本/
    编辑/删除、图片、文件和满容量恢复已有分级证据；第一次真实回复暴露并修复了页面重启后 local id
-   复用造成的 temp remap 碰撞，第二次真实回复已完成冷启动平台与数据库闭环。语音按用户决定跳过；
-   上线前仍要补两个真实账号同时积压的 partition 隔离，并完成 fixture/shadow 对账。
+   复用造成的 temp remap 碰撞，第二次真实回复已完成冷启动平台与数据库闭环。两个真实账号的
+   partition 隔离也已通过现有真实消息的确定性 base upsert 重放覆盖：服务端停机时两边同时各为
+   `pending=1/dead=0`，恢复后各自收敛为 `0/0`，中央库无新增副本。语音按用户决定跳过；上线前仍要
+   完成 fixture/shadow 对账。
    这些完成前仍不能作为生产闭环。
 
 ---
@@ -284,7 +286,8 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   重启后 local id 复用造成的 temp remap 碰撞，新 temp 键加入页面实例命名空间后，第二次真实回复
   已从冷启动完成 final/reply preview、唯一落库和 outbox 无积压/错误提示闭环。语音按用户决定
   跳过；服务端把中央库缺失的 delete/remap 生命周期重放作为幂等 no-op 接受，避免历史孤儿事件
-  永久阻塞账号 outbox。两个真实账号并发仍未完成，因此还不是已验收的完整消息闭环。
+  永久阻塞账号 outbox。两个真实账号已用各自真实消息完成同时积压、恢复收敛和数据库无副本增长
+  的 partition 验收；完整生产闭环仍受后续 fixture/shadow 对账与安装包分发约束。
   收尾出现的裸 `SESSION_REVOKED` 已定位为非主 DC 文件 sender 超时复用主会话错误文案，且普通
   Error 没有进入只识别 `RPCError` 的清理/重试分支。telegram-tt `77788bd` 使用独立内部超时类型，
   重试耗尽后收敛为 `USER_CANCELED`，真实主连接 broken 语义保持不变；修复后只读冷启动与旧 60 秒
