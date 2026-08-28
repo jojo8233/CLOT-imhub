@@ -16,6 +16,11 @@ import {
 import { z } from 'zod'
 import type { MessageIngestor, UpsertConversationInput } from '../../ingest/ingestor.js'
 import type { MessageIdRemapResult, MessagePublicationSnapshot } from '../../ingest/repo.js'
+import {
+  buildTelegramDeleteObservation,
+  buildTelegramRemapObservation,
+  type TelegramShadowObservation,
+} from '../../shadow/telegram.js'
 import { authorizeNativeControl } from '../native-control.js'
 
 const id = z.string().trim().min(1).max(512)
@@ -89,11 +94,13 @@ interface NativeEventRepo {
     accountId: string,
     platformMessageId: string,
     deletedAt: Date,
+    shadowObservation?: TelegramShadowObservation,
   ): Promise<{ messageId: string; conversationId: string; changed: boolean } | null>
   remapMessageId(
     accountId: string,
     oldPlatformMessageId: string,
     newPlatformMessageId: string,
+    shadowObservation?: TelegramShadowObservation,
   ): Promise<MessageIdRemapResult | null>
 }
 
@@ -182,7 +189,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     }
 
     if (event.type === 'message.deleted') {
-      const result = await deleteNativeMessage(deps.repo, account.id, event)
+      const result = await deleteNativeMessage(deps.repo, account.id, account.platform, event)
       // 删除是幂等的状态事实；中央库没有该消息时，目标状态已经成立。
       if (!result) return { accepted: true, duplicate: true }
       if (result.changed) {
@@ -196,7 +203,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       return { accepted: true, duplicate: !result.changed }
     }
 
-    const result = await remapNativeMessage(deps.repo, account.id, event)
+    const result = await remapNativeMessage(deps.repo, account.id, account.platform, event)
     // outbox 保证同一消息的 temp upsert 先于 remap。两端都不存在说明没有待合并行，
     // 后续 final upsert 可直接以规范键落库，因此该重放是已完成的 no-op。
     if (!result) return { accepted: true, duplicate: true }
@@ -247,15 +254,44 @@ async function ingestNativeMessage(
     sentAt: new Date(event.message.sentAt),
     raw: event.message.raw,
   }
-  return ingestor.ingestDetailed(message, onStored)
+  return ingestor.ingestDetailed(message, onStored, 'telegram-tt')
 }
 
-function deleteNativeMessage(repo: NativeEventRepo, accountId: string, event: NativeMessageDeletedEvent) {
-  return repo.markMessageDeleted(accountId, event.platformMessageId, new Date(event.deletedAt))
+function deleteNativeMessage(
+  repo: NativeEventRepo,
+  accountId: string,
+  platform: Platform,
+  event: NativeMessageDeletedEvent,
+) {
+  return repo.markMessageDeleted(
+    accountId,
+    event.platformMessageId,
+    new Date(event.deletedAt),
+    platform === 'telegram'
+      ? buildTelegramDeleteObservation(accountId, 'telegram-tt', event.platformMessageId)
+      : undefined,
+  )
 }
 
-function remapNativeMessage(repo: NativeEventRepo, accountId: string, event: NativeMessageIdRemappedEvent) {
-  return repo.remapMessageId(accountId, event.oldPlatformMessageId, event.newPlatformMessageId)
+function remapNativeMessage(
+  repo: NativeEventRepo,
+  accountId: string,
+  platform: Platform,
+  event: NativeMessageIdRemappedEvent,
+) {
+  return repo.remapMessageId(
+    accountId,
+    event.oldPlatformMessageId,
+    event.newPlatformMessageId,
+    platform === 'telegram'
+      ? buildTelegramRemapObservation(
+          accountId,
+          'telegram-tt',
+          event.oldPlatformMessageId,
+          event.newPlatformMessageId,
+        )
+      : undefined,
+  )
 }
 
 function isCanonicalTelegramChatId(chatId: string): boolean {

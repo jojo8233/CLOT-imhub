@@ -77,8 +77,9 @@
    输入坞状态机、服务端 owner 校验、归一化、编辑/删除与 id alias 去重。协议和边界见
    `2026-08-26-m2-native-bridge.md`。
 3. **M3 完成 Telegram 闭环（执行中）**：持久化 partition webview、账号控制、原生 Composer
-   与 IndexedDB 消息 outbox 已接入通用桥接；仍须验证多开、故障恢复、图片/贴纸、长期存档
-   和 TDLib/telegram-tt shadow 对账，不能把代码接线写成已验收闭环。
+   与 IndexedDB 消息 outbox 已接入通用桥接，约定范围的真实故障矩阵已完成。M3-5
+   已建立 TDLib/telegram-tt 来源观测账本和离线报告；仍须完成真实 shadow fixture、历史缺口
+   修复、长期观察和切换/回滚门槛，不能把观测接线写成已验收闭环。
 4. **M5/M6 再接 Signal 与 WhatsApp**：复用已验证的宿主与桥接协议；Zoom 延后。
 
 ## Signal 窗口覆盖原型的历史与边界

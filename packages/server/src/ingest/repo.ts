@@ -1,5 +1,7 @@
 import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../db/types.js'
+import { recordTelegramShadowObservation } from '../shadow/telegram-repo.js'
+import type { TelegramShadowObservation } from '../shadow/telegram.js'
 import {
   messageRevision,
   type InsertMessageInput,
@@ -172,10 +174,15 @@ export class KyselyMessageRepo implements MessageRepo {
   }
 
   async insertMessage(input: InsertMessageInput): Promise<InsertMessageResult> {
+    this.assertShadowObservationAccount(input.accountId, input.shadowObservation)
     return this.serializeAccountLifecycle(input.accountId, () => this.db.transaction().execute(async (trx) => {
       await this.lockAccountMessageLifecycle(trx, input.accountId)
       const existing = await this.findMessage(trx, input.accountId, input.platformMessageId)
-      if (existing) return this.updateExistingMessage(trx, existing, input)
+      if (existing) {
+        const result = await this.updateExistingMessage(trx, existing, input)
+        await this.recordShadowObservation(trx, input.shadowObservation)
+        return result
+      }
 
       // 并发首次上报靠唯一约束兜底。DO NOTHING 后若没返回行，说明另一个事务抢先
       // 插入；再按 id/alias 读取即可，不能退回“先查再盲插”。
@@ -201,11 +208,16 @@ export class KyselyMessageRepo implements MessageRepo {
         .returning('id')
         .executeTakeFirst()
 
-      if (inserted) return { id: inserted.id, isNew: true, contentChanged: false }
+      if (inserted) {
+        await this.recordShadowObservation(trx, input.shadowObservation)
+        return { id: inserted.id, isNew: true, contentChanged: false }
+      }
 
       const raced = await this.findMessage(trx, input.accountId, input.platformMessageId)
       if (!raced) throw new Error('message conflict occurred but canonical row was not found')
-      return this.updateExistingMessage(trx, raced, input)
+      const result = await this.updateExistingMessage(trx, raced, input)
+      await this.recordShadowObservation(trx, input.shadowObservation)
+      return result
     }))
   }
 
@@ -359,9 +371,12 @@ export class KyselyMessageRepo implements MessageRepo {
     accountId: string,
     platformMessageId: string,
     deletedAt: Date,
+    shadowObservation?: TelegramShadowObservation,
   ): Promise<{ messageId: string; conversationId: string; changed: boolean } | null> {
+    this.assertShadowObservationAccount(accountId, shadowObservation)
     return this.serializeAccountLifecycle(accountId, () => this.db.transaction().execute(async (trx) => {
       await this.lockAccountMessageLifecycle(trx, accountId)
+      await this.recordShadowObservation(trx, shadowObservation)
       const existing = await this.findMessage(trx, accountId, platformMessageId)
       if (!existing) return null
       const result = await trx.updateTable('messages')
@@ -381,8 +396,13 @@ export class KyselyMessageRepo implements MessageRepo {
     accountId: string,
     oldPlatformMessageId: string,
     newPlatformMessageId: string,
+    shadowObservation?: TelegramShadowObservation,
   ): Promise<MessageIdRemapResult | null> {
+    this.assertShadowObservationAccount(accountId, shadowObservation)
     if (oldPlatformMessageId === newPlatformMessageId) {
+      if (shadowObservation) {
+        await recordTelegramShadowObservation(this.db, shadowObservation)
+      }
       const same = await this.findMessage(this.db, accountId, newPlatformMessageId)
       return same ? {
         messageId: same.id, conversationId: same.conversation_id,
@@ -392,6 +412,7 @@ export class KyselyMessageRepo implements MessageRepo {
 
     return this.serializeAccountLifecycle(accountId, () => this.db.transaction().execute(async (trx) => {
       await this.lockAccountMessageLifecycle(trx, accountId)
+      await this.recordShadowObservation(trx, shadowObservation)
       let oldRow = await this.findMessage(trx, accountId, oldPlatformMessageId)
       let newRow = await this.findMessage(trx, accountId, newPlatformMessageId)
       // 翻译 worker 按内部 UUID 锁 messages 行，不走 platform id advisory lock。
@@ -522,5 +543,21 @@ export class KyselyMessageRepo implements MessageRepo {
       })
       .where('id', '=', conversationId)
       .execute()
+  }
+
+  private async recordShadowObservation(
+    trx: Transaction<Database>,
+    observation: TelegramShadowObservation | undefined,
+  ): Promise<void> {
+    if (observation) await recordTelegramShadowObservation(trx, observation)
+  }
+
+  private assertShadowObservationAccount(
+    accountId: string,
+    observation: TelegramShadowObservation | undefined,
+  ): void {
+    if (observation && observation.accountId !== accountId) {
+      throw new Error('shadow observation account does not match message account')
+    }
   }
 }

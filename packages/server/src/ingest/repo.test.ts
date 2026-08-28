@@ -140,6 +140,44 @@ describe('KyselyMessageRepo.insertMessage', () => {
     expect(rows).toHaveLength(1)
   })
 
+  it('消息与 shadow 来源观测在同一入库事务中收敛', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await repo.insertMessage(msg({
+      conversationId,
+      shadowObservation: {
+        accountId, source: 'tdlib', eventType: 'upsert',
+        factKey: 'upsert:555:base', semanticHash: 'a'.repeat(64),
+      },
+    }))
+
+    const observation = await db.selectFrom('telegram_shadow_observations')
+      .select(['source', 'fact_key', 'observation_count'])
+      .where('account_id', '=', accountId)
+      .executeTakeFirstOrThrow()
+    expect(observation).toEqual({
+      source: 'tdlib', fact_key: 'upsert:555:base', observation_count: 1,
+    })
+  })
+
+  it('拒绝把 shadow 观测记到其他账号，且不留半条消息', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await expect(repo.insertMessage(msg({
+      conversationId,
+      shadowObservation: {
+        accountId: '00000000-0000-0000-0000-000000000000',
+        source: 'tdlib', eventType: 'upsert',
+        factKey: 'upsert:555:base', semanticHash: 'a'.repeat(64),
+      },
+    }))).rejects.toThrow('shadow observation account does not match message account')
+
+    const rows = await db.selectFrom('messages').select('id').execute()
+    expect(rows).toHaveLength(0)
+  })
+
   it('带较新 editedAt 的事件更新正文并使旧译文失效', async () => {
     const { id: conversationId } = await repo.upsertConversation({
       accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,

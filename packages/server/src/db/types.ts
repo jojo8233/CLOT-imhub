@@ -1,5 +1,6 @@
 import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 import type { AccountStatus, Direction, Platform, Role } from '@im-hub/shared'
+import type { TelegramShadowEventType, TelegramShadowSource } from '../shadow/telegram.js'
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
 type NullableText = ColumnType<string | null, string | null | undefined, string | null>
@@ -92,6 +93,18 @@ export interface MessageTranslationsTable {
   created_at: Generated<Timestamp>
 }
 
+export interface TelegramShadowObservationsTable {
+  account_id: string
+  source: TelegramShadowSource
+  event_type: TelegramShadowEventType
+  fact_key: string
+  semantic_hash: string
+  has_conflict: Generated<boolean>
+  observation_count: Generated<number>
+  first_observed_at: Timestamp
+  last_observed_at: Timestamp
+}
+
 export interface Database {
   users: UsersTable
   teams: TeamsTable
@@ -101,4 +114,5 @@ export interface Database {
   messages: MessagesTable
   message_translations: MessageTranslationsTable
   message_id_aliases: MessageIdAliasesTable
+  telegram_shadow_observations: TelegramShadowObservationsTable
 }

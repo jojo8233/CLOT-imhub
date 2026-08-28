@@ -3,14 +3,17 @@ import type { FastifyInstance } from 'fastify'
 import { Kysely, PostgresDialect } from 'kysely'
 import pg from 'pg'
 import { NATIVE_BRIDGE_PROTOCOL_VERSION, type Role } from '@im-hub/shared'
+import { signNativeControlGrant } from '../../auth/native-control-grant.js'
 import type { Database } from '../../db/types.js'
 import type { MessagePublicationSnapshot } from '../../ingest/repo.js'
 import { testDatabaseUrl } from '../../db/test-db.js'
 import type { ActorRepo } from '../actor.js'
 
+const TEST_JWT_SECRET = 'native-route-test-secret-32-chars'
+
 process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
-process.env.JWT_SECRET ??= 'native-route-test-secret-32-chars'
+process.env.JWT_SECRET = TEST_JWT_SECRET
 
 let buildServer: typeof import('../server.js').buildServer
 let signSession: typeof import('../../auth/session.js').signSession
@@ -346,6 +349,7 @@ describe('native bridge routes', () => {
     expect(ingestDetailed).toHaveBeenCalledWith(
       expect.objectContaining({ platform: 'telegram', accountId, platformMessageId: canonicalMessageId }),
       expect.any(Function),
+      'telegram-tt',
     )
     expect(publish).toHaveBeenCalledWith(agentId, expect.objectContaining({ type: 'message' }))
   })
@@ -457,6 +461,15 @@ describe('native bridge routes', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ accepted: true, duplicate: true })
+    expect(markMessageDeleted).toHaveBeenCalledWith(
+      accountId,
+      canonicalMessageId,
+      new Date('2026-08-26T02:00:00.000Z'),
+      expect.objectContaining({
+        accountId, source: 'telegram-tt', eventType: 'delete',
+        factKey: `delete:${canonicalMessageId}`,
+      }),
+    )
     expect(publish).not.toHaveBeenCalled()
   })
 
@@ -477,7 +490,48 @@ describe('native bridge routes', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ accepted: true, duplicate: true })
+    expect(remapMessageId).toHaveBeenCalledWith(
+      accountId,
+      `${telegramChatId}:temp:telegram-tt:0123456789abcdef0123456789abcdef:1.000001`,
+      canonicalMessageId,
+      expect.objectContaining({
+        accountId, source: 'telegram-tt', eventType: 'remap',
+        factKey: expect.stringContaining(`:${canonicalMessageId}`),
+      }),
+    )
     expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('非 Telegram native 生命周期事件不写入 Telegram shadow 账本', async () => {
+    const signalAccount = await db.updateTable('accounts')
+      .set({ platform: 'signal' })
+      .where('id', '=', accountId)
+      .returning(['platform_account_external_id', 'native_control_version'])
+      .executeTakeFirstOrThrow()
+    const { grant: signalGrant } = await signNativeControlGrant({
+      userId: agentId,
+      accountId,
+      platform: 'signal',
+      expectedPlatformAccountExternalId: signalAccount.platform_account_external_id ?? '778899',
+      controlVersion: signalAccount.native_control_version,
+    }, TEST_JWT_SECRET)
+    markMessageDeleted.mockResolvedValue(null)
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(signalGrant),
+      payload: {
+        accountId,
+        event: {
+          protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+          type: 'message.deleted', eventId: 'signal-delete',
+          platformMessageId: 'signal-message-1', deletedAt: '2026-08-26T02:00:00.000Z',
+        },
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(markMessageDeleted).toHaveBeenCalledWith(
+      accountId, 'signal-message-1', new Date('2026-08-26T02:00:00.000Z'), undefined,
+    )
   })
 
   it('remap 已合并删除内部行时不再发布迟到的幽灵 message', async () => {

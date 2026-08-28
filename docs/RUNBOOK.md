@@ -264,7 +264,9 @@ Telegram：
    复用造成的 temp remap 碰撞，第二次真实回复已完成冷启动平台与数据库闭环。两个真实账号的
    partition 隔离也已通过现有真实消息的确定性 base upsert 重放覆盖：服务端停机时两边同时各为
    `pending=1/dead=0`，恢复后各自收敛为 `0/0`，中央库无新增副本。语音按用户决定跳过；上线前仍要
-   完成 fixture/shadow 对账。
+   完成 fixture/shadow 对账。M3-5 第一 checkpoint 已增加 `tdlib` / `telegram-tt`
+   来源观测账本、语义指纹和带静默窗口的对账报告；真实 shadow fixture、历史扫描、
+   主动修复与切换门槛仍未完成。
    这些完成前仍不能作为生产闭环。
 
 ---
@@ -298,10 +300,19 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   response 漏到窗口级错误处理，形成 `USER_CANCELED undefined` 弹窗；telegram-tt `aebe8e1` 在
   `requestPart` 媒体层精准收敛该取消信号，并以同一忽略集合为窗口全局处理兜底，其他错误继续
   上报。类型检查、12 文件 134 tests 和双账户跨 60 秒/约 8 分钟媒体窗口均通过。
-- **双来源已具备接线条件，canonical 去重仍待 shadow 实证**：TDLib 与 telegram-tt 现在都可能
+- **双来源已具备观测条件，真实 shadow 仍待实证**：TDLib 与 telegram-tt 现在都可能
   向同一账号落消息。M3-1 已统一 `chatId:serverMessageId`、临时命名空间和 `0005` 迁移，服务端
-  也按规范键幂等处理；必须再完成真实 fixture 与 shadow 对账，才能确认两条实时链路没有重复
-  或错误覆盖。在此之前不能退出 TDLib，也不能宣称双来源安全。
+  也按规范键幂等处理。`0007_telegram_shadow_observations` 对两条链路的 upsert/delete/remap
+  保存不含正文与 raw 的语义指纹，同源重放不会制造新事实。运行下列只读报告：
+
+  ```bash
+  pnpm --filter @im-hub/server shadow-report <account-uuid> 24 120
+  ```
+
+  最后两个参数分别是观察小时数和静默秒数。报告给出 `matched` / `mismatched` /
+  `tdlibOnly` / `telegramTtOnly`、事件类型分组和有上限的 fact key 样本，不输出正文或账号
+  平台身份。仍必须完成真实 fixture、解释所有差异并设定观察周期，才能确认两条链路
+  没有不可解释的重复或错误覆盖。在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。

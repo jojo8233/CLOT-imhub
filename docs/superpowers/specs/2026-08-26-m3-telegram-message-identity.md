@@ -1,7 +1,8 @@
 # M3 Telegram 消息身份与 Bridge v2
 
 日期：2026-08-26
-状态：M3-1 基础与 M3-4 持久消息 outbox 已实现；真实账号 fixture 与 shadow 对账仍待后续验收
+状态：M3-1 基础、M3-4 持久消息 outbox 与 M3-5 来源观测账本已实现；真实账号
+fixture、历史缺口修复与切换门槛仍待后续验收
 
 > 本文记录版本 2 引入的消息身份字段；M3-4 为 `outbox.status` 将当前协议升级到版本 3，
 > 消息键、`attemptId` 与 `editVersion` 语义保持不变。
@@ -69,6 +70,6 @@ telegram-tt 已写入的数据；只移除 `edit_version` 列，canonical id 与
 单调 editVersion、服务端 canonical 拒绝和 repo 翻译 revision。0005 migration 已在
 `imhub_test` 用合成的旧最终/临时/reply 数据执行并断言结果与旧 alias。
 
-M3-4 已接通 telegram-tt 消息 outbox 与 ACK/重试；仍未宣称完成真实 Telegram 账号的
-私聊/群/频道/topic 双来源 fixture、故障矩阵和 TDLib + fork shadow 对账。这些继续由
-M3-4 真实验收与 M3-5 完成。
+M3-4 已接通 telegram-tt 消息 outbox 与 ACK/重试，并完成约定范围的真实故障矩阵。
+M3-5 以不含正文和 raw 的语义指纹分别记录 `tdlib` / `telegram-tt` 观测，但仍未宣称完成
+真实 Telegram 账号的私聊/群/频道/topic 双来源 fixture、历史缺口修复和切换门槛。

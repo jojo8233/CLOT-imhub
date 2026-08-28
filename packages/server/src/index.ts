@@ -17,6 +17,7 @@ import { OpenAiProvider } from './translation/providers/openai.js'
 import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
+import { buildTelegramRemapObservation } from './shadow/telegram.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
@@ -89,13 +90,18 @@ adapters.onMessage((msg) => {
           })
         }
       })
-    })
+    }, 'tdlib')
   })()
 })
 
 adapters.onMessageIdRemapped((accountId, oldId, newId) => {
   void (async () => {
-    const result = await messageRepo.remapMessageId(accountId, oldId, newId)
+    const result = await messageRepo.remapMessageId(
+      accountId,
+      oldId,
+      newId,
+      buildTelegramRemapObservation(accountId, 'tdlib', oldId, newId),
+    )
     if (result?.changed) {
       console.log(`[server] 消息 id 已换成最终值 ${oldId} -> ${newId}`)
     }

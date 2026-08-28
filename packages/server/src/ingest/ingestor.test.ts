@@ -120,6 +120,19 @@ describe('MessageIngestor', () => {
     })
   })
 
+  it('只在明确指定 shadow 来源时生成不含正文的 Telegram 观测', async () => {
+    const repo = fakeRepo()
+    await new MessageIngestor(repo as never, fakeQueue() as never)
+      .ingestDetailed(sample(), undefined, 'tdlib')
+
+    expect(repo.insertMessage.mock.calls[0]![0]).toMatchObject({
+      shadowObservation: {
+        accountId: 'acc-1', source: 'tdlib', eventType: 'upsert',
+        factKey: 'upsert:555:base', semanticHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    })
+  })
+
   it('单调 editVersion 进入翻译 revision，避免同秒连续编辑共用任务', async () => {
     const queue = fakeQueue()
     await new MessageIngestor(fakeRepo() as never, queue as never).ingest(sample({
