@@ -43,12 +43,23 @@
   `USER_CANCELED`；主连接真实 401 的 broken 链未改。`npm run check:ts` 与现有 MTProtoSender
   4 个用例通过。修复后冷启动、打开原媒体验收私聊并跨过旧 60 秒窗口，登录、4 个会话、20 条消息
   与 Composer 均保持正常，未再出现该字符串；本轮没有发送消息或改账号设置。
+- 双账户续验时开发弹窗又在 21:07、21:17 周期出现 `AUTH_KEY_UNREGISTERED`，随后是媒体下载的
+  `USER_CANCELED`；当时两个 webview、主 bridge 与两个 outbox 分区仍正常，因此不是主会话或消息
+  回传失败。根因是 `downloadFile` 的 exported sender 恢复集合只覆盖 timeout、
+  `SESSION_REVOKED` 和 `CONNECTION_NOT_INITED`，遗漏了旧媒体 sender 的 401，本次 Promise rejection
+  最终被开发态全局 error handler 放大成弹窗。telegram-tt `cc28648` 将该 401 纳入已有的五次有界
+  cleanup/reborrow 路径；真正主 sender 的 broken 语义未改。新增同主 DC 旧 sender 失败后借用
+  replacement sender 的回归测试，`npm run check:ts` 与 10 文件 130 tests 通过。修复版冷启动并由
+  用户重新登录 im-hub 工作台后，两个 Telegram webview 与两个安全一对一会话均恢复；从 22:43
+  跨过此前约 10 分钟的复发间隔，未再出现 `AUTH_KEY_UNREGISTERED`。22:54 的四个媒体请求仅收敛为
+  已列入忽略集合的 `USER_CANCELED`，没有 401、connection broken 或弹窗；两个账号最终均为
+  `pending=0, dead=0`、bridge ready、Composer 可用。本轮仍未发送消息。
 
 ### 清理上下文前最终状态
 
 - 本 checkpoint 覆盖的 im-hub 修复代码基线为
   `4d2a8f8`，telegram-tt 修复代码基线为
-  `77788bd20c83bdee5b1774c9ababe3aaea45435d`；两者分别已推送到对应的
+  `cc28648`；两者分别已推送到对应的
   `codex/m3-telegram-outbox` 远端分支。
 - PR #19 证据评论：<https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5447923098>；
   Issue #12 故障矩阵评论：
@@ -77,7 +88,9 @@ Saved Messages、普通群 TEXT-A/EDIT-10，也不要重复已经完成的私密
 delete/remap 已由 im-hub 4d2a8f8 的幂等 ACK 修复在冷启动后排空，两个分区均为 pending/dead 0。
 当前剩余真实步骤是两账号同时积压的 partition 隔离，尚未为此发送消息。收尾的裸
 SESSION_REVOKED 已定位为 exported sender timeout 误用主会话文案，由 telegram-tt 77788bd 修复并
-完成只读冷启动验证，不要再重复。任何可能外发或
+完成只读冷启动验证，不要再重复。开发态周期弹出的 `AUTH_KEY_UNREGISTERED` 是旧媒体 exported
+sender 未进入恢复集合，由 telegram-tt cc28648 加入有界 cleanup/reborrow 并覆盖回归测试；主 sender
+语义未改。任何可能外发或
 删除消息的步骤必须先限定安全目标；没有第二身份时不得伪造双账号证据。不要合并 PR 或关闭 Issue，
 除非用户再次明确授权。
 ```
