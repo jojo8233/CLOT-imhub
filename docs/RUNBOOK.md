@@ -284,9 +284,10 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   重启后 local id 复用造成的 temp remap 碰撞，新 temp 键加入页面实例命名空间后，第二次真实回复
   已从冷启动完成 final/reply preview、唯一落库和 outbox 无积压/错误提示闭环。语音按用户决定
   跳过；两个真实账号并发仍未完成，因此还不是已验收的完整消息闭环。
-  本次收尾另记录到两次来源未定的 `SESSION_REVOKED` 字符串；主连接真实 RPC 与非主 DC 文件 sender
-  超时目前共用该文案，而开发日志没有保留原始类型/堆栈。下次启动前先只读判源，不要仅凭缓存列表
-  宣称登录健康，也不要仅凭该字符串执行重登或清理 partition。
+  收尾出现的裸 `SESSION_REVOKED` 已定位为非主 DC 文件 sender 超时复用主会话错误文案，且普通
+  Error 没有进入只识别 `RPCError` 的清理/重试分支。telegram-tt `77788bd` 使用独立内部超时类型，
+  重试耗尽后收敛为 `USER_CANCELED`，真实主连接 broken 语义保持不变；修复后只读冷启动与旧 60 秒
+  窗口验证通过。
 - **双来源已具备接线条件，canonical 去重仍待 shadow 实证**：TDLib 与 telegram-tt 现在都可能
   向同一账号落消息。M3-1 已统一 `chatId:serverMessageId`、临时命名空间和 `0005` 迁移，服务端
   也按规范键幂等处理；必须再完成真实 fixture 与 shadow 对账，才能确认两条实时链路没有重复
