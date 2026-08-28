@@ -1,7 +1,7 @@
 # M3-4 Telegram 持久事件 outbox 与可靠回传
 
 日期：2026-08-27
-状态：代码与自动验证已完成；真实账号故障矩阵仍需完成
+状态：代码与自动验证已完成；真实账号故障矩阵已部分完成，双账号与语音等仍待验收
 
 ## 1. 范围
 
@@ -61,6 +61,15 @@ in-flight 事件，按首次入队顺序发送；事件间最少间隔 100ms。�
   已有失败记录。永久拒绝事件若因 dead-letter 已满而无法迁移，会保留在 pending 并暂停有序
   队列重试；这是一种明确的容量故障，不能通过丢弃事件来伪装恢复。
 
+Bridge v3 另外提供两个不含消息正文的账号绑定运维命令：
+
+- `outbox.retry-dead-letters` 按原始顺序把当前 Telegram identity 的 dead-letter 移回 pending，
+  不超过 pending 容量。两个 IndexedDB database 之间无法做原子事务，因此实现顺序是先写 pending
+  再删 dead-letter；异常退出最多留下可幂等收敛的重复证据，不能先删后写造成永久丢失。
+- `outbox.discard-dead-letters` 只清除当前 identity 的 dead-letter，并把此前因
+  `dead_letter_capacity` 暂停的队首唤醒。这是不可恢复的人工放弃动作，桌面端必须显示数量和明确
+  警告并由用户再次确认；不能后台自动触发。
+
 服务端现有幂等落库继续处理重复 upsert/delete/remap；409、429、5xx 和网络失败由 renderer
 映射为 retryable ACK，结构、权限或规范键的永久拒绝进入 dead-letter。
 
@@ -74,19 +83,19 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
 - `lastErrorCode`
 
 外壳按账号保存指标，并在 TranslationDock 显示积压、永久失败或 IndexedDB 不可用提示。
-该提示不把原生 Composer 标成断开，也不阻塞后续 Telegram 发送和其他 outbox 事件。
+存在 dead-letter 时提供“重试”和需确认的“清除记录”动作；命令只发给当前 im-hub 账号已登记的
+guest。该提示不把原生 Composer 标成断开，也不阻塞后续 Telegram 发送和其他 outbox 事件。
 
 ## 6. 验证与剩余边界
 
 截至 2026-08-28 的验证结果：
 
-- im-hub：`pnpm typecheck` 通过；desktop 9 个测试文件、65 个测试通过；全量
-  `pnpm test` 为 34 个文件、331 个测试通过、1 个既有 todo；desktop build 通过；
+- im-hub：`pnpm typecheck` 通过；全量 `pnpm test` 为 34 个文件、332 个测试通过、1 个既有 todo；
+  desktop build 通过；
   `git diff --check` 通过。
-- telegram-tt：`npm run check:ts` 通过；空接收重连、撤销/停用会话传播、
-  `AUTH_KEY_UNREGISTERED` 保留语义、普通 outgoing/delete reporter、既有 WebSocket 与 bridge 共
-  4 个聚焦文件、8 个测试通过；`git diff --check` 通过。服务端 native route 22 个测试也在派生
-  `_test` 数据库通过。
+- telegram-tt：`npm run check:ts` 通过；当前 outbox、bridge、消息 reporter、空接收重连、既有
+  WebSocket 和网络恢复图片降级共 6 个聚焦文件、13 个测试通过；`git diff --check` 通过。服务端
+  native route 既有测试也在派生 `_test` 数据库通过。
 - 两个不进入 Telegram 的永久拒绝哨兵首次暴露并发 pump 会重复发送队首、覆盖 ACK timer 的
   竞态；串行化发送泵后，每个事件只发送和 ACK 一次，队列从 pending 收敛到 dead-letter，等待
   超过 10 秒不再误报 `ack_timeout`。探针记录随后精确清理，partition 恢复为空。
@@ -108,10 +117,28 @@ Bridge v3 新增不含消息正文的 `outbox.status`，guest 用它报告：
 - 安全目标发现确认当前普通群不是当前账号创建，已加载状态没有频道，且列表尚未完整加载；没有
   可证明为自建并可清理的频道/群。本轮没有执行频道编辑/删除或媒体外发，也没有创建新频道。
 
-当前 Telegram 服务端会话已撤销，继续真实矩阵前必须由用户重新登录。仍需真实账号故障矩阵：
-断网后恢复、页面刷新、Electron 进程终止、ACK 丢失、频道删除与频道
-编辑、图片/文件/语音，以及两个账号同时积压时的 partition 隔离。快速连续编辑、local/final
-remap 和普通群删除已有成功证据；删除专用新标记不能作为新的 upsert/delete 数据库闭环。
+重新登录后的 2026-08-28 续验补充：
+
+- 页面刷新保持登录、列表和 im-hub 连接；强制终止 Electron 主进程后冷启动也保持登录并恢复列表
+  与 bridge，均未出现 pending、dead-letter、授权失败或持续转圈。
+- 本地 ACK 丢失探针只对第一份成功 ACK 做丢弃，不进入 Telegram；同一稳定 eventId 第二次投递得到
+  duplicate accepted，开发数据库最终只有一条消息和一个会话。探针行随后按固定 id 清理为 0。
+- 用户选定只有本人、由本人控制的私密频道后，单次文本发送、同一行编辑、对所有人删除均经 bridge
+  和数据库收敛；图片和文件分别生成非空远端媒体引用，随后由用户删除。语音按用户决定跳过，不能
+  写成已验收。
+- 真实 partition 的容量探针先写入 1000 条只含虚构规范键的 dead-letter，再加入一个只会被服务端
+  422 永久拒绝且不会进入 Telegram 的事件。状态依次覆盖 `dead_letter_capacity`、明确清理后队首
+  唤醒、`permanent_rejection` 和再次清理后的 `pending=0/dead=0`；开发数据库合成消息和会话均为 0。
+- Wi-Fi 断开约 10–15 秒再恢复后，Telegram 列表和 im-hub 均自动恢复。恢复时一个失效 Blob 的装饰
+  性图片取色触发开发版全局弹窗；telegram-tt `a279a6e` 对明确的图片解码错误降级到主题色，其他
+  Worker 错误仍传播，并有单元回归。
+- 数据库虽登记两个 Telegram 账号，但只有一个已绑定的真实 Telegram identity；在没有第二个真实
+  登录身份时不能伪造“双账号同时积压”验收。
+
+当前会话已经由用户重新登录。仍需真实账号矩阵中的语音、回复，以及两个真实账号同时积压时的
+partition 隔离；语音本轮明确跳过，双账号受缺少第二个登录 identity 阻塞。快速连续编辑、
+local/final remap、普通群删除、私密频道文本/编辑/删除、图片、文件、刷新、进程终止、ACK 丢失、
+断网恢复和 dead-letter 容量恢复已有上述分级证据。
 在这些证据写入 Issue #12 前，不关闭 Issue，也不宣称 M3-4 完整验收。
 
 M3-5 仍负责 TDLib 与 telegram-tt 的 shadow reconciliation、历史缺口扫描，以及客户端未观察到

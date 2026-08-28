@@ -5,7 +5,34 @@
 用途：这是 M3-4 代码实现和自动验证后的最新恢复入口。恢复时仍须重新核对 Git、GitHub 与
 真实账号状态；本文不替代实时检查，也不把尚未完成的真实故障矩阵写成已验收。
 
-## 0. 清理上下文前 checkpoint
+## 最新续验 checkpoint（2026-08-28）
+
+本节晚于下面的历史 checkpoint，并取代其中“会话仍撤销、需先重新登录”和“频道/媒体/容量尚未
+执行”的旧状态：
+
+- 实时刷新后 `origin/main` 为 `b8b2e3382714831ac3f8b016137593a083a8feeb`；PR #19 仍为
+  OPEN、CLEAN、非 Draft、无 checks/review decision，Issue #11/#12 仍为 OPEN。没有合并 PR，
+  也没有关闭 Issue。
+- telegram-tt 正式修复已推送到 `imhub/codex/m3-telegram-outbox`：`2844547` 增加当前账号
+  dead-letter 重试/明确清理和容量回归，`a279a6e` 让断网恢复时失效 Blob 的装饰性图片取色降级到
+  主题色。im-hub `53cc781` 增加对应 typed command、账号绑定 renderer bridge 和需确认的 UI 动作。
+- 用户重新登录后，页面刷新和 Electron 主进程强制终止后的冷启动都保持登录、恢复列表与 im-hub
+  连接，没有 pending、dead-letter、授权失败或持续转圈。只在本地丢弃首个成功 ACK 的探针以同一
+  eventId 第二次成功收敛，数据库只有一份消息/会话，随后精确清理为 0。
+- 外部目标严格限定为用户本人控制且仅用户一人的私密频道。单次文本发送、同一行编辑、对所有人
+  删除均已收敛；图片和文件产生非空远端媒体引用后由用户删除。语音按用户决定跳过，不写成通过。
+- 真实 partition 的 1000 条虚构 dead-letter 满容量探针覆盖 `dead_letter_capacity`、明确清理、
+  队首唤醒、`permanent_rejection` 和最终 `pending=0/dead=0`。合成事件只命中服务端 422，不进入
+  Telegram，开发数据库合成消息/会话均为 0；所有探针代码均已撤销。
+- Wi-Fi 断开约 10–15 秒后恢复，Telegram 列表和 im-hub 自动恢复。出现过一次图片解码开发弹窗，
+  根因与修复见 `a279a6e`；它不是 outbox、鉴权或重连失败。
+- im-hub `pnpm typecheck`、34 文件 332 tests（另 1 个既有 todo）和 desktop build 通过；
+  telegram-tt `npm run check:ts`、6 文件 13 tests 通过。
+- 当前只发现一个已绑定的真实 Telegram identity，无法诚实完成两个真实账号同时积压的 partition
+  验收。剩余真实项为语音、回复和双真实账号并发；不要重复 PR #16/#17、Saved Messages、普通群
+  TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
+
+## 0. 前次清理上下文 checkpoint（历史）
 
 截至 2026-08-28 本次交接保存时：
 
@@ -233,18 +260,15 @@ dead-letter 满容量和运维恢复路径，也不替代真实频道、媒体�
 开发验收注意：修改 `src/api/gramjs/**` worker 代码后必须完整重启 Electron；只观察 Vite 的
 `page reload` 不足以证明新 worker 已加载。
 
-## 8. 尚未完成
+## 8. 故障矩阵进度
 
-Issue #12 的真实账号故障矩阵仍需完成并留下可审计证据：
+Issue #12 已有可审计证据：刷新、Electron 进程终止、断网恢复、本地 ACK 丢失、私密频道文本/
+编辑/删除、图片、文件，以及 dead-letter 满容量和人工恢复。语音由用户明确跳过；回复尚未执行；
+两个账号同时积压因只有一个已绑定的真实 Telegram identity 而未完成。
 
-1. 断网后恢复、页面刷新、Electron 进程终止和 ACK 丢失。
-2. 频道删除与频道编辑；普通群删除、快速连续编辑与 local-to-final remap 已有上述成功证据。
-3. 图片、文件、语音等媒体引用。
-4. 两个账号同时积压时的 partition 隔离。
-5. dead-letter 容量与运维恢复路径；基础 permanent rejection 与后续事件继续发送已有上述证据。
-
-真实矩阵可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved Messages
-验收。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于本提交。
+任何补充真实矩阵仍可能向外部联系人发送消息；开始前先限定安全目标，不要重复已经完成的 Saved
+Messages 或上述证据。M3-5 的 TDLib/telegram-tt shadow reconciliation 和历史缺口扫描也不属于
+本提交。
 
 ## 9. 普通群删除故障定位与恢复验证
 
