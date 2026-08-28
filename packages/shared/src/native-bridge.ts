@@ -59,7 +59,24 @@ export interface NativeEventAckCommand extends NativeBridgeFrame {
   retryable: boolean
 }
 
-export type NativeHostCommand = NativeComposerCommand | NativeEventAckCommand | NativeRequestStateCommand
+/** 运维动作只操作 guest 当前已认证账号的持久队列，不向宿主暴露事件正文。 */
+export interface NativeOutboxRetryDeadLettersCommand extends NativeBridgeFrame {
+  type: 'outbox.retry-dead-letters'
+}
+
+export interface NativeOutboxDiscardDeadLettersCommand extends NativeBridgeFrame {
+  type: 'outbox.discard-dead-letters'
+}
+
+export type NativeOutboxOperationCommand =
+  | NativeOutboxRetryDeadLettersCommand
+  | NativeOutboxDiscardDeadLettersCommand
+
+export type NativeHostCommand =
+  | NativeComposerCommand
+  | NativeEventAckCommand
+  | NativeRequestStateCommand
+  | NativeOutboxOperationCommand
 
 export interface NativeBridgeReadyEvent extends NativeBridgeFrame {
   type: 'bridge.ready'

@@ -3,6 +3,7 @@ import { NATIVE_BRIDGE_PROTOCOL_VERSION, type NativeComposerCommand } from '@im-
 import {
   handleNativeCommandResult,
   nativeComposerBridge,
+  nativeOutboxBridge,
   parseNativeGuestEvent,
   registerNativeCommandTarget,
 } from './native-bridge.js'
@@ -150,6 +151,14 @@ describe('nativeComposerBridge', () => {
     })).toMatchObject({ type: 'bridge.request-state' })
     expect(parseNativeHostCommand({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'outbox.retry-dead-letters',
+    })).toMatchObject({ type: 'outbox.retry-dead-letters' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'outbox.discard-dead-letters',
+    })).toMatchObject({ type: 'outbox.discard-dead-letters' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'composer.send',
       requestId: 'request-1',
       contextRevision: 2,
@@ -160,6 +169,25 @@ describe('nativeComposerBridge', () => {
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'open-devtools',
     })).toBeNull()
+  })
+
+  it('运维命令只发给指定账号的已登记 guest', async () => {
+    const sent: unknown[] = []
+    const unregister = registerNativeCommandTarget(context.accountId, {
+      send: (_channel, command) => { sent.push(command) },
+    })
+
+    await nativeOutboxBridge.retryDeadLetters(context.accountId)
+    await nativeOutboxBridge.discardDeadLetters(context.accountId)
+
+    expect(sent).toEqual([
+      { protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION, type: 'outbox.retry-dead-letters' },
+      { protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION, type: 'outbox.discard-dead-letters' },
+    ])
+    await expect(nativeOutboxBridge.retryDeadLetters('other-account')).rejects.toMatchObject({
+      code: 'bridge_disconnected',
+    })
+    unregister()
   })
 
   it('命令携带 account 绑定之外的会话 revision，并按 requestId 收敛结果', async () => {

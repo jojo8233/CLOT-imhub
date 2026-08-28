@@ -1,8 +1,9 @@
-import type { KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { api, getCurrentUser } from '../api/client.js'
 import {
   nativeComposerBridge,
   NativeBridgeCommandError,
+  nativeOutboxBridge,
   type NativeCommandContext,
 } from '../native-bridge.js'
 import { useStore, type NativeDraftStatus } from '../store.js'
@@ -49,6 +50,8 @@ export async function sendCurrentNativeDraft(
 
 /** 固定在原生客户端下方、通过 NativeComposerBridge 控制平台原生输入框。 */
 export function TranslationDock() {
+  const [outboxBusy, setOutboxBusy] = useState(false)
+  const [outboxActionError, setOutboxActionError] = useState<string | null>(null)
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const activeAccountId = useStore(s => s.activeAccountId)
@@ -100,6 +103,36 @@ export function TranslationDock() {
       : native?.outbox?.lastErrorCode
         ? '消息回传持久队列暂时不可用'
         : null
+
+  async function retryDeadLetters(): Promise<void> {
+    if (!activeAccountId || outboxBusy) return
+    setOutboxBusy(true)
+    setOutboxActionError(null)
+    try {
+      await nativeOutboxBridge.retryDeadLetters(activeAccountId)
+    } catch (error) {
+      setOutboxActionError(error instanceof Error ? error.message : '永久失败事件重试失败')
+    } finally {
+      setOutboxBusy(false)
+    }
+  }
+
+  async function discardDeadLetters(): Promise<void> {
+    if (!activeAccountId || outboxBusy) return
+    const count = native?.outbox?.deadLetterCount ?? 0
+    if (!window.confirm(
+      `将永久清除 ${count} 条回传失败事件。清除后这些事件无法恢复，且不会自动补入 im-hub。仅在人工核对后继续。`,
+    )) return
+    setOutboxBusy(true)
+    setOutboxActionError(null)
+    try {
+      await nativeOutboxBridge.discardDeadLetters(activeAccountId)
+    } catch (error) {
+      setOutboxActionError(error instanceof Error ? error.message : '永久失败事件清除失败')
+    } finally {
+      setOutboxBusy(false)
+    }
+  }
 
   function commandContext(): NativeCommandContext | null {
     if (!canUse || !activeAccountId || !context) return null
@@ -260,6 +293,25 @@ export function TranslationDock() {
               : theme.color.textFaint,
           }}>
             {outboxNotice}
+            {native?.outbox?.deadLetterCount ? (
+              <span style={{ display: 'inline-flex', gap: 6, marginLeft: theme.space.sm }}>
+                <button
+                  className="ih-btn"
+                  disabled={outboxBusy || native.connection !== 'ready'}
+                  onClick={() => void retryDeadLetters()}
+                >
+                  重试
+                </button>
+                <button
+                  className="ih-btn"
+                  disabled={outboxBusy || native.connection !== 'ready'}
+                  onClick={() => void discardDeadLetters()}
+                >
+                  清除记录
+                </button>
+              </span>
+            ) : null}
+            {outboxActionError ? <span style={{ marginLeft: theme.space.sm }}>{outboxActionError}</span> : null}
           </div>
         )}
         <div style={{

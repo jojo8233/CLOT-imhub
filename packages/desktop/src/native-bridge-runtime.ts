@@ -157,6 +157,8 @@ export function parseNativeHostCommand(value: unknown): NativeHostCommand | null
       : null
   }
   if (value.type === 'bridge.request-state') return value as unknown as NativeHostCommand
+  if (value.type === 'outbox.retry-dead-letters'
+    || value.type === 'outbox.discard-dead-letters') return value as unknown as NativeHostCommand
   if (!['composer.set-draft', 'composer.get-draft', 'composer.send'].includes(value.type)
     || !nonEmptyString(value.requestId, 128)
     || !Number.isSafeInteger(value.contextRevision)

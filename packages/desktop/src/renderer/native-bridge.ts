@@ -3,6 +3,7 @@ import {
   type NativeCommandName,
   type NativeComposerCommand,
   type NativeCommandResultEvent,
+  type NativeOutboxOperationCommand,
 } from '@im-hub/shared'
 export { parseNativeGuestEvent } from '../native-bridge-runtime.js'
 
@@ -52,6 +53,25 @@ export function registerNativeCommandTarget(accountId: string, target: CommandTa
       pending.delete(requestId)
     }
   }
+}
+
+async function sendOutboxOperation(
+  accountId: string,
+  type: NativeOutboxOperationCommand['type'],
+): Promise<void> {
+  const target = targets.get(accountId)
+  if (!target) throw new NativeBridgeCommandError('原生客户端桥接尚未连接', 'bridge_disconnected')
+  await target.send(NATIVE_COMMAND_CHANNEL, {
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type,
+  } satisfies NativeOutboxOperationCommand)
+}
+
+export const nativeOutboxBridge = {
+  retryDeadLetters: (accountId: string): Promise<void> =>
+    sendOutboxOperation(accountId, 'outbox.retry-dead-letters'),
+  discardDeadLetters: (accountId: string): Promise<void> =>
+    sendOutboxOperation(accountId, 'outbox.discard-dead-letters'),
 }
 
 export function handleNativeCommandResult(accountId: string, event: NativeCommandResultEvent): boolean {
