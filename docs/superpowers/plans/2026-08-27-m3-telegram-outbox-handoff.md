@@ -31,6 +31,11 @@
 - 当前只发现一个已绑定的真实 Telegram identity，无法诚实完成两个真实账号同时积压的 partition
   验收。回复已完成修复后冷启动闭环；语音按用户决定跳过，剩余真实阻塞仅为双真实账号并发。不要
   重复 PR #16/#17、Saved Messages、普通群 TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
+- 收尾时 telegram-tt Vite 在 11:31:11 与 11:35:11 各记录一次未处理的 `SESSION_REVOKED` 字符串。
+  日志不含原始错误类型/堆栈；源码中的非主 DC 文件 sender 60 秒超时也会主动构造同名普通 Error，
+  因此现有证据既不能把它判成主会话撤销，也不能忽略。应用已停止，没有重启、重登或触发会话清理；
+  下次不能假设登录仍健康，应先只读区分主连接 RPC 与 exported sender timeout。该信号发生在回复平台/
+  数据库闭环之后，不改变回复项通过结论。
 
 ### 清理上下文前最终状态
 
@@ -61,7 +66,8 @@ codex/m3-telegram-outbox 重建。不要修改共享 workspace 的既有用户�
 Saved Messages、普通群 TEXT-A/EDIT-10，也不要重复已经完成的私密频道文本/编辑/删除、图片、
 文件、刷新、Electron 终止、ACK 丢失、断网恢复和 dead-letter 容量探针。语音按用户决定跳过；
 回复已完成修复后冷启动闭环；当前剩余真实阻塞是两个真实 Telegram identity 同时积压的 partition
-隔离。任何可能外发或
+隔离。上次收尾另出现来源未定的 SESSION_REVOKED 字符串，下次先只读区分主连接撤销与 exported
+sender timeout，不要直接重启或重登。任何可能外发或
 删除消息的步骤必须先限定安全目标；没有第二身份时不得伪造双账号证据。不要合并 PR 或关闭 Issue，
 除非用户再次明确授权。
 ```
@@ -442,3 +448,9 @@ reply preview，Composer 和 reply 状态均清空。服务端随后按顺序收
 
 真实回复矩阵现已完成，不要再次发送回复标记。语音继续按用户决定跳过；双账号同时积压仍因只有
 一个已绑定真实 identity 而阻塞。PR #19 与 Issue #12 保持打开，不合并、不关闭。
+
+收尾补充：上述证据取得后，telegram-tt Vite 在相隔约 4 分钟的两个时点记录未处理的
+`SESSION_REVOKED` 字符串。当前日志只保留 message，无法证明它是主连接的 `RPCError`；同时
+`downloadFile.ts` 的非主 DC sender 60 秒超时会构造同名普通 Error。应用随即停止，未重启、重登或
+清理 partition。此信号不回滚已完成的回复平台/落库证据，但下次恢复必须先做只读来源判定，不能把
+“缓存列表仍可见”写成登录健康，也不能把该字符串直接写成真实会话已撤销。
