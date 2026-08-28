@@ -441,6 +441,45 @@ describe('native bridge routes', () => {
     }))
   })
 
+  it('删除不存在的消息按幂等 no-op 接受，不让 outbox 永久重试', async () => {
+    markMessageDeleted.mockResolvedValue(null)
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
+      payload: {
+        accountId,
+        event: {
+          protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+          type: 'message.deleted', eventId: 'delete-missing',
+          platformMessageId: canonicalMessageId, deletedAt: '2026-08-26T02:00:00.000Z',
+        },
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ accepted: true, duplicate: true })
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('重映射不存在的旧消息按幂等 no-op 接受，不让 outbox 永久重试', async () => {
+    remapMessageId.mockResolvedValue(null)
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
+      payload: {
+        accountId,
+        event: {
+          protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+          type: 'message.id-remapped', eventId: 'remap-missing',
+          oldPlatformMessageId: `${telegramChatId}:temp:telegram-tt:0123456789abcdef0123456789abcdef:1.000001`,
+          newPlatformMessageId: canonicalMessageId,
+        },
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ accepted: true, duplicate: true })
+    expect(publish).not.toHaveBeenCalled()
+  })
+
   it('remap 已合并删除内部行时不再发布迟到的幽灵 message', async () => {
     withMessageForPublish.mockResolvedValue(false)
     const response = await app.inject({

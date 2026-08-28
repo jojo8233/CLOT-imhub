@@ -183,7 +183,8 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
 
     if (event.type === 'message.deleted') {
       const result = await deleteNativeMessage(deps.repo, account.id, event)
-      if (!result) return reply.code(409).send({ error: 'message not found; retry event after upsert' })
+      // 删除是幂等的状态事实；中央库没有该消息时，目标状态已经成立。
+      if (!result) return { accepted: true, duplicate: true }
       if (result.changed) {
         deps.publish(account.userId, {
           type: 'message_deleted',
@@ -196,7 +197,9 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     }
 
     const result = await remapNativeMessage(deps.repo, account.id, event)
-    if (!result) return reply.code(409).send({ error: 'message not found; retry event after upsert' })
+    // outbox 保证同一消息的 temp upsert 先于 remap。两端都不存在说明没有待合并行，
+    // 后续 final upsert 可直接以规范键落库，因此该重放是已完成的 no-op。
+    if (!result) return { accepted: true, duplicate: true }
     if (result.integrityViolation === 'cross_conversation') {
       return reply.code(422).send({ error: 'message remap crosses conversations' })
     }

@@ -72,8 +72,11 @@ Bridge v3 另外提供两个不含消息正文的账号绑定运维命令：
   `dead_letter_capacity` 暂停的队首唤醒。这是不可恢复的人工放弃动作，桌面端必须显示数量和明确
   警告并由用户再次确认；不能后台自动触发。
 
-服务端现有幂等落库继续处理重复 upsert/delete/remap；409、429、5xx 和网络失败由 renderer
-映射为 retryable ACK，结构、权限或规范键的永久拒绝进入 dead-letter。
+服务端现有幂等落库继续处理重复 upsert/delete/remap。缺失消息的 delete 视为目标状态已经成立；
+old/new 均缺失的 remap 也按 no-op 接受，因为同一发送 attempt 的 temp upsert 必须先于 remap，
+而后续 final upsert 可以直接使用规范键落库。这两类生命周期重放返回
+`accepted=true, duplicate=true`，避免历史孤儿事件永久占住账号队首。429、5xx 和网络失败由
+renderer 映射为 retryable ACK，结构、权限或规范键的永久拒绝进入 dead-letter。
 
 ## 5. 可观察性
 
