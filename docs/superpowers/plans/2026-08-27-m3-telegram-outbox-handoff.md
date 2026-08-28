@@ -29,16 +29,15 @@
 - im-hub `pnpm typecheck`、34 文件 332 tests（另 1 个既有 todo）和 desktop build 通过；
   telegram-tt `npm run check:ts`、6 文件 13 tests 通过。
 - 当前只发现一个已绑定的真实 Telegram identity，无法诚实完成两个真实账号同时积压的 partition
-  验收。剩余真实项为语音、回复和双真实账号并发；不要重复 PR #16/#17、Saved Messages、普通群
-  TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
+  验收。回复已完成修复后冷启动闭环；语音按用户决定跳过，剩余真实阻塞仅为双真实账号并发。不要
+  重复 PR #16/#17、Saved Messages、普通群 TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
 
 ### 清理上下文前最终状态
 
-- 本 checkpoint 写入前，im-hub 分支头为
-  `b519e9cd88407fe15befbb5140c6ed33b5a5c729`，与
-  `origin/codex/m3-telegram-outbox` 精确一致；telegram-tt 分支头为
-  `a279a6eb0382af3bc18cdebc0da9f2542b62f498`，与
-  `imhub/codex/m3-telegram-outbox` 精确一致。两个 worktree 均无未提交改动。
+- 本 checkpoint 覆盖的 im-hub 修复代码基线为
+  `03b9644bcbc17b605efdd086f5507d8bd0a1a54c`，telegram-tt 修复代码基线为
+  `95a65e5ba9166193abd582470f8133303c2ea72b`；两者分别已推送到对应的
+  `codex/m3-telegram-outbox` 远端分支。
 - PR #19 证据评论：<https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5447923098>；
   Issue #12 故障矩阵评论：
   <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5447924313>。
@@ -48,8 +47,8 @@
 - 共享 workspace 的既有用户改动从未被修改、暂存、重置或清理。恢复时优先继续使用
   `/private/tmp/im-hub-m3-outbox` 与 `/private/tmp/telegram-tt-m3-outbox`；若系统已清理它们，分别
   从两个远端的 `codex/m3-telegram-outbox` 重建。
-- 下次先做只读实时核对，再决定是否补回复或第二真实账号。语音是用户明确跳过项，不要为了凑齐
-  矩阵主动要求重测；没有第二个真实 Telegram identity 时，不得用同一身份伪造多账号隔离证据。
+- 下次先做只读实时核对；回复已完成，不要重发。语音是用户明确跳过项，不要为了凑齐矩阵主动要求
+  重测；没有第二个真实 Telegram identity 时，不得用同一身份伪造多账号隔离证据。
 
 清理上下文后可直接粘贴下面这段作为新任务；它取代本文后面的历史续接提示：
 
@@ -61,7 +60,8 @@ telegram-tt 自己的 CLAUDE.md/AGENTS.md；实时核对 PR #19、Issue #11/#12 
 codex/m3-telegram-outbox 重建。不要修改共享 workspace 的既有用户改动，不要重复 PR #16/#17、
 Saved Messages、普通群 TEXT-A/EDIT-10，也不要重复已经完成的私密频道文本/编辑/删除、图片、
 文件、刷新、Electron 终止、ACK 丢失、断网恢复和 dead-letter 容量探针。语音按用户决定跳过；
-当前剩余真实项是回复和两个真实 Telegram identity 同时积压的 partition 隔离。任何可能外发或
+回复已完成修复后冷启动闭环；当前剩余真实阻塞是两个真实 Telegram identity 同时积压的 partition
+隔离。任何可能外发或
 删除消息的步骤必须先限定安全目标；没有第二身份时不得伪造双账号证据。不要合并 PR 或关闭 Issue，
 除非用户再次明确授权。
 ```
@@ -391,7 +391,7 @@ gh issue view 11 --repo jojo8233/CLOT-imhub
 gh issue view 12 --repo jojo8233/CLOT-imhub
 ```
 
-## 12. 最新续验 checkpoint：真实回复暴露 temp id 跨重启碰撞
+## 12. 最新续验 checkpoint：真实回复 temp id 跨重启碰撞已修复并复验
 
 2026-08-28 在用户再次确认后，只在此前媒体验收对应的 Telegram 私聊中回复一条现有己方消息，
 发送固定标记 `IMHUB-M3-OUTBOX-20260828-REPLY-1`，并按约定保留该消息、没有删除。执行前通过
@@ -425,9 +425,20 @@ reply preview，Composer 和 reply 状态均清空。服务端随后按顺序收
 通过；native route 22 个测试在派生 `_test` 库通过，并由现有 remap 用例覆盖新 temp 键；telegram-tt
 `npm run check:ts` 通过；两个 worktree 的 `git diff --check` 通过。没有重跑已完成的真实故障矩阵。
 
-下一步只做一次修复后回复复验，并需要用户对第二条固定标记
-`IMHUB-M3-OUTBOX-20260828-REPLY-2` 重新确认；冷启动两个 worktree 后，应同时看到 Telegram final/
-reply preview、服务端 remap/final upsert 200、数据库 exact body=1、reply key 非空、live=1，以及
-outbox `pending=0/dead=0`。不要删除 `REPLY-1`，不要操作其他已完成矩阵。语音继续按用户决定跳过；
-双账号同时积压仍因只有一个已绑定真实 identity 而阻塞。PR #19 与 Issue #12 保持打开，不合并、
-不关闭。
+修复后复验已完成。用户对第二条固定标记
+`IMHUB-M3-OUTBOX-20260828-REPLY-2` 做了操作时确认；随后从 im-hub `03b9644` 与 telegram-tt
+`95a65e5` 冷启动两个隔离 worktree，只在同一媒体验收私聊中回复一条现有己方消息，并按约定保留，
+没有进入其他会话或重复已完成矩阵。发送前目标会话计数为 1，数据库 exact body 计数为 0。
+
+修复后的闭环证据如下：
+
+- Telegram DOM 中该标记精确出现 1 次，消息带 reply preview 和非 temp 的 final message id；发送后
+  Composer 与 reply 状态均清空。
+- 服务端接受对应 `/api/native/events` 请求并返回 200。开发数据库 exact body 聚合为
+  `1|1|1|1|1`，依次代表总行数、非空 reply key、唯一平台消息键、live 行和 `direction='out'` 行，
+  证明新快照没有复用第一次的旧删除行。
+- 桌面壳没有 pending、dead-letter、等待重试或服务端拒绝提示。`REPLY-1` 与 `REPLY-2` 均按用户
+  约定保留；没有对旧错误行做覆盖或清理。
+
+真实回复矩阵现已完成，不要再次发送回复标记。语音继续按用户决定跳过；双账号同时积压仍因只有
+一个已绑定真实 identity 而阻塞。PR #19 与 Issue #12 保持打开，不合并、不关闭。

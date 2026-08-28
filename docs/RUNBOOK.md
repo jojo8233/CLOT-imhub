@@ -261,8 +261,8 @@ Telegram：
    attempt；M3-4 已实现 IndexedDB message outbox、ACK/退避、dead-letter、运行指标，以及按当前
    账号重试/明确清理 dead-letter 的恢复操作。刷新、进程终止、ACK 丢失、断网恢复、私密频道文本/
    编辑/删除、图片、文件和满容量恢复已有分级证据；第一次真实回复暴露并修复了页面重启后 local id
-   复用造成的 temp remap 碰撞，但尚未完成修复后复验。上线前仍要补语音/回复复验、两个真实账号
-   同时积压的 partition 隔离，并完成 fixture/shadow 对账。
+   复用造成的 temp remap 碰撞，第二次真实回复已完成冷启动平台与数据库闭环。语音按用户决定跳过；
+   上线前仍要补两个真实账号同时积压的 partition 隔离，并完成 fixture/shadow 对账。
    这些完成前仍不能作为生产闭环。
 
 ---
@@ -281,8 +281,9 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   与发送 attempt。telegram-tt 也会把 upsert/edit/delete/remap 先写 IndexedDB，再按 ACK
   可靠回传，并可按当前账号重试或经确认清除 dead-letter。断网、刷新、Electron 强制终止、ACK
   丢失、私密频道文本/编辑/删除、图片和文件已有证据；第一次真实回复已定位为 telegram-tt 页面
-  重启后 local id 复用造成的 temp remap 碰撞，新 temp 键已加入页面实例命名空间但尚待冷启动
-  复验。语音/回复复验与两个真实账号并发仍未完成，因此还不是已验收的完整消息闭环。
+  重启后 local id 复用造成的 temp remap 碰撞，新 temp 键加入页面实例命名空间后，第二次真实回复
+  已从冷启动完成 final/reply preview、唯一落库和 outbox 无积压/错误提示闭环。语音按用户决定
+  跳过；两个真实账号并发仍未完成，因此还不是已验收的完整消息闭环。
 - **双来源已具备接线条件，canonical 去重仍待 shadow 实证**：TDLib 与 telegram-tt 现在都可能
   向同一账号落消息。M3-1 已统一 `chatId:serverMessageId`、临时命名空间和 `0005` 迁移，服务端
   也按规范键幂等处理；必须再完成真实 fixture 与 shadow 对账，才能确认两条实时链路没有重复
