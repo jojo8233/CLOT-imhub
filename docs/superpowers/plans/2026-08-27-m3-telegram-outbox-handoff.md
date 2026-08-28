@@ -32,6 +32,40 @@
   验收。剩余真实项为语音、回复和双真实账号并发；不要重复 PR #16/#17、Saved Messages、普通群
   TEXT-A/EDIT-10 或本节已完成的频道/媒体操作。
 
+### 清理上下文前最终状态
+
+- 本 checkpoint 写入前，im-hub 分支头为
+  `b519e9cd88407fe15befbb5140c6ed33b5a5c729`，与
+  `origin/codex/m3-telegram-outbox` 精确一致；telegram-tt 分支头为
+  `a279a6eb0382af3bc18cdebc0da9f2542b62f498`，与
+  `imhub/codex/m3-telegram-outbox` 精确一致。两个 worktree 均无未提交改动。
+- PR #19 证据评论：<https://github.com/jojo8233/CLOT-imhub/pull/19#issuecomment-5447923098>；
+  Issue #12 故障矩阵评论：
+  <https://github.com/jojo8233/CLOT-imhub/issues/12#issuecomment-5447924313>。
+- Electron、telegram-tt Vite 和 im-hub server 已停止；4000、1234、5173 均无监听。容量/ACK
+  探针、临时 Vitest 配置、评论草稿和合成数据库记录均已精确清理。Telegram 登录数据保留在隔离
+  partition，未被清除。
+- 共享 workspace 的既有用户改动从未被修改、暂存、重置或清理。恢复时优先继续使用
+  `/private/tmp/im-hub-m3-outbox` 与 `/private/tmp/telegram-tt-m3-outbox`；若系统已清理它们，分别
+  从两个远端的 `codex/m3-telegram-outbox` 重建。
+- 下次先做只读实时核对，再决定是否补回复或第二真实账号。语音是用户明确跳过项，不要为了凑齐
+  矩阵主动要求重测；没有第二个真实 Telegram identity 时，不得用同一身份伪造多账号隔离证据。
+
+清理上下文后可直接粘贴下面这段作为新任务；它取代本文后面的历史续接提示：
+
+```text
+从 jojo8233/CLOT-imhub 最新 origin/main、现有 PR #19 和 Issue #12 继续 M3-4。先读根 AGENTS.md、
+docs/superpowers/plans/2026-08-27-m3-telegram-outbox-handoff.md 的“最新续验 checkpoint”，以及
+telegram-tt 自己的 CLAUDE.md/AGENTS.md；实时核对 PR #19、Issue #11/#12 和两个远端分支。优先
+复用 /private/tmp/im-hub-m3-outbox 与 /private/tmp/telegram-tt-m3-outbox；若已清理，从各自远端
+codex/m3-telegram-outbox 重建。不要修改共享 workspace 的既有用户改动，不要重复 PR #16/#17、
+Saved Messages、普通群 TEXT-A/EDIT-10，也不要重复已经完成的私密频道文本/编辑/删除、图片、
+文件、刷新、Electron 终止、ACK 丢失、断网恢复和 dead-letter 容量探针。语音按用户决定跳过；
+当前剩余真实项是回复和两个真实 Telegram identity 同时积压的 partition 隔离。任何可能外发或
+删除消息的步骤必须先限定安全目标；没有第二身份时不得伪造双账号证据。不要合并 PR 或关闭 Issue，
+除非用户再次明确授权。
+```
+
 ## 0. 前次清理上下文 checkpoint（历史）
 
 截至 2026-08-28 本次交接保存时：
