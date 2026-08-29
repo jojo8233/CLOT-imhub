@@ -343,8 +343,14 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   入向媒体和文本仍严格比较时间，`editedAt` 仍进入 revision/指纹。回归与全量测试已覆盖；
   跨过 120 秒后的旧算法报告中，发送端该 base 是唯一新增 mismatch，接收端该 base matched；
   无同源冲突。既有 base 不改写，作为算法发现证据保留。
-  待编辑同一条 S5 caption 一次取得修正后的真实双来源 revision，不需要重发媒体；之后再
-  完成历史扫描和观察周期。
+  用户随后只把同一条 S5 caption 编辑一次；两账号仍各一条 image+reply 消息，旧 caption
+  计数归零，新的 edited-at fact 均为两来源同 hash、无冲突。接收端 telegram-tt 在约 60 秒
+  后到达，仍在 120 秒静默窗口内正常收敛。正式报告中，发送端为
+  `total=30 / comparableTotal=14 / matched=12 / mismatched=1 / telegramTtOnly=1 /
+  sourceLocal=16 / unstable=0`，mismatch 仅是修正前 S5 base，单边仅是 S1 历史缺口；
+  接收端为 `total=14 / comparableTotal=14 / matched=11 / tdlibOnly=3 / mismatched=0 /
+  unstable=0`，三个单边仍是 S2 历史 delete。待逐账户确认 S5 后 outbox `0/0`，之后再完成
+  历史扫描和观察周期。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

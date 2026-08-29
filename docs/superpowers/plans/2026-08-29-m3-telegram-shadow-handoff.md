@@ -4,6 +4,22 @@
 
 ## 最新 checkpoint
 
+- 用户只把同一条 S5 图片消息的 caption 编辑一次为
+  `IMHUB-M3-SHADOW-20260829-S5-EDITED`，没有重发或删除。两账号中央库仍各一行，均保留
+  `media_count=1 / kind=image / reply=true / deleted=false`；旧 caption 行数为 0，两个账号
+  使用同一个服务端 `editedAt=2026-08-29T06:36:30.000Z`。
+- 发送账号的新 edited-at fact 立即收敛为 `sources=2 / hashes=1 / conflict=false`。接收账号
+  先到 TDLib，telegram-tt 在约 60 秒后到达，随后也为 `sources=2 / hashes=1 /
+  conflict=false`；这是静默窗口内的正常隐藏 pane 时序，不是单边丢失。
+- 跨过 120 秒后的正式报告：发送端 `total=30 / comparableTotal=14 / matched=12 /
+  mismatched=1 / telegramTtOnly=1 / sourceLocal=16 / unstable=0`，新增 edit 已 matched，
+  mismatch 仅是修正前 S5 base 的 3 秒算法发现证据，单边仅是 S1 pending_auth 历史缺口；
+  接收端 `total=14 / comparableTotal=14 / matched=11 / tdlibOnly=3 / mismatched=0 /
+  unstable=0`，S5 base/edit 均 matched，三个单边仍是 S2 预挂载前历史 delete。
+- S5 因此已用一条消息和一次 caption 编辑完成 image+caption+same-chat reply 的真实 shadow
+  证据；没有新增 S6，也没有触碰 S4、A1、A2 或既有媒体 fixture。S5 现保留为已编辑、
+  未删除；后续不得再次编辑或删除，除非用户另行明确同意。剩余真人检查只有逐账户确认
+  outbox `pending=0 / dead=0`。
 - 用户按约定只发送一次 S5：在发送 S4 的同一安全会话中回复保留的 S4，附一张无敏感内容
   图片，caption 为 `IMHUB-M3-SHADOW-20260829-S5`。两账号中央库各只有一条最终数字消息，
   均为 `media_count=1 / kind=image / reply=true / edited=false / deleted=false`，不是重复发送。
@@ -163,8 +179,8 @@
 ## 下一 checkpoint
 
 1. 不再发送、编辑或删除 S4；删除必须另行取得用户明确同意。
-2. S5 已只发送一次，不再重发。确认服务加载出向媒体时间修正后，只编辑 S5 caption 一次为
-   `IMHUB-M3-SHADOW-20260829-S5-EDITED`，不新增消息、不删除 S5。
-3. 等待静默窗口后确认两账号仍各一个最终消息，新的 edited-at fact 两来源同 hash、无 conflict，
-   并逐账号确认 outbox `pending=0 / dead=0`。旧 base mismatch 保留为已解释的算法发现证据。
+2. S5 已完成一次发送和一次 caption 编辑，不再重发、编辑或删除。两账号消息行和正式
+   shadow 报告均已收敛；旧 base mismatch 保留为已解释的算法发现证据。
+3. 用户逐一切换两个账户，确认输入坞均无“消息回传队列待处理”和“永久失败事件”非零提示，
+   从而关闭 S5 的 outbox `pending=0 / dead=0` 检查点。
 4. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
