@@ -64,16 +64,18 @@ describe('Telegram shadow observations', () => {
     expect(changedMedia.semanticHash).not.toBe(base.semanticHash)
   })
 
-  it('uses monotonic edit version, then editedAt, as the fact revision', () => {
-    const versioned = buildTelegramUpsertObservation('tdlib', message({
+  it('uses source-independent editedAt for edit facts and ignores transport edit versions', () => {
+    const telegramTt = buildTelegramUpsertObservation('telegram-tt', message({
       editedAt: new Date('2026-08-29T00:01:00.000Z'), editVersion: 9,
     }))
-    const dated = buildTelegramUpsertObservation('tdlib', message({
+    const tdlib = buildTelegramUpsertObservation('tdlib', message({
       editedAt: new Date('2026-08-29T00:01:00.000Z'), editVersion: null,
     }))
 
-    expect(versioned.factKey).toBe('upsert:-100123:42:version:9')
-    expect(dated.factKey).toBe('upsert:-100123:42:edited-at:2026-08-29T00:01:00.000Z')
+    expect(telegramTt.factKey)
+      .toBe('upsert:-100123:42:edited-at:2026-08-29T00:01:00.000Z')
+    expect(tdlib.factKey).toBe(telegramTt.factKey)
+    expect(tdlib.semanticHash).toBe(telegramTt.semanticHash)
   })
 
   it('builds source-independent delete and remap facts', () => {

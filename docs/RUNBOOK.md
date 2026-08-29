@@ -322,8 +322,10 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   打开只能加载最终状态，不伪造历史 delete。宿主现会在恢复会话后预挂载当前 owner
   的全部已支持账号，隐藏 pane 继续使用独立 partition/control grant/outbox 接收 update。
   单个 S3 shadow 专用探针已在接收 pane 保持隐藏时验证发送/接收的 base 与 delete
-  全部 matched，两个 outbox 均为 `0/0`。仍需完成 edit revision 可比较性、其余生命周期、
-  历史扫描和观察周期。
+  全部 matched，两个 outbox 均为 `0/0`。TDLib 编辑现从 `updateMessageContent` 后的完整
+  消息快照取得正文和 `edit_date`；shadow 编辑事实统一使用两 SDK 都有的 `editedAt`，
+  telegram-tt 的 `pts` 只保留作消息/翻译单调排序，不进入跨来源指纹。自动回归已通过，
+  仍需完成单个 S4 真实编辑、其余生命周期、历史扫描和观察周期。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

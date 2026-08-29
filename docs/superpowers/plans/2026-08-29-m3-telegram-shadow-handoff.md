@@ -4,6 +4,17 @@
 
 ## 最新 checkpoint
 
+- TDLib 编辑观测与跨来源 revision 已完成自动接线。官方事件把编辑时间放在
+  `updateMessageEdited`、把最终正文放在独立 `updateMessageContent`；适配器在后者到达后
+  通过 `getMessage` 取得完整 sender/date/content/edit_date 快照，只对 `edit_date > 0`
+  的纯文本发出规范编辑消息。断线/relink 后旧 client 的迟到结果会被丢弃。
+- shadow 编辑事实键统一为 `edited-at:<ISO-time>`，语义指纹保留 `editVersion` 键但固定为
+  null，以维持既有 base hash 并排除 TDLib 不具备的 MTProto `pts`。telegram-tt 的 `pts`
+  未删除，仍负责中央库、翻译 revision 与 outbox 的快速连续编辑排序。同一秒多次编辑若
+  正文不同会成为同源冲突而非伪 matched。
+- 回归测试先分别稳定失败，再在实现后转绿；相关 3 文件 21 tests、`pnpm typecheck`
+  与可连接本机派生测试库的全量 37 文件 354 tests（另 1 个既有 todo）通过。第一次全量
+  运行仅因沙箱禁止连接 `127.0.0.1:5432` 在数据库 setup 阶段失败，允许本机连接后原命令通过。
 - 预挂载修复后，用户从 `existing` 向 `new` 只发送一次
   `IMHUB-M3-SHADOW-20260829-S3`；只读数据库确认两分区各一行，没有因页面延迟
   再次生成多条。120 秒报告中，发送/接收的最终 base upsert 均为 `1/1 matched`，
@@ -93,9 +104,9 @@
 
 ## 下一 checkpoint
 
-1. 补齐 TDLib 编辑观测前，先固定两个 SDK 可比较的 edit revision 语义；telegram-tt
-   当前使用 MTProto `pts`，TDLib 不能通过伪造同一 `pts` 或降低指纹要求制造 matched。
-2. 为 TDLib 编辑 update 增加最小规范化、事务入库和自动回归，再使用一条新 S4
-   shadow 专用 fixture 做单次编辑复验；不动 S1、剩余第一条 S2、A1、A2。
+1. 使用一条新 S4 shadow 专用 fixture 做且只做一次编辑：先从 `existing` 向 `new`
+   发送一次新标记，确认两端 base 后再把同一条正文编辑一次；不动 S1、剩余第一条 S2、A1、A2。
+2. 等待 120 秒静默窗口后分别确认发送/接收账号的 base 与 edit 都 matched、无 mismatch/
+   单边/同源冲突，并确认两个 outbox 为 `0/0`；S4 是否删除必须另行取得用户明确同意。
 3. 编辑收敛后再依次检查媒体/回复的已有 normalize 覆盖和 remap 的来源本地语义，
    只补 shadow 可比较性缺口，不重复 M3-4 已完成矩阵。

@@ -10,6 +10,7 @@ interface TdMessage {
   chat_id: number
   is_outgoing: boolean
   date: number
+  edit_date?: number
   content: { _: string; text?: { text: string } }
 }
 
@@ -32,9 +33,28 @@ export function normalizeTelegramMessage(update: unknown, accountId: string): No
   const u = update as { _?: string; message?: TdMessage }
   if (u._ !== 'updateNewMessage' || !u.message) return null
 
-  const m = u.message
+  return normalizeTelegramStoredMessage(u.message, accountId, update)
+}
+
+/**
+ * 规范化 TDLib 返回的完整 message。
+ *
+ * 编辑正文由 updateMessageContent 单独通知，那个 update 不带 sender/date 等完整
+ * 身份字段；适配器会用 getMessage 取快照后进入这里。TDLib 只暴露 edit_date，
+ * 不伪造 telegram-tt 的 MTProto pts，因此 editVersion 明确保持 null。
+ */
+export function normalizeTelegramStoredMessage(
+  message: unknown,
+  accountId: string,
+  raw: unknown = message,
+): NormalizedMessage | null {
+  if (typeof message !== 'object' || message === null) return null
+  const m = message as TdMessage
+
   if (m.content?._ !== 'messageText' || !m.content.text) return null
   if (!m.sender_id) return null
+  if (!Number.isSafeInteger(m.chat_id) || !Number.isSafeInteger(m.id)) return null
+  if (!Number.isSafeInteger(m.date) || typeof m.is_outgoing !== 'boolean') return null
 
   const sender = senderId(m.sender_id)
   if (sender === null) return null
@@ -59,6 +79,10 @@ export function normalizeTelegramMessage(update: unknown, accountId: string): No
     body: m.content.text.text,
     mediaRefs: [],
     sentAt: new Date(m.date * 1000),
-    raw: update,
+    editedAt: Number.isSafeInteger(m.edit_date) && (m.edit_date ?? 0) > 0
+      ? new Date((m.edit_date ?? 0) * 1000)
+      : null,
+    editVersion: null,
+    raw,
   }
 }

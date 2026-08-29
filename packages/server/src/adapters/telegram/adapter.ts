@@ -20,7 +20,7 @@ import type {
   PlatformAdapter,
   StatusHandler,
 } from '../types.js'
-import { normalizeTelegramMessage } from './normalize.js'
+import { normalizeTelegramMessage, normalizeTelegramStoredMessage } from './normalize.js'
 
 tdl.configure({ tdjson: getTdjson() })
 
@@ -64,6 +64,19 @@ export class TelegramAdapter implements PlatformAdapter {
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) h(accountId, status)
+  }
+
+  private emitMessage(message: Parameters<MessageHandler>[0]): void {
+    for (const handler of this.messageHandlers) {
+      // 一个 handler 抛出的异常绝不能让 tdl 把它当成 TDLib 层面的错误接住——
+      // tdl 会把 update 回调里未捕获的异常转成 client 的 'error' 事件，而我们的
+      // error 处理会把账号状态错误地标成 reconnecting。消息处理失败跟连接状态无关。
+      try {
+        handler(message)
+      } catch (err) {
+        console.error(`[telegram] 账号 ${message.accountId} 的消息 handler 出错:`, err)
+      }
+    }
   }
 
   /** 每个 handler 单独隔离：一个订阅方抛异常不能让其余订阅方收不到 */
@@ -191,18 +204,28 @@ export class TelegramAdapter implements PlatformAdapter {
         }
       }
 
-      const msg = normalizeTelegramMessage(update, account.id)
-      if (!msg) return
-      for (const h of this.messageHandlers) {
-        // 一个 handler 抛出的异常绝不能让 tdl 把它当成 TDLib 层面的错误接住——
-        // tdl 会把 update 回调里未捕获的异常转成 client 的 'error' 事件，而我们的
-        // error 处理会把账号状态错误地标成 reconnecting。消息处理失败跟连接状态无关。
-        try {
-          h(msg)
-        } catch (err) {
-          console.error(`[telegram] 账号 ${account.id} 的消息 handler 出错:`, err)
+      const contentChange = update as {
+        _?: string
+        chat_id?: number
+        message_id?: number
+      }
+      // TDLib 把编辑时间和正文拆成 updateMessageEdited / updateMessageContent。
+      // 后者到达时本地 message 已含最终正文与 edit_date，用 getMessage 补齐
+      // sender/date 等规范化所需字段；非编辑型内容变化会因 edit_date=0 被忽略。
+      if (contentChange._ === 'updateMessageContent') {
+        const chatId = contentChange.chat_id
+        const messageId = contentChange.message_id
+        if (typeof chatId !== 'number' || !Number.isSafeInteger(chatId)
+          || typeof messageId !== 'number' || !Number.isSafeInteger(messageId)) {
+          console.error(`[telegram] 账号 ${account.id} 收到无效消息内容更新，已忽略`)
+        } else {
+          void this.observeEditedMessage(account.id, client, chatId, messageId)
         }
       }
+
+      const msg = normalizeTelegramMessage(update, account.id)
+      if (!msg) return
+      this.emitMessage(msg)
     })
 
     client.on('error', (err) => {
@@ -236,6 +259,25 @@ export class TelegramAdapter implements PlatformAdapter {
     // createClient() 自身仍会处理 WaitTdlibParameters（tdl 把它放在 update
     // 分发里，不依赖 login()），所以跳过 login() 是安全的。
     await Promise.resolve()
+  }
+
+  private async observeEditedMessage(
+    accountId: string,
+    client: tdl.Client,
+    chatId: number,
+    messageId: number,
+  ): Promise<void> {
+    try {
+      const message = await client.invoke({ _: 'getMessage', chat_id: chatId, message_id: messageId })
+      // disconnect/relink 后旧 client 的异步结果不能写入新连接的消息流。
+      if (this.clients.get(accountId) !== client) return
+      const normalized = normalizeTelegramStoredMessage(message, accountId)
+      if (!normalized?.editedAt) return
+      this.emitMessage(normalized)
+    } catch (err) {
+      if (this.clients.get(accountId) !== client) return
+      console.error(`[telegram] 账号 ${accountId} 读取编辑后的消息失败:`, err)
+    }
   }
 
   /**

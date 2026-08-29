@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import fixture from './fixtures/text-message.json' with { type: 'json' }
-import { normalizeTelegramMessage } from './normalize.js'
+import { normalizeTelegramMessage, normalizeTelegramStoredMessage } from './normalize.js'
 
 describe('normalizeTelegramMessage', () => {
   it('把 TDLib updateNewMessage 转成 NormalizedMessage', () => {
@@ -18,6 +18,25 @@ describe('normalizeTelegramMessage', () => {
 
   it('date 是 Unix 秒，要转成毫秒精度的 Date', () => {
     expect(normalizeTelegramMessage(fixture, 'acc-1')!.sentAt.getTime()).toBe(1756000000 * 1000)
+  })
+
+  it('把 getMessage 返回的已编辑文本转换成带 editedAt 的 NormalizedMessage', () => {
+    const edited = {
+      ...fixture.message,
+      edit_date: 1756000060,
+      content: {
+        ...fixture.message.content,
+        text: { ...fixture.message.content.text, text: 'Edited body' },
+      },
+    }
+
+    expect(normalizeTelegramStoredMessage(edited, 'acc-1')).toMatchObject({
+      platformMessageId: '-1001234567890:1',
+      body: 'Edited body',
+      editedAt: new Date(1756000060 * 1000),
+      editVersion: null,
+      raw: edited,
+    })
   })
 
   it('is_outgoing 为 true 时方向是 out', () => {

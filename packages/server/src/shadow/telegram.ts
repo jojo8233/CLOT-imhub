@@ -41,7 +41,9 @@ export function buildTelegramUpsertObservation(
     replyToPlatformMessageId: message.replyToPlatformMessageId ?? null,
     sentAt: message.sentAt.toISOString(),
     editedAt: message.editedAt?.toISOString() ?? null,
-    editVersion: message.editVersion ?? null,
+    // telegram-tt 的 MTProto pts 用于其自身落库排序，TDLib 不暴露等价字段。
+    // 保留原 payload 键并固定为 null，既让两来源可比较，也不改变既有 base hash。
+    editVersion: null,
   }
 
   return {
@@ -76,10 +78,12 @@ export function buildTelegramRemapObservation(
 }
 
 function messageRevision(message: NormalizedMessage): string {
+  if (message.editedAt) return `edited-at:${message.editedAt.toISOString()}`
+  // Bridge v2 要求非 null editVersion 必须同时携带 editedAt；这里仅为内部异常
+  // 输入保留不可伪造的降级键，正常双来源编辑不会走到该分支。
   if (message.editVersion !== null && message.editVersion !== undefined) {
     return `version:${message.editVersion}`
   }
-  if (message.editedAt) return `edited-at:${message.editedAt.toISOString()}`
   return 'base'
 }
 

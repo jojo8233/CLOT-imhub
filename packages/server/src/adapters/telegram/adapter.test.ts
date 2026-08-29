@@ -65,6 +65,21 @@ describe('TelegramAdapter authorization startup', () => {
         for (const listener of tdlMock.listeners.get('update') ?? []) listener(update)
         return { _: 'ok' }
       }
+      if (request._ === 'getMessage') {
+        return {
+          _: 'message',
+          id: 3502 * 2 ** 20,
+          sender_id: { _: 'messageSenderUser', user_id: 8972860767 },
+          chat_id: 6639331234,
+          is_outgoing: false,
+          date: 1787960000,
+          edit_date: 1787960060,
+          content: {
+            _: 'messageText',
+            text: { _: 'formattedText', text: 'S4 edited', entities: [] },
+          },
+        }
+      }
       throw new Error(`unexpected TDLib request: ${request._}`)
     })
   })
@@ -126,5 +141,62 @@ describe('TelegramAdapter authorization startup', () => {
       { accountId: 'account-1', platformMessageId: '6639331234:3497' },
       { accountId: 'account-1', platformMessageId: '6639331234:3498' },
     ])
+  })
+
+  it('在正文变更 update 后读取完整消息并发出可比较的编辑快照', async () => {
+    const adapter = new TelegramAdapter({
+      apiId: 1,
+      apiHash: 'test-hash',
+      dataDir: '/tmp/im-hub-tdlib-test',
+    })
+    const messages: Array<{
+      platformMessageId: string
+      body: string
+      editedAt: Date | null | undefined
+      editVersion: number | null | undefined
+    }> = []
+    adapter.onMessage(message => {
+      messages.push({
+        platformMessageId: message.platformMessageId,
+        body: message.body,
+        editedAt: message.editedAt,
+        editVersion: message.editVersion,
+      })
+    })
+    await adapter.connect({ id: 'account-1', displayName: 'Account 1', credentialsRef: null })
+
+    for (const listener of tdlMock.listeners.get('update') ?? []) {
+      listener({
+        _: 'updateMessageEdited',
+        chat_id: 6639331234,
+        message_id: 3502 * 2 ** 20,
+        edit_date: 1787960060,
+      })
+    }
+    expect(messages).toEqual([])
+
+    for (const listener of tdlMock.listeners.get('update') ?? []) {
+      listener({
+        _: 'updateMessageContent',
+        chat_id: 6639331234,
+        message_id: 3502 * 2 ** 20,
+        new_content: {
+          _: 'messageText',
+          text: { _: 'formattedText', text: 'S4 edited', entities: [] },
+        },
+      })
+    }
+
+    await vi.waitFor(() => {
+      expect(messages).toEqual([{
+        platformMessageId: '6639331234:3502',
+        body: 'S4 edited',
+        editedAt: new Date(1787960060 * 1000),
+        editVersion: null,
+      }])
+    })
+    expect(tdlMock.invoke).toHaveBeenCalledWith({
+      _: 'getMessage', chat_id: 6639331234, message_id: 3502 * 2 ** 20,
+    })
   })
 })

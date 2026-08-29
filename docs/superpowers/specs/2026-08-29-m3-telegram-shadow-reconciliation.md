@@ -1,7 +1,7 @@
 # M3-5 Telegram 双来源 shadow 对账与切换门槛
 
 日期：2026-08-29
-状态：执行中；账本、报告、双真实账号 base upsert 与隐藏接收 pane delete 已验，其余生命周期和切换门槛待验
+状态：执行中；账本、报告、双真实账号 base upsert 与隐藏接收 pane delete 已验，edit 自动回归已接线、真实 S4 待验
 
 ## 1. 目标与非目标
 
@@ -23,8 +23,9 @@ TDLib 适配器和 telegram-tt message outbox 在同一个 Telegram 账号上同
 事实键必须在两个来源间可重现：
 
 - 初始 upsert：`upsert:<canonical-message-id>:base`
-- 编辑 upsert：`upsert:<canonical-message-id>:version:<n>`；没有单调版本时使用规范化
-  `editedAt`
+- 编辑 upsert：`upsert:<canonical-message-id>:edited-at:<ISO-time>`。这是 TDLib 与
+  telegram-tt 都能从 Telegram 服务端取得的修订时间；telegram-tt 的 MTProto `pts`
+  继续用于消息落库、翻译和 outbox 排序，但不作为跨 SDK shadow 事实键
 - 删除：`delete:<canonical-message-id>`
 - 重映射：`remap:<old-canonical-id>:<new-canonical-id>`
 
@@ -40,7 +41,11 @@ TDLib 适配器和 telegram-tt message outbox 在同一个 Telegram 账号上同
 - 方向和 sender external id
 - 正文的 SHA-256，不保存正文本身
 - 媒体的 kind/file name/MIME/size 语义形状；不比较两个 SDK 不同的远端引用
-- sent/edit 时间和 edit version
+- sent/edit 时间；来源专属的 edit version 不参与跨来源指纹
+
+Telegram 的 `edit_date` 是秒级时间。同一消息在同一秒内发生多次编辑时，shadow 账本
+不会用伪造版本把它们拆开：相同事实键出现不同指纹会记为同源冲突，不能计入 matched。
+telegram-tt 的 `pts` 仍保证中央消息和翻译只接受更高版本；该限制必须保留在切换评估中。
 
 delete/remap 的事实键本身已经完整描述平台事实，指纹由事实键生成。
 
@@ -79,7 +84,9 @@ M3-5 按下列顺序续验：
    delete 代码与自动回归已完成；真实 S2 证明发送分区三个 delete matched，也暴露接收
    webview 未创建时三个 TDLib-only 缺口。宿主预挂载修复后，单个 S3 shadow 专用
    fixture 在接收 pane 始终隐藏时，发送/接收的 base 与 delete 均获得 matched，两个
-   outbox 均收敛为 `0/0`。delete 路径的该缺口已关闭，下一优先项是 edit revision 可比较性。
+   outbox 均收敛为 `0/0`。delete 路径的该缺口已关闭。edit 自动路径现会在 TDLib
+   `updateMessageContent` 后读取完整消息，以 `edit_date` 生成 `editedAt` 快照；跨来源
+   fact key/指纹回归已固定为忽略 `pts` 的可比较语义。下一步只执行单个 S4 单次编辑实证。
 4. 增加受限的历史扫描和主动修复；扫描必须有账号/会话边界、数量上限和可观测进度。
 5. 复用 M3-4 已完成的多账号和故障证据，只执行 shadow 特有的差异/恢复矩阵。
 6. 定义灰度开关、观察周期、一致率门槛和回滚步骤。在门槛证据完成前不停用 TDLib。
