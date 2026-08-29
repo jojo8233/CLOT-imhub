@@ -168,7 +168,10 @@ WhatsApp 首检点不需要服务端凭据：owner 创建 WhatsApp 账号后，�
 验证页面内登录、多开和文字收发；没有 im-hub 翻译、消息回传或中央归档。若页面没有出现，
 先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
 启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确
-WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽其他 guest 权限。
+WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽其他 guest 权限。若官方
+页面已经完整但 im-hub 显示自己的“等了 20 秒”遮罩，检查 shell-only 就绪判定是否错误依赖
+`webview.isLoading()`；WhatsApp 登录后该标志可能长期为 `true`，应按已附着的精确 origin
+显示页面，同时继续用 `did-fail-load` 处理真实主框架错误。
 
 ---
 

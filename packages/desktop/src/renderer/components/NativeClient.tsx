@@ -114,9 +114,17 @@ interface NativeWebviewLoadProbe {
  * 这时 webview 已经可用，不能继续等到二十秒超时。
  */
 export function nativeWebviewAlreadyLoaded(webview: NativeWebviewLoadProbe, src: string): boolean {
+  return nativeWebviewAtExpectedOrigin(webview, src) && !webview.isLoading()
+}
+
+/**
+ * WhatsApp Web 登录后可能让 Electron 的全局 isLoading 长时间保持 true，即使文档已经
+ * complete。shell-only 页面只需要确认 guest 已附着且仍在精确白名单 origin；页面自身的
+ * 加载界面比宿主的误报遮罩更准确。bridge 客户端仍使用上面的严格完成条件。
+ */
+export function nativeWebviewAtExpectedOrigin(webview: NativeWebviewLoadProbe, src: string): boolean {
   try {
     return webview.getWebContentsId() > 0
-      && !webview.isLoading()
       && new URL(webview.getURL()).origin === new URL(src).origin
   } catch {
     return false
@@ -287,7 +295,12 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
 
     if (!bridgeEnabled) {
       let readyHandled = false
+      let originProbeTimer: ReturnType<typeof setInterval> | null = null
       const onStartLoading = (): void => {
+        if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) {
+          setState('ready')
+          return
+        }
         readyHandled = false
         setState('loading')
         setDetail('')
@@ -307,6 +320,7 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
           return
         }
         readyHandled = true
+        if (originProbeTimer) clearInterval(originProbeTimer)
         setState('ready')
       }
       const onFail = (e: Event): void => {
@@ -332,8 +346,14 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
       el.addEventListener('did-stop-loading', onReady)
       el.addEventListener('did-fail-load', onFail)
       el.addEventListener('console-message', onConsole)
-      if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      // React effect 可能晚于 dom-ready，而 WhatsApp 的 isLoading 又可能长期不归零。
+      // 短轮询只验证 webContents + 精确 origin，不读取或操控官方页面 DOM。
+      originProbeTimer = setInterval(() => {
+        if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      }, 250)
+      if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
       return () => {
+        if (originProbeTimer) clearInterval(originProbeTimer)
         el.removeEventListener('did-start-loading', onStartLoading)
         el.removeEventListener('dom-ready', onReady)
         el.removeEventListener('did-stop-loading', onReady)

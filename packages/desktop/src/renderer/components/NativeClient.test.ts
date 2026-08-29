@@ -5,6 +5,7 @@ import {
   nativeAccountControllable,
   nativeAccountIdsToMount,
   nativeWebviewAlreadyLoaded,
+  nativeWebviewAtExpectedOrigin,
 } from './NativeClient.js'
 
 describe('native account ownership gate', () => {
@@ -68,6 +69,21 @@ describe('native webview load recovery', () => {
     expect(nativeWebviewAlreadyLoaded(
       probe({ url: 'https://web.telegram.org/' }),
       'http://localhost:1234/',
+    )).toBe(false)
+  })
+
+  it('shell-only 官方页面只要已附着且来源匹配就显示自身加载状态', () => {
+    expect(nativeWebviewAtExpectedOrigin(
+      probe({ url: 'https://web.whatsapp.com/', loading: true }),
+      'https://web.whatsapp.com/',
+    )).toBe(true)
+    expect(nativeWebviewAtExpectedOrigin(
+      probe({ url: 'https://web.whatsapp.com.evil.example/', loading: true }),
+      'https://web.whatsapp.com/',
+    )).toBe(false)
+    expect(nativeWebviewAtExpectedOrigin(
+      probe({ url: 'https://web.whatsapp.com/', webContentsId: 0, loading: true }),
+      'https://web.whatsapp.com/',
     )).toBe(false)
   })
 })

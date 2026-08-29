@@ -37,7 +37,10 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
   精确 `https://web.whatsapp.com` 主框架的 `persistent-storage`：WhatsApp 登录后同步依赖该
   durable-storage 请求；相机、麦克风、通知、剪贴板、第三方 iframe 和其他来源仍拒绝。
 - 宿主只把官方页面加载成功视为“壳可用”，不能据此声称 WhatsApp 已登录或服务端已连接。
-  登录状态当前由页面本身显示，二维码也只在官方页面中出现。
+  登录状态当前由页面本身显示，二维码也只在官方页面中出现。WhatsApp 登录后可能让
+  Electron 的 `webview.isLoading()` 长时间保持 `true`；shell-only 宿主以 webContents 已附着且
+  精确 origin 匹配作为可显示条件，让官方页面自行呈现同步进度，不能用全局 loading 标志
+  生成 20 秒失败遮罩。
 - 账号删除时 Electron 清理对应 partition，并提醒用户在手机“已关联设备”中移除会话。
 - 本 checkpoint 只测试官方页面中的文字收发和多开。没有统一消息回传、中央存档、翻译、
   客户档案跟随、审计、告警、媒体桥接、发送确认、去重或故障重放。
