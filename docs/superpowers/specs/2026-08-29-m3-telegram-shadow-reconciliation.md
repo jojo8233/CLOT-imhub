@@ -1,7 +1,7 @@
 # M3-5 Telegram 双来源 shadow 对账与切换门槛
 
 日期：2026-08-29
-状态：执行中；账本、报告、双真实账号 base upsert 与 TDLib delete 观测已就绪，其余生命周期和切换门槛待验
+状态：执行中；账本、报告、双真实账号 base upsert 与隐藏接收 pane delete 已验，其余生命周期和切换门槛待验
 
 ## 1. 目标与非目标
 
@@ -77,8 +77,9 @@ M3-5 按下列顺序续验：
    upsert/remap 是发送端本地生命周期，必须单独分类而不伪装为 base 差异。
 3. 补齐 TDLib 编辑、删除、媒体、回复和 remap 观测；不通过降低指纹要求制造一致。
    delete 代码与自动回归已完成；真实 S2 证明发送分区三个 delete matched，也暴露接收
-   webview 未创建时三个 TDLib-only 缺口。宿主预挂载修复已完成，待用单个 S3
-   shadow 专用 fixture 验证隐藏接收 pane 不再漏事件。
+   webview 未创建时三个 TDLib-only 缺口。宿主预挂载修复后，单个 S3 shadow 专用
+   fixture 在接收 pane 始终隐藏时，发送/接收的 base 与 delete 均获得 matched，两个
+   outbox 均收敛为 `0/0`。delete 路径的该缺口已关闭，下一优先项是 edit revision 可比较性。
 4. 增加受限的历史扫描和主动修复；扫描必须有账号/会话边界、数量上限和可观测进度。
 5. 复用 M3-4 已完成的多账号和故障证据，只执行 shadow 特有的差异/恢复矩阵。
 6. 定义灰度开关、观察周期、一致率门槛和回滚步骤。在门槛证据完成前不停用 TDLib。

@@ -4,6 +4,16 @@
 
 ## 最新 checkpoint
 
+- 预挂载修复后，用户从 `existing` 向 `new` 只发送一次
+  `IMHUB-M3-SHADOW-20260829-S3`；只读数据库确认两分区各一行，没有因页面延迟
+  再次生成多条。120 秒报告中，发送/接收的最终 base upsert 均为 `1/1 matched`，
+  无 mismatch、TDLib-only 或同源不稳定；发送侧一组临时 upsert/remap 依设计单独分类。
+- 用户另行明确同意后，在 `new` 仍为未切换的隐藏 pane 时，仅对所有人删除 S3。
+  即时观测已显示发送/接收的 TDLib 和 telegram-tt 四个来源分区各一个 delete；
+  跨过 120 秒后，两账号的 `delete` 均为 `1/1 matched`，无任何单边或不一致。
+  两个 IndexedDB outbox 最终均为 `pending=0, dead=0`。
+- S3 因此完成“单条 base + 隐藏接收 pane delete”的 shadow 专用复验，不是重做
+  M3-4 故障矩阵。S3 已删除；S1、剩余第一条 S2、A1、A2 仍保留不动。
 - 用户已明确同意保留四条 S2 中最上面第一条，并对所有人删除下面连续三条。
   即时只读确认发送/接收分区都是第一条 live、后三条 deleted；S1、A1、A2 未动。
 - 120 秒正式报告显示：`existing` 发送分区的三个 delete 全部 matched，连同四个
@@ -83,10 +93,9 @@
 
 ## 下一 checkpoint
 
-1. 提交/推送预挂载修复并回写 Issue #13；PR #19 和 Issue #12 保持 OPEN。
-2. 修复加载后仅执行一个 shadow 专用探针：在两个账号 webview 都已预挂载、
-   `pending=0, dead=0` 时，从 `existing` 向 `new` 只发送一次
-   `IMHUB-M3-SHADOW-20260829-S3`。不重复 M3-4 故障矩阵。
-3. S3 双账号 base upsert 跨过 120 秒并 matched 后，经用户另行明确确认，仅对所有人
-   删除 S3；删除时保持接收账号为隐藏 pane，验证四个来源分区都产生 matched delete。
-   S1、剩余第一条 S2、A1、A2 不动。
+1. 补齐 TDLib 编辑观测前，先固定两个 SDK 可比较的 edit revision 语义；telegram-tt
+   当前使用 MTProto `pts`，TDLib 不能通过伪造同一 `pts` 或降低指纹要求制造 matched。
+2. 为 TDLib 编辑 update 增加最小规范化、事务入库和自动回归，再使用一条新 S4
+   shadow 专用 fixture 做单次编辑复验；不动 S1、剩余第一条 S2、A1、A2。
+3. 编辑收敛后再依次检查媒体/回复的已有 normalize 覆盖和 remap 的来源本地语义，
+   只补 shadow 可比较性缺口，不重复 M3-4 已完成矩阵。
