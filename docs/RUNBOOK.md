@@ -349,8 +349,9 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   `total=30 / comparableTotal=14 / matched=12 / mismatched=1 / telegramTtOnly=1 /
   sourceLocal=16 / unstable=0`，mismatch 仅是修正前 S5 base，单边仅是 S1 历史缺口；
   接收端为 `total=14 / comparableTotal=14 / matched=11 / tdlibOnly=3 / mismatched=0 /
-  unstable=0`，三个单边仍是 S2 历史 delete。待逐账户确认 S5 后 outbox `0/0`，之后再完成
-  历史扫描和观察周期。
+  unstable=0`，三个单边仍是 S2 历史 delete。用户随后逐一切换两个账户，输入坞均无
+  pending/dead-letter 非零提示，对应两个 outbox `pending=0 / dead=0`。S5 的媒体+回复
+  checkpoint 已关闭；之后进入受限历史扫描、主动修复边界和观察周期。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

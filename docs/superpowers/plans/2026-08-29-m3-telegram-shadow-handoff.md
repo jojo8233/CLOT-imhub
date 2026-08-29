@@ -4,6 +4,10 @@
 
 ## 最新 checkpoint
 
+- 用户在 S5 edit 正式报告完成后逐一切换两个账户检查输入坞，两边均未出现“消息回传队列
+  待处理”或“永久失败事件”提示。结合两个 owner webview 已验证的 bridge/control grant
+  和两来源 edit fact 均已到达，对应两个 outbox `pending=0 / dead=0`。S5 的
+  image+caption+same-chat reply+edit checkpoint 已完整关闭。
 - 用户只把同一条 S5 图片消息的 caption 编辑一次为
   `IMHUB-M3-SHADOW-20260829-S5-EDITED`，没有重发或删除。两账号中央库仍各一行，均保留
   `media_count=1 / kind=image / reply=true / deleted=false`；旧 caption 行数为 0，两个账号
@@ -18,8 +22,7 @@
   unstable=0`，S5 base/edit 均 matched，三个单边仍是 S2 预挂载前历史 delete。
 - S5 因此已用一条消息和一次 caption 编辑完成 image+caption+same-chat reply 的真实 shadow
   证据；没有新增 S6，也没有触碰 S4、A1、A2 或既有媒体 fixture。S5 现保留为已编辑、
-  未删除；后续不得再次编辑或删除，除非用户另行明确同意。剩余真人检查只有逐账户确认
-  outbox `pending=0 / dead=0`。
+  未删除；后续不得再次编辑或删除，除非用户另行明确同意。两个 outbox 已确认 `0/0`。
 - 用户按约定只发送一次 S5：在发送 S4 的同一安全会话中回复保留的 S4，附一张无敏感内容
   图片，caption 为 `IMHUB-M3-SHADOW-20260829-S5`。两账号中央库各只有一条最终数字消息，
   均为 `media_count=1 / kind=image / reply=true / edited=false / deleted=false`，不是重复发送。
@@ -180,7 +183,7 @@
 
 1. 不再发送、编辑或删除 S4；删除必须另行取得用户明确同意。
 2. S5 已完成一次发送和一次 caption 编辑，不再重发、编辑或删除。两账号消息行和正式
-   shadow 报告均已收敛；旧 base mismatch 保留为已解释的算法发现证据。
-3. 用户逐一切换两个账户，确认输入坞均无“消息回传队列待处理”和“永久失败事件”非零提示，
-   从而关闭 S5 的 outbox `pending=0 / dead=0` 检查点。
-4. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
+   shadow 报告和 outbox `0/0` 均已收敛；旧 base mismatch 保留为已解释的算法发现证据。
+3. 只读审计现有消息/alias/shadow 数据边界，先定义按账号/会话/时间/数量限制的历史扫描、
+   可观测进度和 dry-run 输出；未完成设计与回归前不主动补写或删除任何事实。
+4. 再实现受限主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
