@@ -17,7 +17,7 @@ import { OpenAiProvider } from './translation/providers/openai.js'
 import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
-import { buildTelegramRemapObservation } from './shadow/telegram.js'
+import { buildTelegramDeleteObservation, buildTelegramRemapObservation } from './shadow/telegram.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
@@ -120,6 +120,32 @@ adapters.onMessageIdRemapped((accountId, oldId, newId) => {
       }
     }
   })()
+})
+
+adapters.onMessageDeleted((accountId, platformMessageId, deletedAt) => {
+  void (async () => {
+    const result = await messageRepo.markMessageDeleted(
+      accountId,
+      platformMessageId,
+      deletedAt,
+      buildTelegramDeleteObservation(accountId, 'tdlib', platformMessageId),
+    )
+    if (!result?.changed) return
+    const owner = await db.selectFrom('accounts')
+      .select('owner_user_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (owner) {
+      hub.publishTo(owner.owner_user_id, {
+        type: 'message_deleted',
+        messageId: result.messageId,
+        conversationId: result.conversationId,
+        deletedAt: deletedAt.toISOString(),
+      })
+    }
+  })().catch((err: unknown) => {
+    console.error(`[server] 账号 ${accountId} 处理 TDLib 删除事件失败:`, err)
+  })
 })
 
 /**

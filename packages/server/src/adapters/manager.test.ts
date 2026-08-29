@@ -15,8 +15,9 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     onCredentialsUpdated: vi.fn(),
     onPlatformIdentityUpdated: vi.fn(),
     onMessageIdRemapped: vi.fn(),
-  submitAuthAnswer: vi.fn(),
-  purge: vi.fn(),
+    onMessageDeleted: vi.fn(),
+    submitAuthAnswer: vi.fn(),
+    purge: vi.fn(),
   }
 }
 
@@ -136,6 +137,21 @@ describe('AdapterManager', () => {
 
     handlers[0]!('a1', '3575644161', '3576692736')
     expect(seen).toEqual([['a1', '3575644161', '3576692736']])
+  })
+
+  it('把删除事实汇聚到统一回调', () => {
+    const tg = fakeAdapter('telegram')
+    const handlers: ((id: string, messageId: string, deletedAt: Date) => void)[] = []
+    tg.onMessageDeleted = vi.fn((handler) => { handlers.push(handler) })
+
+    const seen: [string, string, string][] = []
+    const mgr = new AdapterManager([tg])
+    mgr.onMessageDeleted((id, messageId, deletedAt) => {
+      seen.push([id, messageId, deletedAt.toISOString()])
+    })
+
+    handlers[0]!('a1', '6639331234:3497', new Date('2026-08-29T01:00:00.000Z'))
+    expect(seen).toEqual([['a1', '6639331234:3497', '2026-08-29T01:00:00.000Z']])
   })
 
   it('disconnect 后账号不再可发送', async () => {

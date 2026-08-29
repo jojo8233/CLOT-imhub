@@ -7,6 +7,7 @@ import type {
   AuthChallengeHandler,
   CredentialsHandler,
   MessageHandler,
+  MessageDeletedHandler,
   MessageIdRemapHandler,
   PlatformAdapter,
   StatusHandler,
@@ -89,6 +90,9 @@ export class SignalAdapter implements PlatformAdapter {
 
   /** Signal 没有临时消息 id（消息身份就是 发送者+timestamp），这个通道永远不会触发 */
   onMessageIdRemapped(_handler: MessageIdRemapHandler): void { /* 不适用 */ }
+
+  /** 当前 signal-cli 接线不提供可靠的远端删除事件。 */
+  onMessageDeleted(_handler: MessageDeletedHandler): void { /* 不适用 */ }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) {

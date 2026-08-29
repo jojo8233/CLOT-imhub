@@ -3,6 +3,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import pg from 'pg'
 import type { Database } from '../db/types.js'
 import { testDatabaseUrl } from '../db/test-db.js'
+import { buildTelegramDeleteObservation } from '../shadow/telegram.js'
 import { KyselyMessageRepo } from './repo.js'
 
 const db = new Kysely<Database>({
@@ -507,6 +508,33 @@ describe('KyselyMessageRepo.insertMessage', () => {
     const row = await db.selectFrom('messages').select('deleted_at').where('id', '=', first.id)
       .executeTakeFirstOrThrow()
     expect(row.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+  })
+
+  it('删除状态与 TDLib shadow 观测在同一事务中落库', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({ conversationId }))
+    const deletedAt = new Date('2026-08-24T02:00:00Z')
+
+    expect(await repo.markMessageDeleted(
+      accountId,
+      '555',
+      deletedAt,
+      buildTelegramDeleteObservation(accountId, 'tdlib', '555'),
+    )).toMatchObject({ changed: true })
+
+    const message = await db.selectFrom('messages').select('deleted_at').where('id', '=', first.id)
+      .executeTakeFirstOrThrow()
+    const observation = await db.selectFrom('telegram_shadow_observations')
+      .select(['source', 'event_type', 'fact_key', 'observation_count'])
+      .where('account_id', '=', accountId)
+      .where('fact_key', '=', 'delete:555')
+      .executeTakeFirstOrThrow()
+    expect(message.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+    expect(observation).toEqual({
+      source: 'tdlib', event_type: 'delete', fact_key: 'delete:555', observation_count: 1,
+    })
   })
 })
 

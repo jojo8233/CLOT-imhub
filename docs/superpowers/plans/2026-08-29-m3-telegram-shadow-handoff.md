@@ -4,6 +4,22 @@
 
 ## 最新 checkpoint
 
+- `existing` / `new` 两个 TDLib 账号都已真实登录并收敛为 `connected`。
+  用户从 `existing` 向 `new` 发送 `IMHUB-M3-SHADOW-20260829-S2` 时，因 Telegram
+  页面延迟显示而连续点击了四次；后续确认这是四条不同的真实平台消息，
+  不是数据库重复，也没有第五条。不再重发 S2。
+- 跨过 120 秒静默窗口后，`new` 接收分区的 S1 + 四条 S2 为 `5/5 matched`；
+  `existing` 发送分区的四条 S2 最终 base upsert 全部 matched。两边均无
+  mismatch、TDLib-only 或同源不稳定；发送侧另有 11 个 telegram-tt-only 的临时
+  upsert/remap 生命周期事实，这些不是最终 base 差异。两个 webview 的 outbox 均为
+  `pending=0, dead=0`。
+- TDLib 适配器已补齐 `updateDeleteMessages` 观测：只把平台/当前账号视图的删除
+  转成 canonical `delete` 事实，`from_cache=true` 的本地缓存淘汰明确忽略；删除状态与
+  shadow 观测在同一事务内落库，事件处理器异常隔离。`pnpm typecheck`、定向数据库
+  用例及全量 37 文件 351 tests（另 1 个既有 todo）通过。
+- 四条 S2 当前全部保留。下一步需用户明确确认后，仅保留最上面第一条，
+  从 Telegram 删除下面连续三条，把这次必要的清理同时作为三条真实 delete shadow
+  fixture。S1、A1、A2 不动。
 - S1 发送侧 TDLib 为 `pending_auth` 后，用户通过「账号状态 → 重新关联」真实复验时遇到
   二维码永久停在“正在生成”。relink HTTP 始终为 200，根因不是 WebSocket 或 QR 渲染，
   而是 `tdl.createClient()` 的 receive loop 可能在业务 listener 挂载前收到并缓存首个
@@ -55,8 +71,9 @@
 
 ## 下一 checkpoint
 
-1. 用户确认安全会话后，从 `existing` 向 `new` 只发送一次
-   `IMHUB-M3-SHADOW-20260829-S2`；不要编辑、删除或重发 S1。
-2. 跨过 120 秒静默窗口后只读运行两个账号的报告，分别核对发送/接收 base upsert；
-   temp/remap 是发送端本地生命周期，在定义切换门槛前单独解释，不用降低报告要求隐藏。
-3. 以 S2 的真实差异决定 TDLib 编辑/删除/媒体/回复观测和历史扫描的最小补齐顺序。
+1. 确认服务端已加载 TDLib delete 观测、两账号仍为 `connected`；若服务端重启导致
+   宿主 WebSocket 断开，先刷新一次 im-hub 宿主。
+2. 经用户明确确认后，保留四条 S2 中最上面第一条，仅删除下面连续三条；
+   不编辑/删除 S1、A1、A2。
+3. 跨过 120 秒静默窗口后只读核对三个 `delete` 事实的 TDLib / telegram-tt 一致性与
+   两个 outbox 的 `pending/dead`；再决定编辑、媒体、回复观测和历史扫描的最小补齐顺序。

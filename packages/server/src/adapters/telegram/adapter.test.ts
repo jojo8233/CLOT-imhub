@@ -91,4 +91,40 @@ describe('TelegramAdapter authorization startup', () => {
     })
     expect(tdlMock.invoke).toHaveBeenCalledWith({ _: 'getAuthorizationState' })
   })
+
+  it('把服务端删除更新转换成账号级规范键并忽略纯缓存清理', async () => {
+    const tdlibMessageId = (serverMessageId: number): number => serverMessageId * 2 ** 20
+    const adapter = new TelegramAdapter({
+      apiId: 1,
+      apiHash: 'test-hash',
+      dataDir: '/tmp/im-hub-tdlib-test',
+    })
+    const deleted: Array<{ accountId: string; platformMessageId: string }> = []
+    adapter.onMessageDeleted((accountId, platformMessageId) => {
+      deleted.push({ accountId, platformMessageId })
+    })
+    await adapter.connect({ id: 'account-1', displayName: 'Account 1', credentialsRef: null })
+
+    for (const listener of tdlMock.listeners.get('update') ?? []) {
+      listener({
+        _: 'updateDeleteMessages',
+        chat_id: 6639331234,
+        message_ids: [tdlibMessageId(3497), tdlibMessageId(3498), tdlibMessageId(3498)],
+        from_cache: false,
+        is_permanent: true,
+      })
+      listener({
+        _: 'updateDeleteMessages',
+        chat_id: 6639331234,
+        message_ids: [tdlibMessageId(3499)],
+        from_cache: true,
+        is_permanent: false,
+      })
+    }
+
+    expect(deleted).toEqual([
+      { accountId: 'account-1', platformMessageId: '6639331234:3497' },
+      { accountId: 'account-1', platformMessageId: '6639331234:3498' },
+    ])
+  })
 })

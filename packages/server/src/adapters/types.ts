@@ -45,6 +45,13 @@ export type MessageIdRemapHandler = (
   newPlatformMessageId: string,
 ) => void
 
+/** 平台确认一条消息已从当前账号视图删除时触发。 */
+export type MessageDeletedHandler = (
+  accountId: string,
+  platformMessageId: string,
+  deletedAt: Date,
+) => void
+
 export interface PlatformAdapter {
   readonly platform: Platform
   connect(account: AdapterAccount): Promise<void>
@@ -71,6 +78,9 @@ export interface PlatformAdapter {
 
   /** 临时消息 id 被平台换成最终 id 时通知上层改写已落库的记录 */
   onMessageIdRemapped(handler: MessageIdRemapHandler): void
+
+  /** 服务端删除事件；纯本地缓存淘汰不能伪装成业务删除。 */
+  onMessageDeleted(handler: MessageDeletedHandler): void
 
   /**
    * 把人工输入的验证码或二次验证密码交回给正在等待的鉴权流程。

@@ -14,6 +14,7 @@ import type {
   AuthChallengeHandler,
   CredentialsHandler,
   MessageHandler,
+  MessageDeletedHandler,
   MessageIdRemapHandler,
   PlatformIdentityHandler,
   PlatformAdapter,
@@ -40,6 +41,7 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
+  private readonly messageDeletedHandlers: MessageDeletedHandler[] = []
 
   /**
    * 正在等人填验证码 / 二次验证密码的账号。
@@ -58,6 +60,7 @@ export class TelegramAdapter implements PlatformAdapter {
     this.platformIdentityHandlers.push(handler)
   }
   onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
+  onMessageDeleted(handler: MessageDeletedHandler): void { this.messageDeletedHandlers.push(handler) }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) h(accountId, status)
@@ -152,6 +155,39 @@ export class TelegramAdapter implements PlatformAdapter {
           }
         } catch {
           console.error(`[telegram] 账号 ${account.id} 收到无效消息 id，已拒绝重映射`)
+        }
+      }
+
+      const deletion = update as {
+        _?: string
+        chat_id?: number
+        message_ids?: number[]
+        from_cache?: boolean
+      }
+      // from_cache=true 只是 TDLib 淘汰本地缓存，消息以后可能重新载入，不能据此
+      // 把中央消息标为删除。服务端下发的账号内删除（包括“仅为我删除”）则是
+      // 当前账号视图的真实事实，需要进入 shadow 对账。
+      if (deletion._ === 'updateDeleteMessages' && deletion.from_cache !== true) {
+        const chatId = deletion.chat_id
+        const messageIds = deletion.message_ids
+        if (typeof chatId !== 'number' || !Number.isSafeInteger(chatId) || !Array.isArray(messageIds)) {
+          console.error(`[telegram] 账号 ${account.id} 收到无效删除事件，已忽略`)
+        } else {
+          const deletedAt = new Date()
+          for (const messageId of new Set(messageIds)) {
+            try {
+              const platformMessageId = telegramMessageKeyFromTdlib(chatId, messageId)
+              for (const handler of this.messageDeletedHandlers) {
+                try {
+                  handler(account.id, platformMessageId, deletedAt)
+                } catch (err) {
+                  console.error(`[telegram] 账号 ${account.id} 的删除处理器抛出异常，已隔离:`, err)
+                }
+              }
+            } catch {
+              console.error(`[telegram] 账号 ${account.id} 收到无效删除消息 id，已忽略`)
+            }
+          }
         }
       }
 

@@ -4,6 +4,7 @@ import type {
   AuthChallengeHandler,
   CredentialsHandler,
   MessageHandler,
+  MessageDeletedHandler,
   MessageIdRemapHandler,
   PlatformIdentityHandler,
   PlatformAdapter,
@@ -40,6 +41,7 @@ export class AdapterManager {
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
+  private readonly messageDeletedHandlers: MessageDeletedHandler[] = []
 
   constructor(adapters: PlatformAdapter[]) {
     for (const a of adapters) {
@@ -52,6 +54,9 @@ export class AdapterManager {
         fanOut(this.platformIdentityHandlers, id, externalId)
       })
       a.onMessageIdRemapped((id, oldId, newId) => fanOut(this.idRemapHandlers, id, oldId, newId))
+      a.onMessageDeleted((id, messageId, deletedAt) => {
+        fanOut(this.messageDeletedHandlers, id, messageId, deletedAt)
+      })
     }
   }
 
@@ -63,6 +68,7 @@ export class AdapterManager {
     this.platformIdentityHandlers.push(handler)
   }
   onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
+  onMessageDeleted(handler: MessageDeletedHandler): void { this.messageDeletedHandlers.push(handler) }
 
   private require(platform: Platform): PlatformAdapter {
     const adapter = this.byPlatform.get(platform)
