@@ -2,7 +2,7 @@
 
 日期：2026-08-29
 状态：执行中；账本、报告、双真实账号 base/delete/edit、媒体/回复组合探针、outbox
-终态及受限历史 coverage dry-run 已验；主动修复和切换门槛待验
+终态、受限历史 coverage dry-run 及 TDLib 当前快照主动读取已验；观察周期和切换门槛待验
 
 ## 1. 目标与非目标
 
@@ -121,6 +121,35 @@ dry-run 同时输出修复性质，但不执行修复。`currentSnapshotFetchabl
 `preObservation=2 / sourceLocal=1`。三个单边仍是 S2 预挂载修复前的 delete，均被明确标为
 历史事件不可恢复。本次没有平台拉取和数据库写入。
 
+### 4.2 受限 TDLib 当前快照主动读取
+
+主动读取只处理 coverage 当前页中同时满足下列条件的消息：状态为 `telegramTtOnly` 或
+`missing`、修复性质为 `currentSnapshotFetchable`、消息 id 是最终 server canonical key。
+`tdlibOnly` 不会被 TDLib 重读冒充 telegram-tt 来源；已删除、被编辑覆盖的旧 base、
+`preObservation`、`sourceLocal` 和 mismatch 都不会进入动作列表。
+
+服务端提供 `POST /api/accounts/:id/telegram-shadow-refresh`。请求默认为 `dry_run`；单页上限
+进一步收紧为 10。执行模式必须由账号 owner 本人提交 `mode=refresh_tdlib` 和固定确认串
+`REFRESH_TDLIB_SHADOW`，账号必须为 connected Telegram。manager 即使能看到下属账号也不能
+操作其平台会话，auditor 不能执行写操作；可选会话仍须属于该账号。
+
+执行复用服务器进程中该账号已经连接的唯一 TDLib client，对 dry-run 选出的精确 id 逐条
+调用 `getMessage`，不调用 `getChatHistory`，不新建 session。单条读取最多等待 5 秒，同账号
+同一时间只允许一个 refresh，单次最多 10 条，不自动重试。只有真实 TDLib 返回、能够归一化
+且 canonical id 与请求一致的快照，才通过统一 ingestor 以硬编码 `tdlib` 来源幂等写入；调用方
+不能传 source。响应返回 before coverage、`requested/found/recorded/unavailable/unsupported/
+failed` 进度和 after coverage，且不返回消息正文或 raw。
+
+2026-08-29 首次真实主动读取只命中发送端已解释的 S1：三页 dry-run 以 `10 + 10 + 4`
+处理完 24 条消息，第一页唯一候选、其余页为 0，所有页 `missing=0`。显式执行结果为
+`requested=1 / found=1 / recorded=1 / unavailable=0 / unsupported=0 / failed=0`；同页从
+`matched=12 / telegramTtOnly=1` 收敛为 `matched=13 / telegramTtOnly=0`，旧 S5 base
+`mismatched=1` 原样保留。72 小时正式报告为 `total=30 / comparableTotal=14 / matched=13 /
+mismatched=1 / tdlibOnly=0 / telegramTtOnly=0 / sourceLocal=16 / unstable=0`。中央消息仍为
+24 条，`edited=5 / deleted=8 / media=5 / replies=2`；主动读取没有发送、编辑、删除或新增消息。
+接收端复核仍为 `matched=11 / tdlibOnly=3 / missing=0`，且
+`tdlibRefreshCandidateCount=0`，证明三个不可恢复 delete 不会被误选。
+
 ## 5. 切换门槛与后续 checkpoint
 
 M3-5 按下列顺序续验：
@@ -150,8 +179,8 @@ M3-5 按下列顺序续验：
    mismatch 保留为已解释的算法发现证据，不改写账本；接收端 base/edit 均 matched。
    用户逐一切换两个账户后，输入坞均无 pending/dead-letter 非零提示，两个 outbox `0/0`。
    本次没有新增消息，也没有重做 M3-4 的媒体、回复或故障矩阵。
-4. 受限历史 coverage dry-run 已按账号/可选会话/时间/数量和 keyset 进度边界完成；下一步
-   只为 `currentSnapshotFetchable` 设计保持真实来源的主动读取，不倒填不可恢复历史。
+4. 受限历史 coverage dry-run 与 TDLib 当前快照主动读取已按账号/可选会话/时间/数量和
+   keyset 进度边界完成；不可恢复历史不倒填，缺失的 telegram-tt 来源不由 TDLib 冒充。
 5. 复用 M3-4 已完成的多账号和故障证据，只执行 shadow 特有的差异/恢复矩阵。
 6. 定义灰度开关、观察周期、一致率门槛和回滚步骤。在门槛证据完成前不停用 TDLib。
 

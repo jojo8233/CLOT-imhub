@@ -4,6 +4,7 @@ import * as tdl from 'tdl'
 import { getTdjson } from 'prebuilt-tdlib'
 import type { Update } from 'tdlib-types'
 import {
+  parseTelegramMessageKey,
   telegramMessageKeyFromTdlib,
   type AccountStatus,
   type OutboundContent,
@@ -13,6 +14,7 @@ import type {
   AuthChallenge,
   AuthChallengeHandler,
   CredentialsHandler,
+  CurrentMessageFetchResult,
   MessageHandler,
   MessageDeletedHandler,
   MessageIdRemapHandler,
@@ -42,6 +44,7 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
   private readonly messageDeletedHandlers: MessageDeletedHandler[] = []
+  private readonly currentFetches = new Set<string>()
 
   /**
    * 正在等人填验证码 / 二次验证密码的账号。
@@ -393,6 +396,62 @@ export class TelegramAdapter implements PlatformAdapter {
     this.emitStatus(accountId, 'disconnected')
   }
 
+  async fetchCurrentMessages(
+    accountId: string,
+    platformMessageIds: string[],
+  ): Promise<CurrentMessageFetchResult[]> {
+    const client = this.clients.get(accountId)
+    if (!client) throw new Error(`telegram account ${accountId} is not connected`)
+    if (platformMessageIds.length < 1 || platformMessageIds.length > 10) {
+      throw new Error('Telegram current message refresh requires between 1 and 10 ids')
+    }
+    if (this.currentFetches.has(accountId)) {
+      throw new Error(`telegram account ${accountId} already has a current message refresh in progress`)
+    }
+
+    const targets = [...new Set(platformMessageIds)].map(toTdlibMessageCoordinates)
+    this.currentFetches.add(accountId)
+    try {
+      const results: CurrentMessageFetchResult[] = []
+      for (const [index, target] of targets.entries()) {
+        if (this.clients.get(accountId) !== client) {
+          throw new Error(`telegram account ${accountId} disconnected during current message refresh`)
+        }
+        try {
+          const message = await withTimeout(client.invoke({
+            _: 'getMessage',
+            chat_id: target.chatId,
+            message_id: target.messageId,
+          }), 5_000)
+          if (this.clients.get(accountId) !== client) {
+            throw new Error('client changed during current message refresh')
+          }
+          const normalized = normalizeTelegramStoredMessage(message, accountId)
+          if (!normalized || normalized.platformMessageId !== target.platformMessageId) {
+            results.push({ platformMessageId: target.platformMessageId, status: 'unsupported' })
+            continue
+          }
+          results.push({
+            platformMessageId: target.platformMessageId,
+            status: 'found',
+            message: normalized,
+          })
+        } catch {
+          if (this.clients.get(accountId) !== client) {
+            throw new Error(`telegram account ${accountId} disconnected during current message refresh`)
+          }
+          console.warn(
+            `[telegram] 账号 ${accountId} 主动读取当前消息失败（${index + 1}/${targets.length}）`,
+          )
+          results.push({ platformMessageId: target.platformMessageId, status: 'unavailable' })
+        }
+      }
+      return results
+    } finally {
+      this.currentFetches.delete(accountId)
+    }
+  }
+
   async sendMessage(accountId: string, conversationId: string, content: OutboundContent): Promise<string> {
     const client = this.clients.get(accountId)
     if (!client) throw new Error(`telegram account ${accountId} is not connected`)
@@ -431,5 +490,38 @@ export class TelegramAdapter implements PlatformAdapter {
 
       client.on('update', handler)
     })
+  }
+}
+
+interface TdlibMessageCoordinates {
+  platformMessageId: string
+  chatId: number
+  messageId: number
+}
+
+function toTdlibMessageCoordinates(platformMessageId: string): TdlibMessageCoordinates {
+  const parsed = parseTelegramMessageKey(platformMessageId)
+  if (!parsed || parsed.kind !== 'server') {
+    throw new Error('Telegram current message refresh requires canonical server ids')
+  }
+  const chatId = Number(parsed.chatId)
+  const messageId = Number(BigInt(parsed.serverMessageId) << 20n)
+  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(messageId)) {
+    throw new Error('Telegram current message refresh id is outside the safe TDLib range')
+  }
+  return { platformMessageId, chatId, messageId }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Telegram current message refresh timed out')), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }

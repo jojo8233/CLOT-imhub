@@ -2,6 +2,34 @@
 
 日期：2026-08-29
 
+## 最新续验 checkpoint：S1 受限 TDLib 主动读取已收敛
+
+- coverage 报告现只把 `telegramTtOnly`/`missing` 且仍能取得当前快照的最终消息列入
+  `actions.tdlibRefreshCandidates`；`tdlibOnly`、delete、被 edit 覆盖的 base、
+  `preObservation`、`sourceLocal` 和 mismatch 不会进入 TDLib 动作列表。
+- 新增 owner-only `POST /api/accounts/:id/telegram-shadow-refresh`。默认 `dry_run`；执行必须
+  同时提交 `mode=refresh_tdlib`、固定确认串并要求 Telegram 账号 connected。manager 可见不
+  等于能操作，auditor 只读；可选 conversation 必须属于账号。
+- 执行复用服务端现有唯一 TDLib client，只对精确最终 id 做 `getMessage`；不遍历历史、不创建
+  第二 client。单次最多 10 条、逐条 5 秒超时、同账号禁止并发且不自动重试。只有真实返回且
+  id 一致的规范快照才由统一 ingestor 以硬编码 `tdlib` 来源幂等入账，调用方不能伪造来源。
+- 真实发送账号的 owner 接口 dry-run 用三页 `10 + 10 + 4` 扫完 24 条消息，第一页只有 1 个
+  候选、后两页为 0，三页均 `missing=0`。唯一候选是已解释的 S1，不是旧 S2 delete 或 S5
+  mismatch。
+- 显式主动读取结果为 `requested=1 / found=1 / recorded=1 / unavailable=0 / unsupported=0 /
+  failed=0`；同页从 `matched=12 / telegramTtOnly=1` 变为 `matched=13 / telegramTtOnly=0`，
+  S5 旧 base 仍为唯一 mismatch。72 小时正式报告为 `total=30 / comparableTotal=14 /
+  matched=13 / mismatched=1 / tdlibOnly=0 / telegramTtOnly=0 / sourceLocal=16 / unstable=0`。
+- 只读终态确认发送账号中央消息仍为 24 条，`edited=5 / deleted=8 / media=5 / replies=2`；
+  shadow source row 增加的是实际 TDLib S1 观测。没有发送、编辑、删除消息，没有触碰
+  S4/S5/A1/A2，也没有倒填不可恢复历史。接收端仍为三个已解释 `tdlibOnly` delete，
+  `tdlibRefreshCandidateCount=0`。
+- 主动读取、adapter 路由、来源固定、部分失败、10 条上限、owner/auditor/manager 门禁、显式
+  确认、connected 状态、conversation 归属和输入/数据库错误分类的定向 5 文件 34 tests、
+  根级 `pnpm typecheck`、`git diff --check` 和全量 40 文件 373 tests（另 1 个既有 todo）
+  均已通过。下一步提交后定义
+  观察周期、一致率与回滚门槛；TDLib 仍不得退出。
+
 ## 最新续验 checkpoint：受限历史 coverage dry-run 已完成
 
 - 新增只读命令 `pnpm --filter @im-hub/server shadow-coverage <account-uuid>
@@ -213,5 +241,5 @@
    shadow 报告和 outbox `0/0` 均已收敛；旧 base mismatch 保留为已解释的算法发现证据。
 3. 受限历史 coverage dry-run 已实现并在双真实账号上只读验证；不得把
    `preObservation`、`sourceLocal` 或不可恢复 delete 当成待倒填缺陷。
-4. 下一步实现只处理当前快照候选的受限主动读取和灰度/回滚门槛；在证据完成前不停用
-   TDLib，不伪造缺失的 telegram-tt/TDLib 来源。
+4. TDLib 当前快照主动读取已用 S1 真实收敛；下一步定义灰度观察、一致率与回滚门槛。在证据
+   完成前不停用 TDLib，不伪造缺失的 telegram-tt/TDLib 来源。

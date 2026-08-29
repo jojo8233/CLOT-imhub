@@ -9,6 +9,7 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue('msg-1'),
+    fetchCurrentMessages: vi.fn().mockResolvedValue([]),
     onMessage: vi.fn(),
     onStatusChange: vi.fn(),
     onAuthChallenge: vi.fn(),
@@ -43,6 +44,14 @@ describe('AdapterManager', () => {
     const mgr = new AdapterManager([fakeAdapter('telegram')])
     await expect(mgr.send('nope', 'c', { body: 'x' }))
       .rejects.toThrow('account nope is not connected')
+  })
+
+  it('只把精确当前消息读取路由到账号的真实适配器', async () => {
+    const tg = fakeAdapter('telegram')
+    const mgr = new AdapterManager([tg])
+    await mgr.connect('telegram', account)
+    await expect(mgr.fetchCurrentMessages('a1', ['6639331234:3502'])).resolves.toEqual([])
+    expect(tg.fetchCurrentMessages).toHaveBeenCalledWith('a1', ['6639331234:3502'])
   })
 
   it('连接未注册的平台时抛错', async () => {

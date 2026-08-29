@@ -159,6 +159,10 @@ describe('KyselyTelegramShadowCoverageRepo', () => {
         coverageUnavailable: 0,
         sourceLocal: 1,
       },
+      actions: {
+        tdlibRefreshCandidateCount: 1,
+        tdlibRefreshCandidates: ['-1001:103'],
+      },
     })
     expect(report.samples.matched).toEqual(['upsert:-1001:102:base'])
     expect(report.samples.pre_observation).toEqual(['upsert:-1001:101:base'])

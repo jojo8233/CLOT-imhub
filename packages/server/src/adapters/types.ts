@@ -52,11 +52,28 @@ export type MessageDeletedHandler = (
   deletedAt: Date,
 ) => void
 
+export type CurrentMessageFetchResult = {
+  platformMessageId: string
+} & ({
+  status: 'found'
+  message: NormalizedMessage
+} | {
+  status: 'unavailable' | 'unsupported'
+})
+
 export interface PlatformAdapter {
   readonly platform: Platform
   connect(account: AdapterAccount): Promise<void>
   disconnect(accountId: string): Promise<void>
   sendMessage(accountId: string, conversationId: string, content: OutboundContent): Promise<string>
+  /**
+   * 精确读取当前平台快照；只允许最终服务端消息 id，不做无界历史遍历。
+   * 返回的 message 仍须由组合根以该适配器的真实来源进入 ingest/shadow。
+   */
+  fetchCurrentMessages?(
+    accountId: string,
+    platformMessageIds: string[],
+  ): Promise<CurrentMessageFetchResult[]>
   onMessage(handler: MessageHandler): void
   onStatusChange(handler: StatusHandler): void
 

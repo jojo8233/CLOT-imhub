@@ -3,6 +3,7 @@ import type {
   AdapterAccount,
   AuthChallengeHandler,
   CredentialsHandler,
+  CurrentMessageFetchResult,
   MessageHandler,
   MessageDeletedHandler,
   MessageIdRemapHandler,
@@ -118,5 +119,18 @@ export class AdapterManager {
     const platform = this.accountPlatform.get(accountId)
     if (!platform) throw new Error(`account ${accountId} is not connected`)
     return this.require(platform).sendMessage(accountId, conversationId, content)
+  }
+
+  async fetchCurrentMessages(
+    accountId: string,
+    platformMessageIds: string[],
+  ): Promise<CurrentMessageFetchResult[]> {
+    const platform = this.accountPlatform.get(accountId)
+    if (!platform) throw new Error(`account ${accountId} is not connected`)
+    const adapter = this.require(platform)
+    if (!adapter.fetchCurrentMessages) {
+      throw new Error(`platform ${platform} does not support current message refresh`)
+    }
+    return adapter.fetchCurrentMessages(accountId, platformMessageIds)
   }
 }

@@ -366,7 +366,31 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   表示 temp 生命周期；只有较新的无事实项才是 `missing`。`currentSnapshotFetchable` 只是
   后续可重新读取当前平台快照的候选，不能拿中央库行伪造缺失来源；历史 delete 和已被 edit
   覆盖的 base 不可恢复。双真实账号首次全窗 dry-run 均为 `missing=0`，其余差异与正式报告
-  中已解释的 S1/S2/S5 证据完全一致。主动读取和切换门槛仍未完成。
+  中已解释的 S1/S2/S5 证据完全一致。
+
+  当前快照主动读取走 owner-only API，默认仍是 dry-run；单页上限收紧为 10：
+
+  ```text
+  POST /api/accounts/<account-uuid>/telegram-shadow-refresh
+  {
+    "mode": "refresh_tdlib",
+    "confirm": "REFRESH_TDLIB_SHADOW",
+    "sentAfter": "<ISO-time>",
+    "sentBefore": "<ISO-time>",
+    "limit": 10,
+    "conversationId": "<optional-conversation-uuid>",
+    "cursor": "<optional-cursor-from-dry-run>"
+  }
+  ```
+
+  执行前必须先用相同请求范围的 `mode=dry_run` 查看候选。服务端只会选
+  `telegramTtOnly`/`missing` 且 `currentSnapshotFetchable` 的最终消息，复用当前已连接 TDLib
+  client 精确调用 `getMessage`；不会遍历历史或启动第二 session。请求要求 owner、账号
+  connected、固定确认串；manager 不能操作下属账号，auditor 不能执行。单次最多 10 条、
+  单条 5 秒、同账号禁止并发。响应必须核对 before/after 和
+  `requested/found/recorded/unavailable/unsupported/failed`；任何 failed 都不能进入切换证据。
+  S1 的首次真实主动读取已从唯一 `telegramTtOnly` 收敛为 matched，中央 24 条消息及其
+  edit/delete/media/reply 聚合未变化；S5 旧算法 mismatch 仍保留。观察周期和切换门槛仍未完成。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

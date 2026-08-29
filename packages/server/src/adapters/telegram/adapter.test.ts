@@ -199,4 +199,33 @@ describe('TelegramAdapter authorization startup', () => {
       _: 'getMessage', chat_id: 6639331234, message_id: 3502 * 2 ** 20,
     })
   })
+
+  it('用既有 client 精确读取最终消息快照，不接受 temp id', async () => {
+    const adapter = new TelegramAdapter({
+      apiId: 1,
+      apiHash: 'test-hash',
+      dataDir: '/tmp/im-hub-tdlib-test',
+    })
+    await adapter.connect({ id: 'account-1', displayName: 'Account 1', credentialsRef: null })
+
+    const results = await adapter.fetchCurrentMessages('account-1', ['6639331234:3502'])
+    expect(results).toHaveLength(1)
+    expect(results[0]).toMatchObject({
+      platformMessageId: '6639331234:3502',
+      status: 'found',
+      message: {
+        accountId: 'account-1',
+        platformMessageId: '6639331234:3502',
+        body: 'S4 edited',
+      },
+    })
+    expect(tdlMock.invoke).toHaveBeenCalledWith({
+      _: 'getMessage', chat_id: 6639331234, message_id: 3502 * 2 ** 20,
+    })
+
+    await expect(adapter.fetchCurrentMessages(
+      'account-1',
+      ['6639331234:temp:tdlib:1048577'],
+    )).rejects.toThrow('canonical server ids')
+  })
 })

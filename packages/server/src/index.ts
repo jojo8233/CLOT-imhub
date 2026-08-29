@@ -18,6 +18,8 @@ import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
 import { buildTelegramDeleteObservation, buildTelegramRemapObservation } from './shadow/telegram.js'
+import { KyselyTelegramShadowCoverageRepo } from './shadow/coverage.js'
+import { TelegramShadowRefresher } from './shadow/refresh.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
@@ -47,6 +49,8 @@ const hub = new WsHub()
 const queue = new BullTranslateQueue(redis)
 const messageRepo = new KyselyMessageRepo(db)
 const ingestor = new MessageIngestor(messageRepo, queue)
+const telegramShadowCoverage = new KyselyTelegramShadowCoverageRepo(db)
+const telegramShadowRefresher = new TelegramShadowRefresher(adapters, ingestor)
 
 adapters.onMessage((msg) => {
   void (async () => {
@@ -268,6 +272,10 @@ const app = await buildServer({
     ingestor,
     repo: messageRepo,
     publish: (userId, event) => hub.publishTo(userId, event),
+  },
+  telegramShadowRefresh: {
+    coverage: telegramShadowCoverage,
+    refresher: telegramShadowRefresher,
   },
 }, hub)
 await app.listen({ port: config.PORT, host: '0.0.0.0' })

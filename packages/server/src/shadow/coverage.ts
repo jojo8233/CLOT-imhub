@@ -23,6 +23,8 @@ export type TelegramShadowRepairability =
   | 'coverage_unavailable'
   | 'source_local'
 
+export class TelegramShadowCoverageInputError extends Error {}
+
 interface CoverageStatusCounts {
   matched: number
   mismatched: number
@@ -74,6 +76,11 @@ export interface TelegramShadowCoverageReport {
   }
   byEventType: Record<'upsert' | 'delete', CoverageStatusCounts>
   repairability: RepairabilityCounts
+  actions: {
+    tdlibRefreshCandidateCount: number
+    /** Capped at 100; active refresh uses pages of at most 10 messages. */
+    tdlibRefreshCandidates: string[]
+  }
   samples: Record<TelegramShadowCoverageStatus, string[]>
 }
 
@@ -157,6 +164,7 @@ export class KyselyTelegramShadowCoverageRepo {
     const coverageStartedAt = await this.coverageStartedAt(input.accountId)
     const sampleLimit = input.sampleLimit ?? DEFAULT_SAMPLE_LIMIT
     const report = emptyReport(input, coverageStartedAt)
+    const tdlibRefreshCandidates = new Set<string>()
 
     for (const message of messages) {
       if (isFinalTelegramMessage(message.platform_message_id)) report.messages.final += 1
@@ -174,12 +182,21 @@ export class KyselyTelegramShadowCoverageRepo {
       incrementStatus(report.byEventType[fact.eventType], status)
       incrementRepairability(report.repairability, repairability)
       addSample(report.samples[status], fact.factKey, sampleLimit)
+      if ((status === 'telegram_tt_only' || status === 'missing')
+        && repairability === 'current_snapshot_fetchable') {
+        tdlibRefreshCandidates.add(fact.message.platform_message_id)
+      }
       report.facts.total += 1
       if (status !== 'source_local'
         && status !== 'pre_observation'
         && status !== 'coverage_unavailable') {
         report.facts.comparable += 1
       }
+    }
+
+    report.actions = {
+      tdlibRefreshCandidateCount: tdlibRefreshCandidates.size,
+      tdlibRefreshCandidates: [...tdlibRefreshCandidates].slice(0, 100),
     }
 
     const processedMessages = (cursor?.processedMessages ?? 0) + messages.length
@@ -232,19 +249,25 @@ export class KyselyTelegramShadowCoverageRepo {
 
 function validateInput(input: TelegramShadowCoverageInput): number {
   if (!isValidDate(input.sentAfter) || !isValidDate(input.sentBefore)) {
-    throw new Error('sentAfter and sentBefore must be valid dates')
+    throw new TelegramShadowCoverageInputError('sentAfter and sentBefore must be valid dates')
   }
   const windowMs = input.sentBefore.getTime() - input.sentAfter.getTime()
   if (windowMs <= 0 || windowMs > MAX_WINDOW_MS) {
-    throw new Error('coverage window must be greater than zero and at most 31 days')
+    throw new TelegramShadowCoverageInputError(
+      'coverage window must be greater than zero and at most 31 days',
+    )
   }
   const limit = input.limit ?? DEFAULT_LIMIT
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
-    throw new Error(`limit must be an integer between 1 and ${MAX_LIMIT}`)
+    throw new TelegramShadowCoverageInputError(
+      `limit must be an integer between 1 and ${MAX_LIMIT}`,
+    )
   }
   const sampleLimit = input.sampleLimit ?? DEFAULT_SAMPLE_LIMIT
   if (!Number.isInteger(sampleLimit) || sampleLimit < 0 || sampleLimit > MAX_SAMPLE_LIMIT) {
-    throw new Error(`sampleLimit must be an integer between 0 and ${MAX_SAMPLE_LIMIT}`)
+    throw new TelegramShadowCoverageInputError(
+      `sampleLimit must be an integer between 0 and ${MAX_SAMPLE_LIMIT}`,
+    )
   }
   return limit
 }
@@ -274,7 +297,7 @@ function encodeCursor(cursor: CoverageCursor): string {
 
 function decodeCursor(value: string, expectedScope: string): CoverageCursor {
   if (value.length === 0 || value.length > MAX_CURSOR_LENGTH) {
-    throw new Error('coverage cursor is invalid')
+    throw new TelegramShadowCoverageInputError('coverage cursor is invalid')
   }
   try {
     const parsed: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
@@ -301,7 +324,9 @@ function decodeCursor(value: string, expectedScope: string): CoverageCursor {
       processedMessages: parsed.processedMessages,
     }
   } catch {
-    throw new Error('coverage cursor is invalid or belongs to another scan scope')
+    throw new TelegramShadowCoverageInputError(
+      'coverage cursor is invalid or belongs to another scan scope',
+    )
   }
 }
 
@@ -412,6 +437,10 @@ function emptyReport(
       delete: emptyStatusCounts(),
     },
     repairability: emptyRepairabilityCounts(),
+    actions: {
+      tdlibRefreshCandidateCount: 0,
+      tdlibRefreshCandidates: [],
+    },
     samples: {
       matched: [],
       mismatched: [],

@@ -17,6 +17,10 @@ import { translateRoutes } from './routes/translate.js'
 import { nativeRoutes, type NativeRouteDeps } from './routes/native.js'
 import { nativeControlRoutes } from './routes/native-control.js'
 import { isNativeControlAuthorization } from './native-control.js'
+import {
+  telegramShadowRefreshRoutes,
+  type TelegramShadowRefreshRouteDeps,
+} from './routes/shadow-refresh.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -50,6 +54,7 @@ export interface BuildServerOptions {
 
 export interface BuildServerDeps extends MessageRouteDeps {
   native?: NativeRouteDeps
+  telegramShadowRefresh?: TelegramShadowRefreshRouteDeps
 }
 
 export async function buildServer(
@@ -107,6 +112,12 @@ export async function buildServer(
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
   await app.register(async (instance) => { await translateRoutes(instance, deps) })
+  const telegramShadowRefresh = deps.telegramShadowRefresh
+  if (telegramShadowRefresh) {
+    await app.register(async (instance) => {
+      await telegramShadowRefreshRoutes(instance, telegramShadowRefresh)
+    })
+  }
   const native = deps.native
   if (native) {
     await app.register(async (instance) => { await nativeRoutes(instance, native) })
