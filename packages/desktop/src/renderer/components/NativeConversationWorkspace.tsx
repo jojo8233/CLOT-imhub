@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useStore } from '../store.js'
+import { theme } from '../theme.js'
 import { loadWidths, MIN, RESIZER_WIDTH, saveWidths } from '../layout.js'
 import { CustomerPanel } from './CustomerPanel.js'
 import { NativeClient } from './NativeClient.js'
@@ -9,6 +11,7 @@ const DEFAULT_CUSTOMER_WIDTH = 310
 
 /** 单一会话工作区：原生客户端与固定翻译输入坞在中间，客户档案固定在右侧。 */
 export function NativeConversationWorkspace() {
+  const activePlatform = useStore(s => s.activePlatform)
   const rowRef = useRef<HTMLDivElement>(null)
   const dragStartRef = useRef(DEFAULT_CUSTOMER_WIDTH)
   const customerWidthRef = useRef(loadWidths()?.customer ?? DEFAULT_CUSTOMER_WIDTH)
@@ -68,7 +71,17 @@ export function NativeConversationWorkspace() {
     <div ref={rowRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <NativeClient />
-        <TranslationDock />
+        {activePlatform === 'whatsapp'
+          ? (
+            <div style={{
+              flexShrink: 0, padding: '10px 16px', background: theme.color.surface,
+              borderTop: `1px solid ${theme.color.border}`, color: theme.color.textMuted,
+              fontSize: theme.font.size.sm,
+            }}>
+              WhatsApp Web 测试模式：当前验证独立登录、多开和原生文字收发；翻译与消息回传尚未开启。
+            </div>
+          )
+          : <TranslationDock />}
       </div>
 
       {showCustomer && (

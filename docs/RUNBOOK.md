@@ -10,8 +10,9 @@
 - **pnpm**（本机验证用的是 10.x；没有的话 `corepack enable` 或 `npm i -g pnpm`）
 - **PostgreSQL 16**
 - **Redis**（BullMQ 翻译队列、翻译结果缓存都依赖它）
-- **signal-cli**（仅在验证现有 Signal 适配器时需要；命令位置可用
-  `SIGNAL_CLI_BINARY` 配置）
+- **signal-cli 0.14.7 + Java 25**（M5 Signal 首检点需要；命令位置可用
+  `SIGNAL_CLI_BINARY` 配置，数据目录用 `SIGNAL_DATA_DIR` 配置）。版本要求应以准备测试时的
+  signal-cli 官方发布说明为准，不要默认系统旧 Java 可以运行。
 
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
@@ -152,6 +153,21 @@ pnpm dev:desktop
 
 客户端有登录页（`components/LoginPage.tsx`），用第 4 节的任一演示账号登录即可；登录态经 Electron `safeStorage` 加密存盘，下次启动自动恢复。以 `agent@example.com` 登录看到的是 seed 建的那 1 个"TG 组内号"账号。桌面端连的服务端地址默认是 `http://localhost:4000`（见 `packages/desktop/src/preload/index.ts`，可用环境变量 `IM_HUB_SERVER_URL` 覆盖）。
 
+Signal 首检点还需要先确认：
+
+```bash
+java -version
+signal-cli --version
+```
+
+若 `signal-cli` 不在 `PATH`，把绝对路径写进 `SIGNAL_CLI_BINARY` 后重新加载 `.env` 并重启
+服务端。不要把 Signal 数据目录、二维码链接或账号凭据提交到 Git。
+
+WhatsApp 首检点不需要服务端凭据：owner 创建 WhatsApp 账号后，会话区域直接加载官方
+`web.whatsapp.com`，二维码在官方页面内扫描。每个账号使用独立 Electron partition。当前只
+验证页面内登录、多开和文字收发；没有 im-hub 翻译、消息回传或中央归档。若页面没有出现，
+先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。
+
 ---
 
 ## 3. 日常命令
@@ -278,10 +294,12 @@ Telegram：
 
 P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的地方：
 
-- **两条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
+- **多条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
-  已进入开发态。Signal 原生路线计划 M5，WhatsApp
-  计划 M6，Zoom 延后到 M8。M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
+  已进入开发态。M5/M6 现按优先级并行：Signal 暂用 signal-cli + 三栏 UI 做真实收发首检，
+  WhatsApp 只接入官方 Web 的 owner-only 隔离壳；后者尚无 bridge、翻译或中央回传，不能
+  当成完整接入。Signal Desktop 原生交付和 WhatsApp 完整桥接仍待后续，Zoom 延后到 M8。
+  M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
   约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。
 - **Composer 与消息回传已完成约定范围真实验收，生产闭环仍有后续门槛**：telegram-tt 已发
   `bridge.ready/account.identity`、

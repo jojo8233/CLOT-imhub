@@ -10,7 +10,7 @@ import { Chip, PlatformIcon } from './ui.js'
 const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
   { key: 'signal', blurb: '关联为次要设备，手机仍是主设备', ready: true },
-  { key: 'whatsapp', blurb: '需要网页版壳 + 扫码登录', ready: false },
+  { key: 'whatsapp', blurb: '官方 Web 独立登录，首阶段测试原生收发', ready: true },
 ]
 
 type Step = 'pick' | 'linking'
@@ -45,6 +45,8 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   const done = useStore(s => s.authDone)
   const clearAuth = useStore(s => s.clearAuth)
   const setAccounts = useStore(s => s.setAccounts)
+  const setActivePlatform = useStore(s => s.setActivePlatform)
+  const setActiveAccount = useStore(s => s.setActiveAccount)
 
   // 只认自己刚建的这个账号的事件：同一个人可能在别处也在关联另一个账号
   const mine = accountId !== null && challenge?.accountId === accountId ? challenge : null
@@ -64,6 +66,10 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
       setStep('linking')
       // 新账号此刻还不在列表里，补一次
       setAccounts((await api.listAccounts()).accounts)
+      if (platform === 'whatsapp') {
+        setActivePlatform('whatsapp')
+        setActiveAccount(account.id)
+      }
     } catch (e) {
       setError(e instanceof NetworkError ? '连不上服务端' : (e instanceof Error ? e.message : '创建失败'))
     } finally {
@@ -329,6 +335,10 @@ function LinkingStep({ accountId, platform, challenge, done, onClose }: {
   done: { ok: boolean; reason: string | null } | null
   onClose(): void
 }) {
+  if (platform === 'whatsapp') {
+    return <WhatsAppWebStep onClose={onClose} />
+  }
+
   if (done) {
     return (
       <>
@@ -359,6 +369,29 @@ function LinkingStep({ accountId, platform, challenge, done, onClose }: {
       link={challenge?.kind === 'qr' ? challenge.payload : null}
       onClose={onClose}
     />
+  )
+}
+
+function WhatsAppWebStep({ onClose }: { onClose(): void }) {
+  return (
+    <>
+      <div style={{ padding: `${theme.space.xxl}px ${theme.space.xl}px`, textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: theme.space.md }}>✓</div>
+        <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+          WhatsApp 独立窗口已创建
+        </div>
+        <div style={{
+          maxWidth: 440, margin: '8px auto 0', fontSize: theme.font.size.sm,
+          color: theme.color.textMuted, lineHeight: 1.8,
+        }}>
+          关闭后进入“会话”，在官方 WhatsApp Web 页面用手机扫码。
+          当前 checkpoint 先测试登录、多开和原生文字收发；翻译与消息回传将在下一阶段接入。
+        </div>
+      </div>
+      <DialogFooter>
+        <FooterButton onClick={onClose} kind="primary">进入会话扫码</FooterButton>
+      </DialogFooter>
+    </>
   )
 }
 

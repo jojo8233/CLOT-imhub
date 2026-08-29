@@ -17,7 +17,7 @@ const schema = z.object({
   TDLIB_DATA_DIR: z.string().default('./data/tdlib'),
   /**
    * signal-cli 可执行文件。装在别处（或用容器里的那份）时覆盖它。
-   * Signal 没有官方 Node 库、也没有网页版可包，signal-cli 是唯一可行路径。
+   * M5 首检点继续用它验证真实关联、收发与中央归档；Signal Desktop 原生路线另行推进。
    */
   SIGNAL_CLI_BINARY: z.string().default('signal-cli'),
   /** signal-cli 的数据目录。跟 TDLib session 放一起，备份和重置才好统一处理 */

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from 'electron'
 import {
   nativeAccountIdFromPartition,
+  nativeClientBridgeAllowed,
   nativeClientUrlAllowed,
   nativePartitionAllowed,
 } from './native-host-policy.js'
@@ -12,7 +13,12 @@ const nativeControlHost = new NativeControlHost(
   process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
 )
 nativeControlHost.install()
-const pendingNativeAccountsByHost = new Map<number, string[]>()
+interface PendingNativeAccount {
+  accountId: string
+  bridgeEnabled: boolean
+}
+
+const pendingNativeAccountsByHost = new Map<number, PendingNativeAccount[]>()
 
 const tokenFile = (): string => join(app.getPath('userData'), 'session.bin')
 
@@ -93,9 +99,16 @@ function createWindow(): void {
       return
     }
     const pending = pendingNativeAccountsByHost.get(win.webContents.id) ?? []
-    pending.push(accountId)
+    const bridgeEnabled = nativeClientBridgeAllowed(params.src)
+    pending.push({ accountId, bridgeEnabled })
     pendingNativeAccountsByHost.set(win.webContents.id, pending)
-    webPreferences.preload = join(import.meta.dirname, '../preload/native-bridge.mjs')
+    if (bridgeEnabled) {
+      webPreferences.preload = join(import.meta.dirname, '../preload/native-bridge.mjs')
+    } else {
+      // Official shell-only pages must not see the im-hub bridge until their
+      // platform-specific identity and event contract is implemented.
+      delete webPreferences.preload
+    }
     webPreferences.nodeIntegration = false
     webPreferences.nodeIntegrationInSubFrames = false
     webPreferences.nodeIntegrationInWorker = false
@@ -109,14 +122,16 @@ function createWindow(): void {
 
   win.webContents.on('did-attach-webview', (_event, contents) => {
     const pending = pendingNativeAccountsByHost.get(win.webContents.id) ?? []
-    const accountId = pending.shift()
+    const target = pending.shift()
     if (pending.length === 0) pendingNativeAccountsByHost.delete(win.webContents.id)
-    if (!accountId) {
+    if (!target) {
       contents.close()
       console.error('[native-host] 已关闭缺少账号绑定的 webview')
       return
     }
-    nativeControlHost.registerGuest(contents, accountId, win.webContents.id)
+    if (target.bridgeEnabled) {
+      nativeControlHost.registerGuest(contents, target.accountId, win.webContents.id)
+    }
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {

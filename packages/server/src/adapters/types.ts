@@ -25,6 +25,8 @@ export interface AuthChallenge {
 export type MessageHandler = (msg: NormalizedMessage) => void
 export type StatusHandler = (accountId: string, status: AccountStatus) => void
 export type AuthChallengeHandler = (accountId: string, challenge: AuthChallenge) => void
+/** 已脱敏的鉴权失败；reason 不得包含二维码、验证码、密码或平台凭据。 */
+export type AuthFailureHandler = (accountId: string, reason: string) => void
 export type CredentialsHandler = (accountId: string, credentialsRef: string) => void
 export type PlatformIdentityHandler = (
   accountId: string,
@@ -83,6 +85,9 @@ export interface PlatformAdapter {
    * 不需要人工介入的平台注册了也永远不触发，这是可以的。
    */
   onAuthChallenge(handler: AuthChallengeHandler): void
+
+  /** 异步鉴权失败时显式结束前端等待；不实现的平台可省略。 */
+  onAuthFailure?(handler: AuthFailureHandler): void
 
   /**
    * 关联成功后平台产生的新凭据，供上层写回 accounts.credentials_ref。

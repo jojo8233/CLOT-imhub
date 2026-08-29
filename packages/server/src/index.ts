@@ -6,6 +6,7 @@ import { db } from './db/client.js'
 import { AdapterManager } from './adapters/manager.js'
 import { SignalAdapter } from './adapters/signal/adapter.js'
 import { TelegramAdapter } from './adapters/telegram/adapter.js'
+import { WhatsAppWebAdapter } from './adapters/whatsapp-web/adapter.js'
 import { KyselyMessageRepo } from './ingest/repo.js'
 import { MessageIngestor, messageRevision } from './ingest/ingestor.js'
 import { BullTranslateQueue, TRANSLATE_QUEUE, type TranslateJobData } from './pipeline/queue.js'
@@ -49,6 +50,7 @@ const adapters = new AdapterManager([
     binary: config.SIGNAL_CLI_BINARY,
     dataDir: config.SIGNAL_DATA_DIR,
   }),
+  new WhatsAppWebAdapter(),
 ])
 
 const hub = new WsHub()
@@ -213,6 +215,17 @@ adapters.onAuthChallenge((accountId, challenge) => {
       kind: challenge.kind,
       payload: challenge.payload,
     })
+  })()
+})
+
+adapters.onAuthFailure((accountId, reason) => {
+  void (async () => {
+    const owner = await db.selectFrom('accounts')
+      .select('owner_user_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (!owner) return
+    hub.publishTo(owner.owner_user_id, { type: 'auth_done', accountId, ok: false, reason })
   })()
 })
 

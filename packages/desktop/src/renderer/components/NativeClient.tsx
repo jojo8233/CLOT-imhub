@@ -45,10 +45,19 @@ import { EmptyHint, IconButton } from './ui.js'
  *
  * 开发期指向 telegram-tt 的 Vite 服务器；打包后会换成随应用分发的静态产物。
  */
-const WEB_CLIENT: Record<string, string> = {
+interface WebClientDefinition {
+  src: string
+  bridgeEnabled: boolean
+}
+
+const WEB_CLIENT: Record<string, WebClientDefinition> = {
   // 开发期指向 telegram-tt 的 Vite 服务器（代码/telegram-tt，npm run dev）。
   // 打包时这里要换成随应用分发的静态产物地址，见 native-client-pivot 设计文档。
-  telegram: 'http://localhost:1234/',
+  telegram: { src: 'http://localhost:1234/', bridgeEnabled: true },
+  // First M6 checkpoint: official linked-device UI in an isolated partition.
+  // No im-hub preload or control grant is injected until the WhatsApp-specific
+  // identity and event bridge has its own verified contract.
+  whatsapp: { src: 'https://web.whatsapp.com/', bridgeEnabled: false },
 }
 
 const PLATFORM_PHASE: Record<string, string> = {
@@ -59,6 +68,13 @@ const PLATFORM_PHASE: Record<string, string> = {
 
 export function nativeClientSupported(platform: string): boolean {
   return platform in WEB_CLIENT
+}
+
+export function browserCompatibleUserAgent(userAgent: string): string {
+  const platform = /\(([^)]+)\)/.exec(userAgent)?.[1]
+  const chrome = /Chrome\/[\d.]+/.exec(userAgent)?.[0]
+  if (!platform || !chrome) return userAgent.replace(/\sElectron\/[\d.]+/g, '')
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`
 }
 
 export function nativeAccountControllable(
@@ -201,8 +217,18 @@ export function NativeClient() {
         if (!acc
           || !nativeClientSupported(acc.platform)
           || !nativeAccountControllable(acc, currentUser)) return null
+        const client = WEB_CLIENT[acc.platform]!
         return (
-          <WebviewPane key={id} accountId={id} src={WEB_CLIENT[acc.platform]!} visible={id === active?.id} />
+          <WebviewPane
+            key={id}
+            accountId={id}
+            src={client.src}
+            bridgeEnabled={client.bridgeEnabled}
+            userAgent={acc.platform === 'whatsapp'
+              ? browserCompatibleUserAgent(navigator.userAgent)
+              : undefined}
+            visible={id === active?.id}
+          />
         )
       })}
       {overlay && (
@@ -227,9 +253,11 @@ function nativeProxyStatus(error: unknown): number | null {
   return match ? Number(match[1]) : null
 }
 
-function WebviewPane({ accountId, src, visible }: {
+function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
   accountId: string
   src: string
+  bridgeEnabled: boolean
+  userAgent?: string
   visible: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
@@ -246,7 +274,7 @@ function WebviewPane({ accountId, src, visible }: {
       console.error(`[native-client:${accountId.slice(0, 8)}] 原生客户端页面加载超时`)
       setState('failed')
       setDetail(import.meta.env.DEV
-        ? '等了 20 秒还没加载出来。确认 telegram-tt 的开发服务器在跑（代码/telegram-tt 目录下 npm run dev），然后点右下角 ⌘ 看控制台'
+        ? '等了 20 秒还没加载出来。确认对应平台客户端和网络可用，然后点右下角 ⌘ 看控制台'
         : '等了 20 秒还没加载出来。检查网络或代理后重新打开应用')
       useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端页面加载超时')
     }, READY_TIMEOUT_MS)
@@ -255,8 +283,67 @@ function WebviewPane({ accountId, src, visible }: {
 
   useEffect(() => {
     const el = ref.current
+    if (!el) return
+
+    if (!bridgeEnabled) {
+      let readyHandled = false
+      const onStartLoading = (): void => {
+        readyHandled = false
+        setState('loading')
+        setDetail('')
+        setControlError(null)
+      }
+      const onReady = (): void => {
+        if (readyHandled) return
+        const webview = el as unknown as NativeWebviewLoadProbe
+        try {
+          if (new URL(webview.getURL()).origin !== new URL(src).origin) {
+            throw new Error('unexpected origin')
+          }
+        } catch {
+          console.error(`[native-client:${accountId.slice(0, 8)}] 官方客户端来源校验失败`)
+          setState('failed')
+          setDetail('平台客户端跳转到了未授权页面，已停止加载')
+          return
+        }
+        readyHandled = true
+        setState('ready')
+      }
+      const onFail = (e: Event): void => {
+        const err = e as Event & { errorCode?: number; errorDescription?: string; isMainFrame?: boolean }
+        if (err.isMainFrame === false) return
+        console.error(
+          `[native-client:${accountId.slice(0, 8)}] 官方客户端主页面加载失败，错误码 ${String(err.errorCode ?? 'unknown')}`,
+        )
+        setState('failed')
+        setDetail(`${err.errorDescription ?? '未知错误'}（${String(err.errorCode ?? '')}）`)
+      }
+      const onConsole = (e: Event): void => {
+        const message = e as Event & { level?: number }
+        if ((message.level ?? 0) >= 2) {
+          console.error(
+            `[native-client:${accountId.slice(0, 8)}]`,
+            'guest 报告 warning/error；请在开发构建中检查隔离控制台',
+          )
+        }
+      }
+      el.addEventListener('did-start-loading', onStartLoading)
+      el.addEventListener('dom-ready', onReady)
+      el.addEventListener('did-stop-loading', onReady)
+      el.addEventListener('did-fail-load', onFail)
+      el.addEventListener('console-message', onConsole)
+      if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      return () => {
+        el.removeEventListener('did-start-loading', onStartLoading)
+        el.removeEventListener('dom-ready', onReady)
+        el.removeEventListener('did-stop-loading', onReady)
+        el.removeEventListener('did-fail-load', onFail)
+        el.removeEventListener('console-message', onConsole)
+      }
+    }
+
     const nativeControl = window.imHub?.nativeControl
-    if (!el || !nativeControl) {
+    if (!nativeControl) {
       setControlError('主进程账号控制桥接不可用')
       useStore.getState().setNativeBridgeConnection(accountId, 'failed', '主进程账号控制桥接不可用')
       return
@@ -369,7 +456,7 @@ function WebviewPane({ accountId, src, visible }: {
     const onConsole = (e: Event): void => {
       const message = e as Event & { level?: number }
       if ((message.level ?? 0) >= 2) {
-        console.error(`[tg:${accountId.slice(0, 8)}]`, 'guest 报告 warning/error；请在开发构建中检查隔离控制台')
+        console.error(`[native-client:${accountId.slice(0, 8)}]`, 'guest 报告 warning/error；请在开发构建中检查隔离控制台')
       }
     }
 
@@ -534,7 +621,7 @@ function WebviewPane({ accountId, src, visible }: {
       el.removeEventListener('did-fail-load', onFail)
       el.removeEventListener('console-message', onConsole)
     }
-  }, [accountId, src])
+  }, [accountId, bridgeEnabled, src])
 
   function openDevTools(): void {
     const el = ref.current as unknown as { openDevTools?(): void } | null
@@ -583,7 +670,8 @@ function WebviewPane({ accountId, src, visible }: {
         ref={ref as never}
         src={src}
         partition={`persist:native-${accountId}`}
-        preload={nativePreload}
+        preload={bridgeEnabled ? nativePreload : undefined}
+        useragent={userAgent}
         allowpopups
         style={{ width: '100%', height: '100%', border: 'none', display: 'inline-flex' }}
       />

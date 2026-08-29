@@ -140,6 +140,7 @@ export function AccountsView({ onOpenChat, onAddAccount, onRelink }: {
                     <CardButton onClick={() => setRenaming(a.id)}>改名</CardButton>
                     {chatPlatform
                       && a.status !== 'connected'
+                      && a.platform !== 'whatsapp'
                       && a.owner_user_id === currentUser?.id && (
                       <CardButton onClick={() => onRelink({
                         id: a.id,

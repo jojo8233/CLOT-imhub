@@ -5,7 +5,7 @@ import { db } from '../../db/client.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 
 /** 已经有可用适配器实现的平台。没实现的平台建了也连不上，直接挡在门口 */
-const IMPLEMENTED = new Set(['telegram', 'signal'])
+const IMPLEMENTED = new Set(['telegram', 'signal', 'whatsapp'])
 
 const createBody = z.object({
   platform: z.enum(PLATFORMS),
@@ -217,7 +217,9 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
       /** 平台侧可能仍留着一个已关联设备，需要用户自己去移除 */
       manualCleanup: account.platform === 'signal'
         ? '请到手机 Signal 的「设置 → 已关联设备」里移除这台设备'
-        : null,
+        : account.platform === 'whatsapp'
+          ? '请到手机 WhatsApp 的「设置 → 已关联设备」里移除这个浏览器会话'
+          : null,
     }
   })
 

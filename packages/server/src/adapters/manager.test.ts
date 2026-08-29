@@ -13,6 +13,7 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     onMessage: vi.fn(),
     onStatusChange: vi.fn(),
     onAuthChallenge: vi.fn(),
+    onAuthFailure: vi.fn(),
     onCredentialsUpdated: vi.fn(),
     onPlatformIdentityUpdated: vi.fn(),
     onMessageIdRemapped: vi.fn(),
@@ -106,6 +107,19 @@ describe('AdapterManager', () => {
 
     handlers[0]!('a1', { kind: 'qr', payload: 'sgnl://x' })
     expect(seen).toEqual([['a1', { kind: 'qr', payload: 'sgnl://x' }]])
+  })
+
+  it('把已脱敏的鉴权失败汇聚到统一回调', () => {
+    const signal = fakeAdapter('signal')
+    const handlers: ((id: string, reason: string) => void)[] = []
+    signal.onAuthFailure = vi.fn((h) => { handlers.push(h) })
+
+    const seen: [string, string][] = []
+    const mgr = new AdapterManager([signal])
+    mgr.onAuthFailure((id, reason) => seen.push([id, reason]))
+
+    handlers[0]!('a1', '本机缺少 signal-cli')
+    expect(seen).toEqual([['a1', '本机缺少 signal-cli']])
   })
 
   it('把凭据更新汇聚到统一回调', () => {

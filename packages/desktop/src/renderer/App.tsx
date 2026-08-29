@@ -14,6 +14,7 @@ import { AccountTabs } from './components/AccountTabs.js'
 import { AccountsView } from './components/AccountsView.js'
 import { AddAccountDialog, RelinkAccountDialog } from './components/AddAccountDialog.js'
 import { NativeConversationWorkspace } from './components/NativeConversationWorkspace.js'
+import { ChatWorkspace } from './components/ChatWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import type { ChatPlatform } from './navigation.js'
@@ -313,15 +314,26 @@ export function App() {
             compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
           />
 
-          {/* 原生 webview 已建立后保持常驻。切到账号管理只隐藏宿主，不卸载 guest，
-              否则返回会话时会重连、丢滚动位置，“多开常驻”就只在同平台切账号时成立。 */}
+          {/* 原生 webview 已建立后保持常驻。Signal 的首个真实测试 checkpoint 暂时
+              复用 signal-cli + 三栏会话 UI；Telegram/WhatsApp 宿主仍只隐藏不卸载。 */}
           <div style={{
             display: view === 'chat' ? 'flex' : 'none',
             flex: 1,
             minWidth: 0,
             minHeight: 0,
           }}>
-            <NativeConversationWorkspace />
+            <div style={{
+              display: activePlatform === 'signal' ? 'flex' : 'none',
+              flex: 1, minWidth: 0, minHeight: 0,
+            }}>
+              <ChatWorkspace />
+            </div>
+            <div style={{
+              display: activePlatform === 'signal' ? 'none' : 'flex',
+              flex: 1, minWidth: 0, minHeight: 0,
+            }}>
+              <NativeConversationWorkspace />
+            </div>
           </div>
           {view !== 'chat' && (
             <AccountsView

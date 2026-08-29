@@ -5,6 +5,7 @@ import type {
   AdapterAccount,
   AuthChallenge,
   AuthChallengeHandler,
+  AuthFailureHandler,
   CredentialsHandler,
   MessageHandler,
   MessageDeletedHandler,
@@ -29,6 +30,33 @@ interface RpcPending {
 /** 进程意外退出后的重启退避。指数增长，封顶 30 秒 */
 const RESTART_BASE_MS = 2_000
 const RESTART_MAX_MS = 30_000
+
+function errorCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return null
+  return typeof error.code === 'string' ? error.code : null
+}
+
+/** 只返回固定、可展示的诊断；绝不把上游错误里的二维码 URI 或账号值带到前端。 */
+export function signalAuthFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (errorCode(error) === 'ENOENT' || /ENOENT|not found/i.test(message)) {
+    return '本机未找到 signal-cli；请先安装兼容版本并检查 SIGNAL_CLI_BINARY'
+  }
+  if (/timed out|timeout/i.test(message)) {
+    return 'Signal 二维码已过期，请重新关联后再扫码'
+  }
+  if (/already exists/i.test(message)) {
+    return '这个 Signal 账号已存在于当前 signal-cli 数据目录，请检查已有账号关联'
+  }
+  return 'Signal 关联失败；请检查本机 signal-cli 与 Java 版本后重试'
+}
+
+function redactSignalCliDiagnostic(line: string): string {
+  return line
+    .replace(/sgnl:\/\/\S+/gi, '[已隐藏关联链接]')
+    .replace(/\+[0-9][0-9 -]{5,18}/g, '[已隐藏账号]')
+    .replace(/(uuid|pub_key|token|code)=([^&\s]+)/gi, '$1=[已隐藏]')
+}
 
 /**
  * Signal 适配器，底层是 signal-cli 的 JSON-RPC 模式。
@@ -79,6 +107,7 @@ export class SignalAdapter implements PlatformAdapter {
   private readonly messageHandlers: MessageHandler[] = []
   private readonly statusHandlers: StatusHandler[] = []
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
+  private readonly authFailureHandlers: AuthFailureHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
 
   constructor(private readonly opts: SignalAdapterOptions) {}
@@ -86,6 +115,7 @@ export class SignalAdapter implements PlatformAdapter {
   onMessage(handler: MessageHandler): void { this.messageHandlers.push(handler) }
   onStatusChange(handler: StatusHandler): void { this.statusHandlers.push(handler) }
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
+  onAuthFailure(handler: AuthFailureHandler): void { this.authFailureHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
 
   /** Signal 没有临时消息 id（消息身份就是 发送者+timestamp），这个通道永远不会触发 */
@@ -106,6 +136,14 @@ export class SignalAdapter implements PlatformAdapter {
     for (const h of this.authChallengeHandlers) {
       try { h(accountId, challenge) } catch (err) {
         console.error(`[signal] 账号 ${accountId} 的鉴权挑战 handler 出错:`, err)
+      }
+    }
+  }
+
+  private emitAuthFailure(accountId: string, reason: string): void {
+    for (const h of this.authFailureHandlers) {
+      try { h(accountId, reason) } catch (err) {
+        console.error(`[signal] 账号 ${accountId} 的鉴权失败 handler 出错:`, err)
       }
     }
   }
@@ -135,13 +173,14 @@ export class SignalAdapter implements PlatformAdapter {
       try {
         this.handleLine(JSON.parse(line))
       } catch (err) {
-        console.error('[signal] 无法解析 signal-cli 输出:', err, line.slice(0, 200))
+        const kind = err instanceof Error ? err.name : 'unknown'
+        console.error(`[signal] 无法解析 signal-cli 输出（${kind}，长度 ${line.length}）`)
       }
     })
 
     // stderr 里有链接进度和真实错误，直接透传出来，不然出问题时一点线索都没有
     readline.createInterface({ input: proc.stderr }).on('line', (line) => {
-      if (line.trim() !== '') console.error('[signal-cli]', line)
+      if (line.trim() !== '') console.error('[signal-cli]', redactSignalCliDiagnostic(line))
     })
 
     proc.on('exit', (code, signal) => {
@@ -163,10 +202,15 @@ export class SignalAdapter implements PlatformAdapter {
     })
 
     proc.on('error', (err) => {
-      console.error('[signal] 启动 signal-cli 失败:', err)
+      if (this.proc === proc) this.proc = null
+      for (const [, pendingReq] of this.pending) pendingReq.reject(err)
+      this.pending.clear()
+      console.error(`[signal] signal-cli 进程错误（${errorCode(err) ?? err.name}）`)
+      for (const accountId of this.numberByAccount.keys()) this.emitStatus(accountId, 'degraded')
+      if (this.numberByAccount.size > 0) this.scheduleRestart()
     })
 
-    this.restartAttempts = 0
+    proc.once('spawn', () => { this.restartAttempts = 0 })
     return proc
   }
 
@@ -224,8 +268,8 @@ export class SignalAdapter implements PlatformAdapter {
       if (!this.warnedUnknownAccounts.has(account)) {
         this.warnedUnknownAccounts.add(account)
         console.warn(
-          `[signal] 收到 ${account} 的消息，但数据库里没有对应的账号，已丢弃。\n` +
-            '         signal-cli 仍关联着这个号。要么在库里补一条 credentials_ref 指向它的\n' +
+          '[signal] 收到未登记 Signal 账号的消息，已丢弃。\n' +
+            '         signal-cli 仍关联着这个账号。要么在库里补一条 credentials_ref 指向它的\n' +
             "         signal 账号，要么执行 signal-cli unregister 解除关联。",
         )
       }
@@ -271,7 +315,8 @@ export class SignalAdapter implements PlatformAdapter {
       }
       this.groupNames.set(number, byId)
     } catch (err) {
-      console.warn(`[signal] 账号 ${number} 拉取群列表失败，群名暂时显示为群 id:`, err)
+      const kind = err instanceof Error ? err.name : 'unknown'
+      console.warn(`[signal] 拉取群列表失败（${kind}），群名暂时显示为群 id`)
     }
   }
 
@@ -345,8 +390,10 @@ export class SignalAdapter implements PlatformAdapter {
       this.restartForNewAccount()
       this.emitStatus(account.id, 'connected')
     } catch (err) {
-      console.error(`[signal] 账号 ${account.id} 关联失败:`, err)
-      this.emitStatus(account.id, 'pending_auth')
+      const reason = signalAuthFailureReason(err)
+      console.error(`[signal] 账号 ${account.id} 关联失败（${errorCode(err) ?? 'rpc'}）`)
+      this.emitStatus(account.id, 'degraded')
+      this.emitAuthFailure(account.id, reason)
     }
   }
 

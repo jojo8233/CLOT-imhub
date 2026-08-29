@@ -162,10 +162,22 @@ describe('POST /api/accounts', () => {
     expect(n.n).toBe('0')
   })
 
-  it('适配器还没接入的平台直接挡住，不留下建了连不上的空账号', async () => {
+  it('WhatsApp Web shell 账号可创建并立即登记隔离会话', async () => {
     const res = await app.inject({
       method: 'POST', url: '/api/accounts', headers: auth(agentToken),
       payload: { platform: 'whatsapp', displayName: 'WA' },
+    })
+    expect(res.statusCode).toBe(201)
+    expect(adapters.connect).toHaveBeenCalledWith('whatsapp', expect.objectContaining({
+      displayName: 'WA',
+      credentialsRef: null,
+    }))
+  })
+
+  it('适配器还没接入的平台直接挡住，不留下建了连不上的空账号', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(agentToken),
+      payload: { platform: 'zoom', displayName: 'Zoom' },
     })
     expect(res.statusCode).toBe(400)
     expect(adapters.connect).not.toHaveBeenCalled()
@@ -363,6 +375,20 @@ describe('DELETE /api/accounts/:id', () => {
       headers: auth(agentToken), payload: { confirmName: 'SG' },
     })
     // 只清本地数据、不动服务端注册，所以手机上那个条目要用户自己删
+    expect(res.json().manualCleanup).toContain('已关联设备')
+  })
+
+  it('WhatsApp 账号提示用户从手机移除浏览器会话', async () => {
+    const wa = await db.insertInto('accounts').values({
+      platform: 'whatsapp', owner_user_id: AGENT_ID, team_id: TEAM_ID,
+      display_name: 'WA', status: 'pending_auth',
+    }).returning('id').executeTakeFirstOrThrow()
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${wa.id}`,
+      headers: auth(agentToken), payload: { confirmName: 'WA' },
+    })
+    expect(res.json().manualCleanup).toContain('WhatsApp')
     expect(res.json().manualCleanup).toContain('已关联设备')
   })
 })

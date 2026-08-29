@@ -80,7 +80,12 @@
    与 IndexedDB 消息 outbox 已接入通用桥接，约定范围的真实故障矩阵已完成。M3-5
    已建立 TDLib/telegram-tt 来源观测账本和离线报告；仍须完成真实 shadow fixture、历史缺口
    修复、长期观察和切换/回滚门槛，不能把观测接线写成已验收闭环。
-4. **M5/M6 再接 Signal 与 WhatsApp**：复用已验证的宿主与桥接协议；Zoom 延后。
+4. **M5/M6 并行推进 Signal 与 WhatsApp（执行中）**：按 2026-08-29 的产品优先级调整，
+   不再等待 M3 生产观察全部结束才启动。Signal 首检点复用现有 `signal-cli` 适配器和统一
+   会话数据层，先验证真实关联、文字收发与归档；WhatsApp 首检点只在 owner 的隔离
+   partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发。WhatsApp
+   尚未注入 im-hub preload、桥接或翻译能力，不能写成统一消息闭环。两条路线后续再分别补齐
+   原生桥接、身份绑定、消息回传和安装包；Zoom 延后。
 
 ## Signal 窗口覆盖原型的历史与边界
 

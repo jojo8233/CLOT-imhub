@@ -2,6 +2,7 @@ import type { OutboundContent, Platform } from '@im-hub/shared'
 import type {
   AdapterAccount,
   AuthChallengeHandler,
+  AuthFailureHandler,
   CredentialsHandler,
   CurrentMessageFetchResult,
   MessageHandler,
@@ -51,6 +52,7 @@ export class AdapterManager {
   private readonly messageHandlers: MessageHandler[] = []
   private readonly statusHandlers: StatusHandler[] = []
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
+  private readonly authFailureHandlers: AuthFailureHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: ManagedMessageIdRemapHandler[] = []
@@ -62,6 +64,7 @@ export class AdapterManager {
       a.onMessage(msg => fanOut(this.messageHandlers, msg))
       a.onStatusChange((id, status) => fanOut(this.statusHandlers, id, status))
       a.onAuthChallenge((id, c) => fanOut(this.authChallengeHandlers, id, c))
+      a.onAuthFailure?.((id, reason) => fanOut(this.authFailureHandlers, id, reason))
       a.onCredentialsUpdated((id, ref) => fanOut(this.credentialsHandlers, id, ref))
       a.onPlatformIdentityUpdated?.((id, externalId) => {
         fanOut(this.platformIdentityHandlers, id, externalId)
@@ -78,6 +81,7 @@ export class AdapterManager {
   onMessage(handler: MessageHandler): void { this.messageHandlers.push(handler) }
   onStatusChange(handler: StatusHandler): void { this.statusHandlers.push(handler) }
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
+  onAuthFailure(handler: AuthFailureHandler): void { this.authFailureHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
   onPlatformIdentityUpdated(handler: PlatformIdentityHandler): void {
     this.platformIdentityHandlers.push(handler)

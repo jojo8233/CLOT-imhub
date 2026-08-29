@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  browserCompatibleUserAgent,
   createSingleFlight,
   nativeAccountControllable,
   nativeAccountIdsToMount,
@@ -21,15 +22,28 @@ describe('native account ownership gate', () => {
       { id: 'tg-1', platform: 'telegram', owner_user_id: 'user-1' },
       { id: 'tg-2', platform: 'telegram', owner_user_id: 'user-1' },
       { id: 'signal-1', platform: 'signal', owner_user_id: 'user-1' },
+      { id: 'wa-1', platform: 'whatsapp', owner_user_id: 'user-1' },
       { id: 'other-tg', platform: 'telegram', owner_user_id: 'user-2' },
     ]
 
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, true))
-      .toEqual(['tg-1', 'tg-2'])
+      .toEqual(['tg-1', 'tg-2', 'wa-1'])
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'auditor' }, true))
       .toEqual([])
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, false))
       .toEqual([])
+  })
+})
+
+describe('official web client user agent', () => {
+  it('presents the embedded Chromium engine without Electron or app tokens', () => {
+    const result = browserCompatibleUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+      + '(KHTML, like Gecko) im-hub/0.0.0 Chrome/128.0.0.0 Electron/33.0.0 Safari/537.36',
+    )
+    expect(result).toContain('Chrome/128.0.0.0')
+    expect(result).not.toContain('Electron')
+    expect(result).not.toContain('im-hub')
   })
 })
 

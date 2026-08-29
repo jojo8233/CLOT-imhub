@@ -1,16 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import {
   nativeAccountIdFromPartition,
+  nativeClientBridgeAllowed,
   nativeClientUrlAllowed,
   nativePartitionAllowed,
 } from './native-host-policy.js'
 
 describe('native host policy', () => {
-  it('只允许补丁客户端开发 origin', () => {
+  it('只允许补丁客户端与官方 WhatsApp Web origin', () => {
     expect(nativeClientUrlAllowed('http://localhost:1234/')).toBe(true)
     expect(nativeClientUrlAllowed('http://localhost:1234/chat')).toBe(true)
+    expect(nativeClientUrlAllowed('https://web.whatsapp.com/')).toBe(true)
+    expect(nativeClientUrlAllowed('https://web.whatsapp.com/inbox')).toBe(true)
     expect(nativeClientUrlAllowed('http://localhost.evil.example:1234/')).toBe(false)
+    expect(nativeClientUrlAllowed('https://web.whatsapp.com.evil.example/')).toBe(false)
     expect(nativeClientUrlAllowed('https://web.telegram.org/')).toBe(false)
+  })
+
+  it('只给自建补丁客户端注入 bridge，官方页面保持 shell-only', () => {
+    expect(nativeClientBridgeAllowed('http://localhost:1234/')).toBe(true)
+    expect(nativeClientBridgeAllowed('https://web.whatsapp.com/')).toBe(false)
+    expect(nativeClientBridgeAllowed('https://example.com/')).toBe(false)
   })
 
   it('partition 必须带规范 UUID 账号 id', () => {
