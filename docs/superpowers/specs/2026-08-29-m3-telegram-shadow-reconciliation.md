@@ -1,8 +1,8 @@
 # M3-5 Telegram 双来源 shadow 对账与切换门槛
 
 日期：2026-08-29
-状态：执行中；账本、报告、双真实账号 base/delete/edit、媒体/回复组合探针及 outbox
-终态已验；受限历史扫描、主动修复和切换门槛待验
+状态：执行中；账本、报告、双真实账号 base/delete/edit、媒体/回复组合探针、outbox
+终态及受限历史 coverage dry-run 已验；主动修复和切换门槛待验
 
 ## 1. 目标与非目标
 
@@ -86,6 +86,41 @@ TDLib 的 `updateDeleteMessages` 现已进入同一 delete 事实键。`from_cac
 `total` 包含全部可追踪事实，`comparableTotal` 排除 `source_local`；
 `matched / comparableTotal` 也只是观测指标，不能单独触发旧链路清理。
 
+### 4.1 受限历史 coverage dry-run
+
+历史 coverage 扫描只读取中央 `messages` 和 shadow 观测账本，不调用 Telegram
+`getChatHistory`，不启动第二个 TDLib client，也不补写、改写或删除消息和 shadow 事实。
+调用必须指定账号和半开时间窗 `[sentAfter, sentBefore)`；单个时间窗最多 31 天，单页
+`limit` 为 1～500。可选的 `conversationId` 是中央库会话 UUID，并再次校验属于该账号。
+分页使用 `(sent_at, message UUID)` keyset cursor；cursor 绑定账号、会话和时间窗，报告返回
+本页数、累计处理数、`hasMore` 和下一 cursor，不能把另一范围的 cursor 混用。
+
+```bash
+pnpm --filter @im-hub/server shadow-coverage \
+  <account-uuid> <sent-after-iso> <sent-before-iso> [limit] [conversation-uuid|-] [cursor]
+```
+
+扫描只为最终数字消息构造中央库仍可证明的 expected facts：base、当前保存的最后一次 edit
+以及 delete。中央消息表没有历史正文版本，不能据此重建更早编辑；临时消息事实继续归为
+`sourceLocal`。每个账号最早的 `first_observed_at` 是保守 coverage 起点：没有账本事实且事件
+早于该时间的项目归为 `preObservation`，之后才归为 `missing`；账号完全没有 shadow 基线时
+归为 `coverageUnavailable`，不得把空账本写成通过。已有观测继续按 `matched`、`mismatched`、
+`tdlibOnly`、`telegramTtOnly` 分类。
+
+dry-run 同时输出修复性质，但不执行修复。`currentSnapshotFetchable` 只表示当前未删除平台
+快照以后可以由真实来源重新读取，不授权伪造缺失来源；已删除事件和被后续 edit 覆盖的 base
+归为 `historicalEventUnrecoverable`，mismatch 归为 `manualInvestigation`。输出只有聚合计数、
+游标和有上限的 fact key 样本，不含正文、raw、账号平台身份、令牌或会话凭据。
+
+2026-08-29 对双真实账号覆盖全部现有消息的首次 dry-run 已完成。发送端扫描 24 条消息，
+其中 23 条最终消息、1 条 source-local 临时消息；37 个 expected facts 中 14 个进入可比分母，
+结果为 `matched=12 / mismatched=1 / telegramTtOnly=1 / missing=0`，另有
+`preObservation=22 / sourceLocal=1`。mismatch 仍是修正前 S5 base，单边仍是 TDLib
+`pending_auth` 时的 S1。接收端扫描 11 条消息，其中 10 条最终消息、1 条 source-local；
+17 个 expected facts 中 14 个可比，结果为 `matched=11 / tdlibOnly=3 / missing=0`，另有
+`preObservation=2 / sourceLocal=1`。三个单边仍是 S2 预挂载修复前的 delete，均被明确标为
+历史事件不可恢复。本次没有平台拉取和数据库写入。
+
 ## 5. 切换门槛与后续 checkpoint
 
 M3-5 按下列顺序续验：
@@ -115,7 +150,8 @@ M3-5 按下列顺序续验：
    mismatch 保留为已解释的算法发现证据，不改写账本；接收端 base/edit 均 matched。
    用户逐一切换两个账户后，输入坞均无 pending/dead-letter 非零提示，两个 outbox `0/0`。
    本次没有新增消息，也没有重做 M3-4 的媒体、回复或故障矩阵。
-4. 增加受限的历史扫描和主动修复；扫描必须有账号/会话边界、数量上限和可观测进度。
+4. 受限历史 coverage dry-run 已按账号/可选会话/时间/数量和 keyset 进度边界完成；下一步
+   只为 `currentSnapshotFetchable` 设计保持真实来源的主动读取，不倒填不可恢复历史。
 5. 复用 M3-4 已完成的多账号和故障证据，只执行 shadow 特有的差异/恢复矩阵。
 6. 定义灰度开关、观察周期、一致率门槛和回滚步骤。在门槛证据完成前不停用 TDLib。
 

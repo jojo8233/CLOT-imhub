@@ -2,6 +2,33 @@
 
 日期：2026-08-29
 
+## 最新续验 checkpoint：受限历史 coverage dry-run 已完成
+
+- 新增只读命令 `pnpm --filter @im-hub/server shadow-coverage <account-uuid>
+  <sent-after-iso> <sent-before-iso> [limit] [conversation-uuid|-] [cursor]`。它只查中央消息和
+  shadow 账本，不调用平台历史接口、不启动额外 TDLib client，也不写数据库。
+- 账号必填；可选会话 UUID 必须属于该账号；时间窗是半开区间且最多 31 天；单页硬上限
+  500。分页 cursor 使用 `(sent_at, message UUID)` keyset 并绑定账号/会话/时间窗；输出
+  `processedMessages / pageMessages / hasMore / nextCursor`，可继续观察进度。
+- 扫描按中央库仍可证明的 base、当前最后一次 edit 和 delete 构造 expected facts。无事实且
+  早于账号最早 shadow 观测的历史归为 `preObservation`，较新的才是 `missing`；无任何账本
+  基线时归为 `coverageUnavailable`；temp 行归为 `sourceLocal`。不会用当前消息快照伪造已
+  被覆盖的旧 edit/base，也不会反推历史 delete。
+- dry-run 的 `currentSnapshotFetchable` 只是下一阶段可重新读取当前平台快照的候选，不代表
+  可以伪造缺失来源。delete/被 edit 覆盖的 base 是 `historicalEventUnrecoverable`，mismatch
+  需要 `manualInvestigation`。命令不输出正文、raw、账号平台身份或凭据。
+- 自动回归覆盖分类、会话边界、31 天时间上限、500 行上限、scope-bound cursor 和分页进度；
+  coverage + 既有 shadow 三个测试文件共 14 tests 通过，根级 `pnpm typecheck` 通过；全量
+  38 文件 362 tests（另 1 个既有 todo）通过。
+- 双真实账号只读 dry-run 已覆盖现有记录且单页完成。发送端 24 条消息、37 个 expected facts，
+  可比 14 个：`matched=12 / mismatched=1 / telegramTtOnly=1 / missing=0`，另有
+  `preObservation=22 / sourceLocal=1`；已解释项仍仅为修正前 S5 base 与 S1 pending_auth。
+  接收端 11 条消息、17 个 expected facts，可比 14 个：`matched=11 / tdlibOnly=3 /
+  missing=0`，另有 `preObservation=2 / sourceLocal=1`；三个单边仍仅为 S2 预挂载前 delete，
+  均标为历史不可恢复。本次未拉平台、未写开发库、未触碰 S4/S5/A1/A2。
+- 下一步是设计并实现只处理 `currentSnapshotFetchable` 的受限主动读取，保持实际来源并提供
+  dry-run/执行开关、幂等、速率、进度和停止条件；不可恢复历史只保留解释，不倒填。
+
 ## 最新 checkpoint
 
 - 用户在 S5 edit 正式报告完成后逐一切换两个账户检查输入坞，两边均未出现“消息回传队列
@@ -184,6 +211,7 @@
 1. 不再发送、编辑或删除 S4；删除必须另行取得用户明确同意。
 2. S5 已完成一次发送和一次 caption 编辑，不再重发、编辑或删除。两账号消息行和正式
    shadow 报告和 outbox `0/0` 均已收敛；旧 base mismatch 保留为已解释的算法发现证据。
-3. 只读审计现有消息/alias/shadow 数据边界，先定义按账号/会话/时间/数量限制的历史扫描、
-   可观测进度和 dry-run 输出；未完成设计与回归前不主动补写或删除任何事实。
-4. 再实现受限主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
+3. 受限历史 coverage dry-run 已实现并在双真实账号上只读验证；不得把
+   `preObservation`、`sourceLocal` 或不可恢复 delete 当成待倒填缺陷。
+4. 下一步实现只处理当前快照候选的受限主动读取和灰度/回滚门槛；在证据完成前不停用
+   TDLib，不伪造缺失的 telegram-tt/TDLib 来源。

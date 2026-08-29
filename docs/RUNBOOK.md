@@ -352,6 +352,21 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   unstable=0`，三个单边仍是 S2 历史 delete。用户随后逐一切换两个账户，输入坞均无
   pending/dead-letter 非零提示，对应两个 outbox `pending=0 / dead=0`。S5 的媒体+回复
   checkpoint 已关闭；之后进入受限历史扫描、主动修复边界和观察周期。
+  受限历史 coverage dry-run 现使用：
+
+  ```bash
+  pnpm --filter @im-hub/server shadow-coverage \
+    <account-uuid> <sent-after-iso> <sent-before-iso> [limit] [conversation-uuid|-] [cursor]
+  ```
+
+  该命令只读中央消息与 shadow 账本，不拉 Telegram 历史、不启动额外 TDLib client，也不写
+  数据库。账号必填；可选会话 UUID 必须属于该账号；半开时间窗最多 31 天；单页 1～500，
+  下一页使用返回的 scope-bound keyset cursor。`preObservation` 表示事件早于该账号最早
+  shadow 观测，不是当前缺口；`coverageUnavailable` 表示账号没有可用基线；`sourceLocal`
+  表示 temp 生命周期；只有较新的无事实项才是 `missing`。`currentSnapshotFetchable` 只是
+  后续可重新读取当前平台快照的候选，不能拿中央库行伪造缺失来源；历史 delete 和已被 edit
+  覆盖的 base 不可恢复。双真实账号首次全窗 dry-run 均为 `missing=0`，其余差异与正式报告
+  中已解释的 S1/S2/S5 证据完全一致。主动读取和切换门槛仍未完成。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
