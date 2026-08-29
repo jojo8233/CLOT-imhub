@@ -230,6 +230,9 @@ Telegram：
 > 适配器不再调 tdl 的 `login()`（它会从 stdin 读手机号，没有 TTY 时永久挂起），
 > 改成自己驱动鉴权状态机，二维码经 WebSocket 推给发起人。
 - [ ] 账号状态从 `pending_auth` 变成 `connected`（可以 `select status from accounts;` 确认）
+- [ ] 若「重新关联」一直停在“正在生成二维码”，先确认服务端已包含初始 authorization
+      state 补读修复，再重启服务端、刷新一次 im-hub 宿主并重新关联一次。不要通过删除账号、
+      清理 TDLib 数据目录或清理 native partition 来刷新二维码。
 - [ ] 找一个真实 Telegram 联系人发一条消息给这个号，确认消息出现在 `messages` 表里、且能在客户端会话列表里看到
 - [ ] 在客户端里回一条消息，确认对方 Telegram 能收到
 

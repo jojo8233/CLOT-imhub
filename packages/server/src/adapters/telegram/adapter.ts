@@ -120,9 +120,14 @@ export class TelegramAdapter implements PlatformAdapter {
       filesDirectory: path.join(this.opts.dataDir, account.id, 'files'),
     })
 
+    // tdl 的新 tdjson receive loop 会在 createClient() 返回后立刻启动。已有数据库
+    // 初始化很快时，首个 authorization update 可能在这里挂 listener 之前就被
+    // tdl 缓存；之后状态不再变化，我们就会永远停在 pending_auth。
+    let observedAuthorizationUpdate = false
     client.on('update', (update: unknown) => {
       const au = update as { _?: string; authorization_state?: { _: string; link?: string } }
       if (au._ === 'updateAuthorizationState' && au.authorization_state) {
+        observedAuthorizationUpdate = true
         // 不 await：鉴权要等人扫码/输密码，可能挂几分钟，绝不能卡住 update 分发
         void this.driveAuth(account.id, client, au.authorization_state)
       }
@@ -171,6 +176,20 @@ export class TelegramAdapter implements PlatformAdapter {
 
     this.clients.set(account.id, client)
     this.emitStatus(account.id, 'pending_auth')
+
+    // 补读 tdl 缓存的当前状态，覆盖 listener 挂载前首个 update 已到达的竞态。
+    // 若 listener 已经看到任何 authorization update，以实时 update 为准，避免同一
+    // WaitPhoneNumber 被处理两次而旋转两份二维码 token。
+    void client.invoke({ _: 'getAuthorizationState' }).then((state) => {
+      if (this.clients.get(account.id) !== client || observedAuthorizationUpdate) return
+      return this.driveAuth(account.id, client, state)
+    }).catch((err: unknown) => {
+      // disconnect/relink 期间旧 client 的 pending invoke 会被拒绝；它已经不再是
+      // 当前实例时无需报错，更不能把新实例的状态覆盖回 pending_auth。
+      if (this.clients.get(account.id) !== client) return
+      console.error(`[telegram] 账号 ${account.id} 读取当前鉴权状态失败:`, err)
+      this.emitStatus(account.id, 'pending_auth')
+    })
 
     // 刻意不调 client.login()。它在 WaitPhoneNumber 里写死了发
     // setAuthenticationPhoneNumber，没有扫码入口；而且默认的 getPhoneNumber

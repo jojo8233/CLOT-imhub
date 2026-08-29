@@ -4,6 +4,17 @@
 
 ## 最新 checkpoint
 
+- S1 发送侧 TDLib 为 `pending_auth` 后，用户通过「账号状态 → 重新关联」真实复验时遇到
+  二维码永久停在“正在生成”。relink HTTP 始终为 200，根因不是 WebSocket 或 QR 渲染，
+  而是 `tdl.createClient()` 的 receive loop 可能在业务 listener 挂载前收到并缓存首个
+  authorization state；状态不再变化时，适配器永远收不到 `WaitPhoneNumber`。
+- TelegramAdapter 现会在 listener 挂载后主动读取一次 `getAuthorizationState`；若实时
+  authorization update 已到达则跳过快照，避免同一 WaitPhoneNumber 旋转两份 token；
+  disconnect/relink 期间旧 client 的迟到结果也不会覆盖新实例。回归测试先稳定复现空挑战，
+  修复后通过；全量 37 文件 348 tests（另 1 个既有 todo）和 typecheck 通过。
+- 修复加载后，用户刷新宿主、重新关联一次即看到二维码并完成扫码；只读数据库确认
+  `existing` / `new` 两个 TDLib 账户均为 `connected`，且 credentials/identity 均存在。
+  本次没有清理 native partition，也没有发送、编辑或删除 Telegram 消息。
 - 用户已明确从 `existing` 真实账户向 `new` 真实账户的一对一安全会话手动发送一次
   `IMHUB-M3-SHADOW-20260829-S1`，没有编辑或删除。跨过 120 秒静默窗口后的只读报告显示：
   `new` 接收分区的 base upsert 为 `1/1 matched`，两来源语义哈希一致，无 mismatch、
@@ -44,9 +55,8 @@
 
 ## 下一 checkpoint
 
-1. 在 im-hub 中完成 `existing` 账户的 TDLib 鉴权，并只读确认数据库状态从
-   `pending_auth` 收敛到 `connected`；不要重置或清理两个 native partition。
-2. 用户确认安全会话后，从 `existing` 向 `new` 只发送一次新的 S2；不要编辑、删除或重发 S1。
-3. 跨过 120 秒静默窗口后只读运行两个账号的报告，分别核对发送/接收 base upsert；
+1. 用户确认安全会话后，从 `existing` 向 `new` 只发送一次
+   `IMHUB-M3-SHADOW-20260829-S2`；不要编辑、删除或重发 S1。
+2. 跨过 120 秒静默窗口后只读运行两个账号的报告，分别核对发送/接收 base upsert；
    temp/remap 是发送端本地生命周期，在定义切换门槛前单独解释，不用降低报告要求隐藏。
-4. 以 S2 的真实差异决定 TDLib 编辑/删除/媒体/回复观测和历史扫描的最小补齐顺序。
+3. 以 S2 的真实差异决定 TDLib 编辑/删除/媒体/回复观测和历史扫描的最小补齐顺序。
