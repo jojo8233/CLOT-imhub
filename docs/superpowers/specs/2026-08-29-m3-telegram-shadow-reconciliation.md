@@ -48,6 +48,12 @@ TDLib 的 `updateDeleteMessages` 现已进入同一 delete 事实键。`from_cac
 只表示本地缓存淘汰，不得将中央消息标为删除；其他服务端下发的账号内删除
 则代表当前账号视图的真实事实。消息 `deleted_at` 与 shadow 观测必须在同一事务内写入。
 
+真实 S2 delete 证据说明，telegram-tt outbox 只能持久化 webview 实际观察到的 update。
+若宿主恢复后只创建 active 账号，未打开账号在删除期间没有 webview；事后加载最终
+状态不能反推并伪造历史 delete 事实。因此宿主恢复会话后必须预挂载当前 owner
+的所有已支持账号，每个隐藏 pane 仍使用自己的 partition、control grant 和 outbox。
+授权收回或账号移除时必须立即卸载，不得为了后台观测绕过 owner/auditor 边界。
+
 ## 4. 一致性报告
 
 报告只统计早于静默窗口的事实，防止把正常网络时序误报成丢失。每个 fact key
@@ -70,7 +76,9 @@ M3-5 按下列顺序续验：
    双真实账号的接收/发送最终 base upsert 已获得 matched 证据；telegram-tt 临时
    upsert/remap 是发送端本地生命周期，必须单独分类而不伪装为 base 差异。
 3. 补齐 TDLib 编辑、删除、媒体、回复和 remap 观测；不通过降低指纹要求制造一致。
-   其中 delete 代码与自动回归已完成，待使用明确可清理的真实重复 S2 验收。
+   delete 代码与自动回归已完成；真实 S2 证明发送分区三个 delete matched，也暴露接收
+   webview 未创建时三个 TDLib-only 缺口。宿主预挂载修复已完成，待用单个 S3
+   shadow 专用 fixture 验证隐藏接收 pane 不再漏事件。
 4. 增加受限的历史扫描和主动修复；扫描必须有账号/会话边界、数量上限和可观测进度。
 5. 复用 M3-4 已完成的多账号和故障证据，只执行 shadow 特有的差异/恢复矩阵。
 6. 定义灰度开关、观察周期、一致率门槛和回滚步骤。在门槛证据完成前不停用 TDLib。

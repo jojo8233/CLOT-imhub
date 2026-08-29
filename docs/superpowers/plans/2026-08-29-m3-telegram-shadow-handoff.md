@@ -4,6 +4,21 @@
 
 ## 最新 checkpoint
 
+- 用户已明确同意保留四条 S2 中最上面第一条，并对所有人删除下面连续三条。
+  即时只读确认发送/接收分区都是第一条 live、后三条 deleted；S1、A1、A2 未动。
+- 120 秒正式报告显示：`existing` 发送分区的三个 delete 全部 matched，连同四个
+  base upsert 为 `7 matched / 0 mismatched / 0 TDLib-only`；余下 8 个 telegram-tt-only
+  是四组临时 upsert/remap 生命周期。`new` 接收分区的四个 base upsert matched，
+  但三个 delete 都是 TDLib-only。两账号均无 mismatch 或同源不稳定。
+- 两个 IndexedDB outbox 都为 `pending=0, dead=0`。接收侧缺口不是卡队列：用户按
+  `⌘R` 后只打开了发送账号，删除发生时接收账号的 webview 尚未创建。事后
+  打开只加载删除后的最终状态，telegram-tt 不会伪造历史 `message.deleted`。
+- 宿主已修正为恢复会话后预挂载当前 owner 的所有已支持 Telegram webview，隐藏
+  pane 也使用各自的物理 partition、control grant 和 outbox 持续接收 update；未授权、
+  auditor、其他 owner 和未支持平台不挂载，权限收回后立即卸载。开发态已观察到
+  两个 owner 账号同时建立 webview 并完成各自 control grant。
+- 预挂载回归测试先稳定复现“只挂 active 账号”缺口，修复后定向测试、
+  `pnpm typecheck`、desktop build 和全量 37 文件 352 tests（另 1 个既有 todo）通过。
 - `existing` / `new` 两个 TDLib 账号都已真实登录并收敛为 `connected`。
   用户从 `existing` 向 `new` 发送 `IMHUB-M3-SHADOW-20260829-S2` 时，因 Telegram
   页面延迟显示而连续点击了四次；后续确认这是四条不同的真实平台消息，
@@ -17,9 +32,6 @@
   转成 canonical `delete` 事实，`from_cache=true` 的本地缓存淘汰明确忽略；删除状态与
   shadow 观测在同一事务内落库，事件处理器异常隔离。`pnpm typecheck`、定向数据库
   用例及全量 37 文件 351 tests（另 1 个既有 todo）通过。
-- 四条 S2 当前全部保留。下一步需用户明确确认后，仅保留最上面第一条，
-  从 Telegram 删除下面连续三条，把这次必要的清理同时作为三条真实 delete shadow
-  fixture。S1、A1、A2 不动。
 - S1 发送侧 TDLib 为 `pending_auth` 后，用户通过「账号状态 → 重新关联」真实复验时遇到
   二维码永久停在“正在生成”。relink HTTP 始终为 200，根因不是 WebSocket 或 QR 渲染，
   而是 `tdl.createClient()` 的 receive loop 可能在业务 listener 挂载前收到并缓存首个
@@ -71,9 +83,10 @@
 
 ## 下一 checkpoint
 
-1. 确认服务端已加载 TDLib delete 观测、两账号仍为 `connected`；若服务端重启导致
-   宿主 WebSocket 断开，先刷新一次 im-hub 宿主。
-2. 经用户明确确认后，保留四条 S2 中最上面第一条，仅删除下面连续三条；
-   不编辑/删除 S1、A1、A2。
-3. 跨过 120 秒静默窗口后只读核对三个 `delete` 事实的 TDLib / telegram-tt 一致性与
-   两个 outbox 的 `pending/dead`；再决定编辑、媒体、回复观测和历史扫描的最小补齐顺序。
+1. 提交/推送预挂载修复并回写 Issue #13；PR #19 和 Issue #12 保持 OPEN。
+2. 修复加载后仅执行一个 shadow 专用探针：在两个账号 webview 都已预挂载、
+   `pending=0, dead=0` 时，从 `existing` 向 `new` 只发送一次
+   `IMHUB-M3-SHADOW-20260829-S3`。不重复 M3-4 故障矩阵。
+3. S3 双账号 base upsert 跨过 120 秒并 matched 后，经用户另行明确确认，仅对所有人
+   删除 S3；删除时保持接收账号为隐藏 pane，验证四个来源分区都产生 matched delete。
+   S1、剩余第一条 S2、A1、A2 不动。

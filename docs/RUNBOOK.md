@@ -317,8 +317,12 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   `tdlibOnly` / `telegramTtOnly`、事件类型分组和有上限的 fact key 样本，不输出正文或账号
   平台身份。双真实账号上的接收/发送最终 base upsert 已 matched，且 outbox 无
   pending/dead；发送侧临时 upsert/remap 依设计单独分类。TDLib `updateDeleteMessages`
-  观测已接线，并忽略 `from_cache=true` 的纯缓存淘汰；真实 delete、其余生命周期、
-  历史扫描和观察周期仍需完成。在此之前不能退出 TDLib，也不能宣称双来源安全。
+  观测已接线，并忽略 `from_cache=true` 的纯缓存淘汰。真实三条 S2 delete 在发送
+  分区 matched，但接收账号的 webview 在删除时尚未创建，因此三条均为 TDLib-only；事后
+  打开只能加载最终状态，不伪造历史 delete。宿主现会在恢复会话后预挂载当前 owner
+  的全部已支持账号，隐藏 pane 继续使用独立 partition/control grant/outbox 接收 update。
+  还需用单个 S3 shadow 专用探针验证该修复，并完成其余生命周期、历史扫描和观察周期。
+  在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。

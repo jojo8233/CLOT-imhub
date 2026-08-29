@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createSingleFlight,
   nativeAccountControllable,
+  nativeAccountIdsToMount,
   nativeWebviewAlreadyLoaded,
 } from './NativeClient.js'
 
@@ -13,6 +14,22 @@ describe('native account ownership gate', () => {
     expect(nativeAccountControllable(account, { id: 'manager-1', role: 'manager' })).toBe(false)
     expect(nativeAccountControllable(account, { id: 'user-1', role: 'auditor' })).toBe(false)
     expect(nativeAccountControllable(null, { id: 'user-1', role: 'agent' })).toBe(false)
+  })
+
+  it('宿主启动时预挂载 owner 的全部已支持账号，不依赖先点开 tab', () => {
+    const accounts = [
+      { id: 'tg-1', platform: 'telegram', owner_user_id: 'user-1' },
+      { id: 'tg-2', platform: 'telegram', owner_user_id: 'user-1' },
+      { id: 'signal-1', platform: 'signal', owner_user_id: 'user-1' },
+      { id: 'other-tg', platform: 'telegram', owner_user_id: 'user-2' },
+    ]
+
+    expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, true))
+      .toEqual(['tg-1', 'tg-2'])
+    expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'auditor' }, true))
+      .toEqual([])
+    expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, false))
+      .toEqual([])
   })
 })
 

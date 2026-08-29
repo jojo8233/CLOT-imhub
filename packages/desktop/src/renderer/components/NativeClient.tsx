@@ -26,7 +26,8 @@ import { EmptyHint, IconButton } from './ui.js'
  * 每个平台账号一个 <webview>，各自带独立的 partition——登录态就是靠 partition
  * 隔离的，这也是"多开"在这条路线下的实现方式。
  *
- * 关键取舍：webview 一旦创建就**不卸载**，只用 display 切换显示。
+ * 关键取舍：恢复宿主会话后，当前 owner 的已支持账号 webview 会全部创建，
+ * 之后**不卸载**，只用 display 切换显示。
  * Telegram Web 重新加载一次要重连、重拉会话列表、丢掉滚动位置，来回切账号
  * 时会明显卡顿闪烁。常驻的代价是内存，但切换体验是这条路线的核心价值。
  *
@@ -67,6 +68,23 @@ export function nativeAccountControllable(
   return account !== null && user !== null
     && account.owner_user_id === user.id
     && user.role !== 'auditor'
+}
+
+/**
+ * 消息 outbox 是账号级后台观测链路，不能把“用户点过这个 tab”当成
+ * 正确性前置条件。宿主恢复会话后预挂载当前 owner 的所有已支持账号，
+ * 隐藏 pane 继续用各自 partition 接收平台 update 并清空 outbox。
+ */
+export function nativeAccountIdsToMount(
+  accounts: ReadonlyArray<Pick<AccountRow, 'id' | 'platform' | 'owner_user_id'>>,
+  user: Pick<SessionUser, 'id' | 'role'> | null,
+  supportsWebview: boolean,
+): string[] {
+  if (!supportsWebview) return []
+  return accounts
+    .filter(account => nativeClientSupported(account.platform)
+      && nativeAccountControllable(account, user))
+    .map(account => account.id)
 }
 
 interface NativeWebviewLoadProbe {
@@ -131,21 +149,13 @@ export function NativeClient() {
     : null)
   const setActiveConversation = useStore(s => s.setActiveConversation)
 
-  // 已经建过 webview 的账号。建过就一直留着，只切显隐
-  const [mounted, setMounted] = useState<string[]>([])
-
   const active = accounts.find(a => a.id === activeAccountId) ?? null
   const currentUser = getCurrentUser()
   const activeOwnedByCurrentUser = nativeAccountControllable(active, currentUser)
   const supportsWebview = webviewSupported()
-
-  useEffect(() => {
-    if (!active
-      || !activeOwnedByCurrentUser
-      || !supportsWebview
-      || !nativeClientSupported(active.platform)) return
-    setMounted(prev => prev.includes(active.id) ? prev : [...prev, active.id])
-  }, [active, activeOwnedByCurrentUser, supportsWebview])
+  // 不只挂载 active 账号：否则宿主刷新后从未点开的账号会错过
+  // Telegram delete/edit update，之后打开只能看到最终状态，无法补出已丢的事件。
+  const mounted = nativeAccountIdsToMount(accounts, currentUser, supportsWebview)
 
   // 每个常驻 webview 都记住自己的当前会话。切回某账号时恢复它的服务端会话，
   // 不能继续显示上一个账号的客户资料，也不该要求平台再次发 context.changed。
@@ -186,8 +196,8 @@ export function NativeClient() {
     <div style={{ flex: 1, minWidth: 0, position: 'relative', background: theme.color.chat }}>
       {mounted.map(id => {
         const acc = accounts.find(a => a.id === id)
-        // mounted 是历史记忆，不是授权事实。owner/角色变化后必须立即卸载
-        // 已失权的隐藏 pane，避免它继续注入 token、保持 command target。
+        // mounted 每次都从当前账号和授权事实派生。owner/角色变化后会立即
+        // 卸载已失权的隐藏 pane，避免它继续保持 control grant 和 command target。
         if (!acc
           || !nativeClientSupported(acc.platform)
           || !nativeAccountControllable(acc, currentUser)) return null
