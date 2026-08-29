@@ -335,8 +335,16 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   `total=26 / comparableTotal=12 / matched=11 / telegramTtOnly=1 / sourceLocal=14`，唯一可比
   单边事实是 TDLib 尚为 `pending_auth` 时的 S1 历史发送；接收端
   `total=12 / comparableTotal=12 / matched=9 / tdlibOnly=3`，三项仍是 S2 预挂载前删除缺口。
-  两端均为 `mismatched=0 / unstable=0`。仍需用一条组合探针取得媒体+回复真实 shadow 证据，
-  再完成历史扫描和观察周期。
+  两端均为 `mismatched=0 / unstable=0`。此后 S5 组合探针继续取得媒体+回复真实 shadow 证据。
+  S5 已只发送一次：回复保留的 S4，附一张图片并使用专用 caption。两账号中央库各一条
+  image/caption/reply 最终行；接收端 base 两来源同 hash。发送端两来源均到达但首次 hash
+  不同，字段级只读诊断唯一命中 telegram-tt 的 `sentAt` 比 TDLib 早 3 秒：前者定格开始上传
+  的本地时间，后者是平台接受媒体后的服务端时间。shadow 现只对出向媒体排除该上传耗时，
+  入向媒体和文本仍严格比较时间，`editedAt` 仍进入 revision/指纹。回归与全量测试已覆盖；
+  跨过 120 秒后的旧算法报告中，发送端该 base 是唯一新增 mismatch，接收端该 base matched；
+  无同源冲突。既有 base 不改写，作为算法发现证据保留。
+  待编辑同一条 S5 caption 一次取得修正后的真实双来源 revision，不需要重发媒体；之后再
+  完成历史扫描和观察周期。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

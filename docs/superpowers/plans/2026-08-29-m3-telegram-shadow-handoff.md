@@ -4,6 +4,27 @@
 
 ## 最新 checkpoint
 
+- 用户按约定只发送一次 S5：在发送 S4 的同一安全会话中回复保留的 S4，附一张无敏感内容
+  图片，caption 为 `IMHUB-M3-SHADOW-20260829-S5`。两账号中央库各只有一条最终数字消息，
+  均为 `media_count=1 / kind=image / reply=true / edited=false / deleted=false`，不是重复发送。
+- 接收账号 S5 base 为 `sources=2 / hashes=1 / conflict=false`。发送账号两来源也均已到达，
+  但首次为 `sources=2 / hashes=2 / conflict=false`。字段级只读 hash 诊断逐项排除 reply、媒体、
+  caption、sender 和方向，唯一匹配 telegram-tt hash 的变量是 `sentAt=-3s`。
+- 根因是出向媒体的 SDK 时间语义不同：telegram-tt 在开始上传时定格本地消息时间，TDLib
+  返回平台接受上传后的服务端时间；接收端两边都拿服务端时间，因而已 matched。shadow 现
+  只把出向媒体 `sentAt` 固定为不可比 null；入向媒体与文本仍严格比较时间，`editedAt` 仍
+  进入 revision 和指纹。没有修改或倒填既有 S5 base 账本，该 base 保留为算法发现证据。
+- 跨过 120 秒后的正式旧算法报告为：发送端 `total=29 / comparableTotal=13 / matched=11 /
+  mismatched=1 / telegramTtOnly=1 / sourceLocal=16 / unstable=0`，唯一 mismatch 是 S5 base，
+  单边项仍是 S1 pending_auth 历史缺口；接收端 `total=13 / comparableTotal=13 / matched=10 /
+  tdlibOnly=3 / mismatched=0 / unstable=0`，S5 base 已计入 matched，三个单边项仍是 S2 历史
+  delete 缺口。
+- 回归先稳定复现 3 秒差异，修正后媒体/reply/shadow 定向 3 文件 27 tests、`pnpm typecheck`、
+  `git diff --check` 和可连接本机派生测试库的全量 37 文件 359 tests（另 1 个既有 todo）通过。
+  临时只读诊断脚本已删除，未读取/输出平台会话、远端媒体引用或账号外部身份。
+- 下一步不新增 S6：在新算法和服务已加载后，只把同一条 S5 caption 编辑一次为
+  `IMHUB-M3-SHADOW-20260829-S5-EDITED`。这会用新 revision 验证两账号 image+reply 双来源；
+  不删除 S5，也不触碰 S4、A1、A2 或既有媒体 fixture。
 - 已完成媒体、回复和 remap 的只读审计及最小实现。telegram-tt 已提供图片、视频、音频、
   语音、文件、贴纸及同会话 reply；TDLib 归一化现补齐对应内容，并覆盖圆形视频和动画。
   跨会话 reply 明确保持 null，不猜测当前会话键。
@@ -19,8 +40,9 @@
 - 新回归先稳定暴露媒体/reply 返回 null、temp/remap 污染单边计数和 SDK 自动文件名假差异，
   实现后定向 3 文件 26 tests、`pnpm typecheck` 及可连接本机派生测试库的全量 37 文件
   358 tests（另 1 个既有 todo）通过。开发账本没有既有媒体 shadow fact，未改写或倒填历史。
-- 下一条真实动作只需一个 shadow 专用组合探针：从 `existing` 在同一安全会话中回复保留的
-  S4，同时附一张无敏感内容图片并使用 caption `IMHUB-M3-SHADOW-20260829-S5`，只发送一次。
+- 当时定义的下一条真实动作是一个 shadow 专用组合探针：从 `existing` 在同一安全会话中
+  回复保留的 S4，同时附一张无敏感内容图片并使用 caption
+  `IMHUB-M3-SHADOW-20260829-S5`，只发送一次。
   它同时验证 image/caption/reply，不重做 M3-4 媒体、回复或故障矩阵；S4、A1、A2 和既有
   媒体 fixture 均不编辑、不删除。
 - 用户重新登录的是 im-hub 工作台会话，不是 Telegram；登录后两个 TDLib 账号仍为
@@ -43,7 +65,7 @@
 - TDLib 编辑观测与跨来源 revision 已完成自动接线。官方事件把编辑时间放在
   `updateMessageEdited`、把最终正文放在独立 `updateMessageContent`；适配器在后者到达后
   通过 `getMessage` 取得完整 sender/date/content/edit_date 快照，只对 `edit_date > 0`
-  的纯文本发出规范编辑消息。断线/relink 后旧 client 的迟到结果会被丢弃。
+  且内容可归一化的消息发出规范编辑消息。断线/relink 后旧 client 的迟到结果会被丢弃。
 - shadow 编辑事实键统一为 `edited-at:<ISO-time>`，语义指纹保留 `editVersion` 键但固定为
   null，以维持既有 base hash 并排除 TDLib 不具备的 MTProto `pts`。telegram-tt 的 `pts`
   未删除，仍负责中央库、翻译 revision 与 outbox 的快速连续编辑排序。同一秒多次编辑若
@@ -141,8 +163,8 @@
 ## 下一 checkpoint
 
 1. 不再发送、编辑或删除 S4；删除必须另行取得用户明确同意。
-2. S5 前只读确认两个账号均 connected、两个 owner webview/control grant 正常，且 caption
-   标记在中央库计数为 0；随后按上面的单条图片+caption+reply 组合探针操作一次。
-3. 等待静默窗口后确认两账号各一个最终 upsert、两来源同 hash、无 conflict，并逐账号确认
-   outbox `pending=0 / dead=0`。不编辑或删除 S5，除非用户另行明确同意。
+2. S5 已只发送一次，不再重发。确认服务加载出向媒体时间修正后，只编辑 S5 caption 一次为
+   `IMHUB-M3-SHADOW-20260829-S5-EDITED`，不新增消息、不删除 S5。
+3. 等待静默窗口后确认两账号仍各一个最终消息，新的 edited-at fact 两来源同 hash、无 conflict，
+   并逐账号确认 outbox `pending=0 / dead=0`。旧 base mismatch 保留为已解释的算法发现证据。
 4. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。

@@ -88,6 +88,31 @@ describe('Telegram shadow observations', () => {
     expect(realName.semanticHash).not.toBe(tdlib.semanticHash)
   })
 
+  it('ignores only outgoing media upload timing differences', () => {
+    const telegramTt = buildTelegramUpsertObservation('telegram-tt', message({
+      direction: 'out',
+      mediaRefs: [{ kind: 'image', remoteId: 'mtp-photo' }],
+      sentAt: new Date('2026-08-29T00:00:00.000Z'),
+    }))
+    const tdlib = buildTelegramUpsertObservation('tdlib', message({
+      direction: 'out',
+      mediaRefs: [{ kind: 'image', remoteId: 'tdlib-photo' }],
+      sentAt: new Date('2026-08-29T00:00:03.000Z'),
+    }))
+    const incoming = buildTelegramUpsertObservation('tdlib', message({
+      mediaRefs: [{ kind: 'image', remoteId: 'tdlib-photo' }],
+      sentAt: new Date('2026-08-29T00:00:03.000Z'),
+    }))
+    const outgoingText = buildTelegramUpsertObservation('tdlib', message({
+      direction: 'out',
+      sentAt: new Date('2026-08-29T00:00:03.000Z'),
+    }))
+
+    expect(telegramTt.semanticHash).toBe(tdlib.semanticHash)
+    expect(incoming.semanticHash).not.toBe(tdlib.semanticHash)
+    expect(outgoingText.semanticHash).not.toBe(tdlib.semanticHash)
+  })
+
   it('uses source-independent editedAt for edit facts and ignores transport edit versions', () => {
     const telegramTt = buildTelegramUpsertObservation('telegram-tt', message({
       editedAt: new Date('2026-08-29T00:01:00.000Z'), editVersion: 9,

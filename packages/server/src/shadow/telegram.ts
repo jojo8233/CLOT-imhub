@@ -39,10 +39,14 @@ export function buildTelegramUpsertObservation(
     bodyHash: hash(message.body),
     media,
     replyToPlatformMessageId: message.replyToPlatformMessageId ?? null,
-    sentAt: message.sentAt.toISOString(),
+    // telegram-tt 的出向媒体在开始上传时定格本地时间，TDLib 则返回平台接受
+    // 上传后的服务端时间；上传耗时不是消息内容差异。入向媒体和文本仍严格比较。
+    sentAt: message.direction === 'out' && message.mediaRefs.length > 0
+      ? null
+      : message.sentAt.toISOString(),
     editedAt: message.editedAt?.toISOString() ?? null,
     // telegram-tt 的 MTProto pts 用于其自身落库排序，TDLib 不暴露等价字段。
-    // 保留原 payload 键并固定为 null，既让两来源可比较，也不改变既有 base hash。
+    // 保留 payload 键并固定为 null，让两来源可比较且保持 base/edit 结构一致。
     editVersion: null,
   }
 
