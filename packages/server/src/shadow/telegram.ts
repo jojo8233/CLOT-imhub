@@ -90,10 +90,28 @@ function messageRevision(message: NormalizedMessage): string {
 function toSemanticMediaShape(media: MediaRef): SemanticMediaShape {
   return {
     kind: media.kind,
-    fileName: media.fileName ?? null,
+    fileName: comparableFileName(media),
     mimeType: media.mimeType ?? null,
     sizeBytes: media.sizeBytes ?? null,
   }
+}
+
+function comparableFileName(media: MediaRef): string | null {
+  const fileName = media.fileName ?? null
+  if (!fileName) return null
+
+  // telegram-tt 在 MTProto 没有 filename attribute 时用媒体 id 生成 UI 文件名；
+  // TDLib 只返回空 file_name。该 id 又是 SDK 专属远端引用，不能进入跨来源指纹。
+  const fallbackPrefix = media.kind === 'video'
+    ? 'video'
+    : media.kind === 'audio'
+      ? 'audio'
+      : media.kind === 'file'
+        ? 'file'
+        : null
+  return fallbackPrefix && fileName.startsWith(`${fallbackPrefix}${media.remoteId}.`)
+    ? null
+    : fileName
 }
 
 function buildIdentityObservation(

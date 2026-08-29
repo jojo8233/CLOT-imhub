@@ -64,6 +64,30 @@ describe('Telegram shadow observations', () => {
     expect(changedMedia.semanticHash).not.toBe(base.semanticHash)
   })
 
+  it('ignores telegram-tt source-local fallback file names but keeps real names comparable', () => {
+    const telegramTt = buildTelegramUpsertObservation('telegram-tt', message({
+      mediaRefs: [{
+        kind: 'video', remoteId: '987654', fileName: 'video987654.mp4',
+        mimeType: 'video/mp4', sizeBytes: 240,
+      }],
+    }))
+    const tdlib = buildTelegramUpsertObservation('tdlib', message({
+      mediaRefs: [{
+        kind: 'video', remoteId: 'tdlib-remote',
+        mimeType: 'video/mp4', sizeBytes: 240,
+      }],
+    }))
+    const realName = buildTelegramUpsertObservation('telegram-tt', message({
+      mediaRefs: [{
+        kind: 'video', remoteId: '987654', fileName: 'launch.mp4',
+        mimeType: 'video/mp4', sizeBytes: 240,
+      }],
+    }))
+
+    expect(telegramTt.semanticHash).toBe(tdlib.semanticHash)
+    expect(realName.semanticHash).not.toBe(tdlib.semanticHash)
+  })
+
   it('uses source-independent editedAt for edit facts and ignores transport edit versions', () => {
     const telegramTt = buildTelegramUpsertObservation('telegram-tt', message({
       editedAt: new Date('2026-08-29T00:01:00.000Z'), editVersion: 9,
@@ -78,7 +102,7 @@ describe('Telegram shadow observations', () => {
     expect(tdlib.semanticHash).toBe(telegramTt.semanticHash)
   })
 
-  it('builds source-independent delete and remap facts', () => {
+  it('builds a source-independent delete fact and a traceable source-local remap fact', () => {
     const deleted = buildTelegramDeleteObservation('account-1', 'tdlib', '-100123:42')
     const remapped = buildTelegramRemapObservation(
       'account-1', 'telegram-tt', '-100123:temp:telegram-tt:abc:1', '-100123:42',

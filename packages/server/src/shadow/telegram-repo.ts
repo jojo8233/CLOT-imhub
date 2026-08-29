@@ -10,12 +10,14 @@ export type TelegramShadowMatchStatus =
   | 'mismatched'
   | 'tdlib_only'
   | 'telegram_tt_only'
+  | 'source_local'
 
 interface TelegramShadowStatusCounts {
   matched: number
   mismatched: number
   tdlibOnly: number
   telegramTtOnly: number
+  sourceLocal: number
 }
 
 export interface TelegramShadowReportInput {
@@ -29,10 +31,13 @@ export interface TelegramShadowReport {
   observedAfter: Date
   settledBefore: Date
   total: number
+  /** Excludes temp upserts and remaps that only exist inside one client implementation. */
+  comparableTotal: number
   matched: number
   mismatched: number
   tdlibOnly: number
   telegramTtOnly: number
+  sourceLocal: number
   unstableReplayFacts: number
   byEventType: Record<TelegramShadowEventType, TelegramShadowStatusCounts>
   samples: Record<TelegramShadowMatchStatus | 'unstable_replay', string[]>
@@ -132,10 +137,12 @@ function buildReport(
     observedAfter: input.observedAfter,
     settledBefore: input.settledBefore,
     total: rows.length,
+    comparableTotal: 0,
     matched: 0,
     mismatched: 0,
     tdlibOnly: 0,
     telegramTtOnly: 0,
+    sourceLocal: 0,
     unstableReplayFacts: 0,
     byEventType: {
       upsert: emptyStatusCounts(),
@@ -147,6 +154,7 @@ function buildReport(
       mismatched: [],
       tdlib_only: [],
       telegram_tt_only: [],
+      source_local: [],
       unstable_replay: [],
     },
   }
@@ -159,6 +167,7 @@ function buildReport(
     }
 
     const status = classify(row, isUnstable)
+    if (status !== 'source_local') report.comparableTotal += 1
     incrementStatus(report, report.byEventType[row.event_type], status)
     addSample(report.samples[status], row.fact_key, sampleLimit)
   }
@@ -169,6 +178,7 @@ function classify(
   observation: AggregatedObservation,
   isUnstable: boolean,
 ): TelegramShadowMatchStatus {
+  if (isSourceLocalFact(observation)) return 'source_local'
   if (observation.tdlib_hash && observation.telegram_tt_hash) {
     return !isUnstable && observation.tdlib_hash === observation.telegram_tt_hash
       ? 'matched'
@@ -198,11 +208,20 @@ function incrementStatus(
     case 'telegram_tt_only':
       report.telegramTtOnly += 1
       eventCounts.telegramTtOnly += 1
+      return
+    case 'source_local':
+      report.sourceLocal += 1
+      eventCounts.sourceLocal += 1
   }
 }
 
 function emptyStatusCounts(): TelegramShadowStatusCounts {
-  return { matched: 0, mismatched: 0, tdlibOnly: 0, telegramTtOnly: 0 }
+  return { matched: 0, mismatched: 0, tdlibOnly: 0, telegramTtOnly: 0, sourceLocal: 0 }
+}
+
+function isSourceLocalFact(observation: AggregatedObservation): boolean {
+  if (observation.event_type === 'remap') return true
+  return /^(?:upsert|delete):-?\d+:temp:(?:tdlib|telegram-tt):/.test(observation.fact_key)
 }
 
 function addSample(samples: string[], factKey: string, limit: number): void {

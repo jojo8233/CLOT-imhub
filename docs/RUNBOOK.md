@@ -313,10 +313,11 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   pnpm --filter @im-hub/server shadow-report <account-uuid> 24 120
   ```
 
-  最后两个参数分别是观察小时数和静默秒数。报告给出 `matched` / `mismatched` /
-  `tdlibOnly` / `telegramTtOnly`、事件类型分组和有上限的 fact key 样本，不输出正文或账号
-  平台身份。双真实账号上的接收/发送最终 base upsert 已 matched，且 outbox 无
-  pending/dead；发送侧临时 upsert/remap 依设计单独分类。TDLib `updateDeleteMessages`
+  最后两个参数分别是观察小时数和静默秒数。`total` 包含全部账本事实，
+  `comparableTotal` 排除客户端专属 temp upsert/remap；报告给出 `matched` / `mismatched` /
+  `tdlibOnly` / `telegramTtOnly` / `sourceLocal`、事件类型分组和有上限的 fact key 样本，
+  不输出正文或账号平台身份。最终数字消息 id 不能归为 `sourceLocal`。双真实账号上的
+  接收/发送最终 base upsert 已 matched，且 outbox 无 pending/dead。TDLib `updateDeleteMessages`
   观测已接线，并忽略 `from_cache=true` 的纯缓存淘汰。真实三条 S2 delete 在发送
   分区 matched，但接收账号的 webview 在删除时尚未创建，因此三条均为 TDLib-only；事后
   打开只能加载最终状态，不伪造历史 delete。宿主现会在恢复会话后预挂载当前 owner
@@ -328,7 +329,14 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   单个 S4 真实探针已按“发送一次、编辑同一条一次”完成：两账号各一条中央消息，base/edit
   均 matched，正式 120 秒报告无 mismatch 或同源冲突；接收侧三个 TDLib-only delete 仍是
   S2 预挂载修复前的已解释历史缺口。用户切换两账号核对输入坞后均无 pending/dead-letter
-  非零提示，两个 outbox 为 `0/0`。仍需完成其余生命周期、历史扫描和观察周期。
+  非零提示，两个 outbox 为 `0/0`。TDLib 归一化现也覆盖基础图片/视频/音频/语音/文件/
+  贴纸及同会话回复；照片/贴纸不引入另一 SDK 缺失的大小，telegram-tt 依据远端 id 自动生成
+  的展示文件名不进入指纹，真实文件名仍比较。新口径的 24 小时报告为：发送端
+  `total=26 / comparableTotal=12 / matched=11 / telegramTtOnly=1 / sourceLocal=14`，唯一可比
+  单边事实是 TDLib 尚为 `pending_auth` 时的 S1 历史发送；接收端
+  `total=12 / comparableTotal=12 / matched=9 / tdlibOnly=3`，三项仍是 S2 预挂载前删除缺口。
+  两端均为 `mismatched=0 / unstable=0`。仍需用一条组合探针取得媒体+回复真实 shadow 证据，
+  再完成历史扫描和观察周期。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

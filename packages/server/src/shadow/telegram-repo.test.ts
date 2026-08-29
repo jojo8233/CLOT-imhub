@@ -47,7 +47,12 @@ describe('KyselyTelegramShadowRepo', () => {
     await repo.record(observation('tdlib', 'mismatched'), observedAt)
     await repo.record(observation('telegram-tt', 'mismatched', 'b'.repeat(64)), observedAt)
     await repo.record(observation('tdlib', 'tdlib-only', undefined, 'delete'), observedAt)
-    await repo.record(observation('telegram-tt', 'telegram-tt-only', undefined, 'remap'), observedAt)
+    await repo.record(observation(
+      'telegram-tt',
+      'remap:-1001:temp:telegram-tt:instance:1:-1001:42',
+      undefined,
+      'remap',
+    ), observedAt)
 
     const report = await repo.summarize({
       accountId,
@@ -56,13 +61,45 @@ describe('KyselyTelegramShadowRepo', () => {
     })
 
     expect(report).toMatchObject({
-      total: 4, matched: 1, mismatched: 1, tdlibOnly: 1, telegramTtOnly: 1,
+      total: 4, comparableTotal: 3,
+      matched: 1, mismatched: 1, tdlibOnly: 1, telegramTtOnly: 0, sourceLocal: 1,
       unstableReplayFacts: 0,
       byEventType: {
-        upsert: { matched: 1, mismatched: 1, tdlibOnly: 0, telegramTtOnly: 0 },
-        delete: { matched: 0, mismatched: 0, tdlibOnly: 1, telegramTtOnly: 0 },
-        remap: { matched: 0, mismatched: 0, tdlibOnly: 0, telegramTtOnly: 1 },
+        upsert: {
+          matched: 1, mismatched: 1, tdlibOnly: 0, telegramTtOnly: 0, sourceLocal: 0,
+        },
+        delete: {
+          matched: 0, mismatched: 0, tdlibOnly: 1, telegramTtOnly: 0, sourceLocal: 0,
+        },
+        remap: {
+          matched: 0, mismatched: 0, tdlibOnly: 0, telegramTtOnly: 0, sourceLocal: 1,
+        },
       },
+      samples: {
+        source_local: ['remap:-1001:temp:telegram-tt:instance:1:-1001:42'],
+      },
+    })
+  })
+
+  it('keeps temporary upserts out of the cross-source denominator', async () => {
+    const observedAt = new Date('2026-08-29T00:01:00.000Z')
+    await repo.record(observation(
+      'tdlib',
+      'upsert:-1001:temp:tdlib:1048577:base',
+    ), observedAt)
+
+    const report = await repo.summarize({
+      accountId,
+      observedAfter: new Date('2026-08-29T00:00:00.000Z'),
+      settledBefore: new Date('2026-08-29T00:02:00.000Z'),
+    })
+
+    expect(report).toMatchObject({
+      total: 1,
+      comparableTotal: 0,
+      sourceLocal: 1,
+      tdlibOnly: 0,
+      samples: { source_local: ['upsert:-1001:temp:tdlib:1048577:base'] },
     })
   })
 

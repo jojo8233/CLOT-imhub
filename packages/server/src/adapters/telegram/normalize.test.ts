@@ -39,6 +39,100 @@ describe('normalizeTelegramMessage', () => {
     })
   })
 
+  it('规范化媒体 caption、媒体语义形状和同会话回复键', () => {
+    const file = (id: number, size: number, remoteId: string) => ({
+      _: 'file',
+      id,
+      size,
+      expected_size: size,
+      remote: { _: 'remoteFile', id: remoteId, unique_id: `unique-${id}` },
+    })
+    const normalizeContent = (content: unknown) => normalizeTelegramStoredMessage({
+      ...fixture.message,
+      reply_to: {
+        _: 'messageReplyToMessage',
+        chat_id: fixture.message.chat_id,
+        message_id: 2 * 2 ** 20,
+      },
+      content,
+    }, 'acc-1')
+
+    const photo = normalizeContent({
+      _: 'messagePhoto',
+      caption: { _: 'formattedText', text: 'photo caption', entities: [] },
+      photo: {
+        _: 'photo',
+        sizes: [{ _: 'photoSize', photo: file(1, 120, 'photo-remote') }],
+      },
+    })
+    expect(photo).toMatchObject({
+      body: 'photo caption',
+      replyToPlatformMessageId: '-1001234567890:2',
+    })
+    expect(photo?.mediaRefs).toEqual([{ kind: 'image', remoteId: 'photo-remote' }])
+
+    expect(normalizeContent({
+      _: 'messageVideo',
+      caption: { _: 'formattedText', text: 'video caption', entities: [] },
+      video: {
+        _: 'video', file_name: 'clip.mp4', mime_type: 'video/mp4', video: file(2, 240, 'video-remote'),
+      },
+    })?.mediaRefs).toEqual([{
+      kind: 'video', remoteId: 'video-remote', fileName: 'clip.mp4',
+      mimeType: 'video/mp4', sizeBytes: 240,
+    }])
+
+    expect(normalizeContent({
+      _: 'messageAudio',
+      caption: { _: 'formattedText', text: '', entities: [] },
+      audio: {
+        _: 'audio', file_name: 'track.mp3', mime_type: 'audio/mpeg', audio: file(3, 360, 'audio-remote'),
+      },
+    })?.mediaRefs).toEqual([{
+      kind: 'audio', remoteId: 'audio-remote', fileName: 'track.mp3',
+      mimeType: 'audio/mpeg', sizeBytes: 360,
+    }])
+
+    expect(normalizeContent({
+      _: 'messageVoiceNote',
+      caption: { _: 'formattedText', text: '', entities: [] },
+      voice_note: { _: 'voiceNote', mime_type: 'audio/ogg', voice: file(4, 480, 'voice-remote') },
+    })?.mediaRefs).toEqual([{
+      kind: 'audio', remoteId: 'voice-remote', mimeType: 'audio/ogg', sizeBytes: 480,
+    }])
+
+    expect(normalizeContent({
+      _: 'messageDocument',
+      caption: { _: 'formattedText', text: '', entities: [] },
+      document: {
+        _: 'document', file_name: 'invoice.pdf', mime_type: 'application/pdf',
+        document: file(5, 600, 'document-remote'),
+      },
+    })?.mediaRefs).toEqual([{
+      kind: 'file', remoteId: 'document-remote', fileName: 'invoice.pdf',
+      mimeType: 'application/pdf', sizeBytes: 600,
+    }])
+
+    expect(normalizeContent({
+      _: 'messageSticker',
+      sticker: { _: 'sticker', id: 'sticker-id', sticker: file(6, 720, 'sticker-remote') },
+    })?.mediaRefs).toEqual([{ kind: 'sticker', remoteId: 'sticker-remote' }])
+  })
+
+  it('不把跨会话回复猜成当前会话的规范键', () => {
+    const crossChatReply = {
+      ...fixture.message,
+      reply_to: {
+        _: 'messageReplyToMessage',
+        chat_id: 12345,
+        message_id: 2 * 2 ** 20,
+      },
+    }
+
+    expect(normalizeTelegramStoredMessage(crossChatReply, 'acc-1')?.replyToPlatformMessageId)
+      .toBeNull()
+  })
+
   it('is_outgoing 为 true 时方向是 out', () => {
     const outgoing = { ...fixture, message: { ...fixture.message, is_outgoing: true } }
     expect(normalizeTelegramMessage(outgoing, 'acc-1')!.direction).toBe('out')

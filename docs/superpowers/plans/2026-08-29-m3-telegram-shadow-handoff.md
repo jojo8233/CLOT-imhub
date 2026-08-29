@@ -4,6 +4,25 @@
 
 ## 最新 checkpoint
 
+- 已完成媒体、回复和 remap 的只读审计及最小实现。telegram-tt 已提供图片、视频、音频、
+  语音、文件、贴纸及同会话 reply；TDLib 归一化现补齐对应内容，并覆盖圆形视频和动画。
+  跨会话 reply 明确保持 null，不猜测当前会话键。
+- 图片和贴纸只保留两个 SDK 都稳定提供的 kind；视频/音频/文件继续比较 MIME、大小和真实
+  文件名。telegram-tt 在平台没有 filename attribute 时依据 SDK 远端 id 生成的展示名被
+  排除，远端引用本身仍不进 shadow 指纹，避免假 mismatch 而不放宽真实文件名差异。
+- temp upsert 和 remap 已在报告中明确归为 `source_local`，`comparableTotal` 只统计跨来源
+  可比事实。最新 24 小时只读报告：发送端 `total=26 / comparableTotal=12 / matched=11 /
+  telegramTtOnly=1 / sourceLocal=14`；唯一可比单边项是 S1 发送时 TDLib 尚为
+  `pending_auth` 的既有前置条件缺口。接收端 `total=12 / comparableTotal=12 / matched=9 /
+  tdlibOnly=3 / sourceLocal=0`，三个单边 delete 仍是 S2 预挂载修复前历史缺口。两端均为
+  `mismatched=0 / unstable=0`，没有把最终数字消息键误归为本地生命周期。
+- 新回归先稳定暴露媒体/reply 返回 null、temp/remap 污染单边计数和 SDK 自动文件名假差异，
+  实现后定向 3 文件 26 tests、`pnpm typecheck` 及可连接本机派生测试库的全量 37 文件
+  358 tests（另 1 个既有 todo）通过。开发账本没有既有媒体 shadow fact，未改写或倒填历史。
+- 下一条真实动作只需一个 shadow 专用组合探针：从 `existing` 在同一安全会话中回复保留的
+  S4，同时附一张无敏感内容图片并使用 caption `IMHUB-M3-SHADOW-20260829-S5`，只发送一次。
+  它同时验证 image/caption/reply，不重做 M3-4 媒体、回复或故障矩阵；S4、A1、A2 和既有
+  媒体 fixture 均不编辑、不删除。
 - 用户重新登录的是 im-hub 工作台会话，不是 Telegram；登录后两个 TDLib 账号仍为
   `connected`，两个 owner webview 均重新取得并验证 control grant。S4 发送前中央库计数为 0。
 - 用户从 `existing` 向 `new` 只发送一次 `IMHUB-M3-SHADOW-20260829-S4`。发送端在
@@ -12,7 +31,7 @@
 - base 确认后，用户只把同一条 S4 编辑一次为带 `-EDITED` 后缀的正文。即时只读结果显示
   发送/接收账号各一行、均有 `edited_at` 和非 null `edit_version`，旧正文行数为 0；两个编辑
   fact 使用同一个服务端 `editedAt` revision，各自均为 `sources=2 / hashes=1 / conflict=false`。
-- 跨过 120 秒后的 24 小时正式报告中，发送账号为 `11 matched / 0 mismatched /
+- 跨过 120 秒后的旧口径 24 小时正式报告中，发送账号为 `11 matched / 0 mismatched /
   0 TDLib-only / 0 unstable`，其中 7 个 matched upsert 包含 S4 base/edit；15 个
   telegram-tt-only 仍是已解释的本地 temp upsert/remap 生命周期。接收账号为
   `9 matched / 0 mismatched / 0 telegram-tt-only / 0 unstable`，8 个 matched upsert
@@ -122,6 +141,8 @@
 ## 下一 checkpoint
 
 1. 不再发送、编辑或删除 S4；删除必须另行取得用户明确同意。
-2. 依次检查媒体/回复的已有 normalize 覆盖和 remap 的来源本地语义，
-   只补 shadow 可比较性缺口，不重复 M3-4 已完成矩阵。
-3. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
+2. S5 前只读确认两个账号均 connected、两个 owner webview/control grant 正常，且 caption
+   标记在中央库计数为 0；随后按上面的单条图片+caption+reply 组合探针操作一次。
+3. 等待静默窗口后确认两账号各一个最终 upsert、两来源同 hash、无 conflict，并逐账号确认
+   outbox `pending=0 / dead=0`。不编辑或删除 S5，除非用户另行明确同意。
+4. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
