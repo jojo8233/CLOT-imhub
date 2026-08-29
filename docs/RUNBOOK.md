@@ -166,7 +166,9 @@ signal-cli --version
 WhatsApp 首检点不需要服务端凭据：owner 创建 WhatsApp 账号后，会话区域直接加载官方
 `web.whatsapp.com`，二维码在官方页面内扫描。每个账号使用独立 Electron partition。当前只
 验证页面内登录、多开和文字收发；没有 im-hub 翻译、消息回传或中央归档。若页面没有出现，
-先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。
+先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
+启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确
+WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽其他 guest 权限。
 
 ---
 

@@ -4,6 +4,7 @@ import { BrowserWindow, app, ipcMain, safeStorage, shell } from 'electron'
 import {
   nativeAccountIdFromPartition,
   nativeClientBridgeAllowed,
+  nativeClientPermissionAllowed,
   nativeClientUrlAllowed,
   nativePartitionAllowed,
 } from './native-host-policy.js'
@@ -147,11 +148,17 @@ app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return
 
   // Electron 默认可能批准部分权限请求。guest 始终按不可信页面处理，M2
-  // 默认拒绝相机/麦克风/定位/通知/剪贴板等权限；未来平台确有需要时，
-  // 必须按 origin + 明确用户动作单独开口。
-  contents.session.setPermissionCheckHandler(() => false)
-  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false)
+  // 默认拒绝相机/麦克风/定位/通知/剪贴板等权限。WhatsApp 登录同步依赖
+  // durable storage，因此只给精确主框架开 persistent-storage，其他权限继续拒绝。
+  contents.session.setPermissionCheckHandler((requestingContents, permission, requestingOrigin, details) => {
+    return requestingContents?.id === contents.id
+      && nativeClientPermissionAllowed(requestingOrigin, permission, details.isMainFrame)
+  })
+  contents.session.setPermissionRequestHandler((requestingContents, permission, callback, details) => {
+    callback(
+      requestingContents.id === contents.id
+      && nativeClientPermissionAllowed(details.requestingUrl, permission, details.isMainFrame),
+    )
   })
 
   const blockUntrustedNavigation = (event: Electron.Event, url: string): void => {

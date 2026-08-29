@@ -33,7 +33,9 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
 - 只加载精确来源 `https://web.whatsapp.com`，每个 im-hub 账号使用
   `persist:native-<accountId>`；只有账号 owner 能挂载和操控该页面。
 - 官方页面不注入 `native-bridge` preload，不注册 control grant，也不能调用 im-hub API。
-  页面仍禁用 Node integration，保持 context isolation、web security 和默认拒绝权限。
+  页面仍禁用 Node integration，保持 context isolation、web security 和默认拒绝权限。唯一例外是
+  精确 `https://web.whatsapp.com` 主框架的 `persistent-storage`：WhatsApp 登录后同步依赖该
+  durable-storage 请求；相机、麦克风、通知、剪贴板、第三方 iframe 和其他来源仍拒绝。
 - 宿主只把官方页面加载成功视为“壳可用”，不能据此声称 WhatsApp 已登录或服务端已连接。
   登录状态当前由页面本身显示，二维码也只在官方页面中出现。
 - 账号删除时 Electron 清理对应 partition，并提醒用户在手机“已关联设备”中移除会话。
