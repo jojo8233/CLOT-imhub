@@ -4,6 +4,22 @@
 
 ## 最新 checkpoint
 
+- 用户重新登录的是 im-hub 工作台会话，不是 Telegram；登录后两个 TDLib 账号仍为
+  `connected`，两个 owner webview 均重新取得并验证 control grant。S4 发送前中央库计数为 0。
+- 用户从 `existing` 向 `new` 只发送一次 `IMHUB-M3-SHADOW-20260829-S4`。发送端在
+  temp/final remap 的极短窗口曾同时可见两行，随后自动合并为一条最终行；接收端始终一行，
+  因而不是重复平台发送。两账号的最终 base fact 都是两来源、单一 hash、无冲突。
+- base 确认后，用户只把同一条 S4 编辑一次为带 `-EDITED` 后缀的正文。即时只读结果显示
+  发送/接收账号各一行、均有 `edited_at` 和非 null `edit_version`，旧正文行数为 0；两个编辑
+  fact 使用同一个服务端 `editedAt` revision，各自均为 `sources=2 / hashes=1 / conflict=false`。
+- 跨过 120 秒后的 24 小时正式报告中，发送账号为 `11 matched / 0 mismatched /
+  0 TDLib-only / 0 unstable`，其中 7 个 matched upsert 包含 S4 base/edit；15 个
+  telegram-tt-only 仍是已解释的本地 temp upsert/remap 生命周期。接收账号为
+  `9 matched / 0 mismatched / 0 telegram-tt-only / 0 unstable`，8 个 matched upsert
+  包含 S4 base/edit；3 个 TDLib-only delete 是预挂载修复前的 S2 历史缺口，不属于 S4。
+- S4 的 telegram-tt 观测在最初 19 秒内有稳定重复但 hash 不变，之后十余分钟没有持续重放；
+  服务端均已接受。当前没有直接读取两个 IndexedDB 的 `pending/dead` 数值，不能把该推断写成
+  `0/0` 实证。S4 现保留为已编辑、未删除；删除必须另获用户明确同意。
 - TDLib 编辑观测与跨来源 revision 已完成自动接线。官方事件把编辑时间放在
   `updateMessageEdited`、把最终正文放在独立 `updateMessageContent`；适配器在后者到达后
   通过 `getMessage` 取得完整 sender/date/content/edit_date 快照，只对 `edit_date > 0`
@@ -104,9 +120,8 @@
 
 ## 下一 checkpoint
 
-1. 使用一条新 S4 shadow 专用 fixture 做且只做一次编辑：先从 `existing` 向 `new`
-   发送一次新标记，确认两端 base 后再把同一条正文编辑一次；不动 S1、剩余第一条 S2、A1、A2。
-2. 等待 120 秒静默窗口后分别确认发送/接收账号的 base 与 edit 都 matched、无 mismatch/
-   单边/同源冲突，并确认两个 outbox 为 `0/0`；S4 是否删除必须另行取得用户明确同意。
-3. 编辑收敛后再依次检查媒体/回复的已有 normalize 覆盖和 remap 的来源本地语义，
+1. 不再发送或编辑 S4；分别查看两个账号输入坞是否存在“消息回传队列待处理/永久失败”提示，
+   补齐两个 outbox 的直接 `0/0` 证据。S4 是否删除必须另行取得用户明确同意。
+2. 依次检查媒体/回复的已有 normalize 覆盖和 remap 的来源本地语义，
    只补 shadow 可比较性缺口，不重复 M3-4 已完成矩阵。
+3. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
