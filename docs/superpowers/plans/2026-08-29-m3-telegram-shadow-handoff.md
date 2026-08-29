@@ -18,8 +18,9 @@
   `9 matched / 0 mismatched / 0 telegram-tt-only / 0 unstable`，8 个 matched upsert
   包含 S4 base/edit；3 个 TDLib-only delete 是预挂载修复前的 S2 历史缺口，不属于 S4。
 - S4 的 telegram-tt 观测在最初 19 秒内有稳定重复但 hash 不变，之后十余分钟没有持续重放；
-  服务端均已接受。当前没有直接读取两个 IndexedDB 的 `pending/dead` 数值，不能把该推断写成
-  `0/0` 实证。S4 现保留为已编辑、未删除；删除必须另获用户明确同意。
+  服务端均已接受。用户随后逐一切换两个账号检查输入坞，均未出现“消息回传队列待处理”或
+  “永久失败事件”提示；结合两侧已验证的 bridge/control grant，对应两个 outbox `0/0`。
+  S4 现保留为已编辑、未删除；删除必须另获用户明确同意。
 - TDLib 编辑观测与跨来源 revision 已完成自动接线。官方事件把编辑时间放在
   `updateMessageEdited`、把最终正文放在独立 `updateMessageContent`；适配器在后者到达后
   通过 `getMessage` 取得完整 sender/date/content/edit_date 快照，只对 `edit_date > 0`
@@ -120,8 +121,7 @@
 
 ## 下一 checkpoint
 
-1. 不再发送或编辑 S4；分别查看两个账号输入坞是否存在“消息回传队列待处理/永久失败”提示，
-   补齐两个 outbox 的直接 `0/0` 证据。S4 是否删除必须另行取得用户明确同意。
+1. 不再发送、编辑或删除 S4；删除必须另行取得用户明确同意。
 2. 依次检查媒体/回复的已有 normalize 覆盖和 remap 的来源本地语义，
    只补 shadow 可比较性缺口，不重复 M3-4 已完成矩阵。
 3. 再进入受限历史扫描、主动修复和灰度/回滚门槛；在证据完成前不停用 TDLib。
