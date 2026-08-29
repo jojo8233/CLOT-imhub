@@ -2,7 +2,8 @@
 
 日期：2026-08-29
 状态：执行中；账本、报告、双真实账号 base/delete/edit、媒体/回复组合探针、outbox
-终态、受限历史 coverage dry-run 及 TDLib 当前快照主动读取已验；观察周期和切换门槛待验
+终态、受限历史 coverage dry-run、TDLib 当前快照主动读取、逐账号灰度开关和回滚通道已验；
+7 天 active 观察证据与后续 canary 待验
 
 ## 1. 目标与非目标
 
@@ -182,7 +183,34 @@ M3-5 按下列顺序续验：
 4. 受限历史 coverage dry-run 与 TDLib 当前快照主动读取已按账号/可选会话/时间/数量和
    keyset 进度边界完成；不可恢复历史不倒填，缺失的 telegram-tt 来源不由 TDLib 冒充。
 5. 复用 M3-4 已完成的多账号和故障证据，只执行 shadow 特有的差异/恢复矩阵。
-6. 定义灰度开关、观察周期、一致率门槛和回滚步骤。在门槛证据完成前不停用 TDLib。
+6. 灰度开关是 `TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS`：默认空，值为逗号分隔的内部账号 UUID。
+   只允许逐账号加入，不提供 `all`；非法 UUID 令配置校验失败。allowlist 账号仍保持 TDLib
+   connected，但 TDLib 的 upsert/edit/delete/remap 只写真实 shadow observation，不再改变中央
+   消息投影；telegram-tt 成为该账号的中央入库来源。非 Telegram 事件按 manager 携带的平台
+   来源绕过此 gate。
+
+   进入首次 canary 前，发布后的 active 模式必须连续观察 7 天，覆盖至少 2 个账号和累计至少
+   100 个可比事实，并自然覆盖 base/edit/delete/media/reply。每个报告使用 120 秒静默窗口；
+   窗口内 `matched/comparable` 必须为 100%，且 `mismatched`、`tdlibOnly`、
+   `telegramTtOnly`、`unstableReplayFacts`、coverage `missing`、`coverageUnavailable`、主动读取
+   candidate/failed 均为 0。telegram-tt outbox 必须 `dead=0` 且没有年龄超过 5 分钟的 pending；
+   账号保持 connected 且 control grant 有效。`preObservation`、`sourceLocal` 和观察窗外的已解释
+   历史事实不进分母，也不能用来降低门槛。
+
+   放量固定为：单账号 24 小时；包含该账号在内最多 10% 账号 72 小时；50% 账号 72 小时；
+   100% 账号 7 天。每级单独从零计时并重新满足相同门槛。任一已静默单边/不一致、coverage
+   缺口、dead-letter、超过 5 分钟的 pending、control grant 丢失或账号非 connected，立即回滚
+   受影响 cohort，不等阶段结束。
+
+   回滚先从 allowlist 移除账号并重启，恢复 TDLib 后续中央入库。随后从灰度窗口的正式报告
+   提取最终 `tdlib_only` upsert id，以 owner-only `mode=rollback_tdlib`、固定确认串
+   `ROLLBACK_TDLIB_INGEST` 分批精确读取，每批 1～10 条。接口仍只复用现有 TDLib client 的
+   `getMessage`，仅真实返回且 canonical id 一致的快照进入统一 ingestor；不遍历历史、不接受
+   temp id。任何 `unavailable/unsupported/failed` 都停止自动恢复；delete、被后续 edit 覆盖的
+   历史事件不可据当前快照倒填，必须转人工事件调查。回滚后从新的 active 观察窗重新计时，
+   旧 tdlib-only 事实保留为事故证据，不改写账本。
+
+   当前 allowlist 保持空，尚未开始 canary；门槛定义完成不等于已取得 7 天生产观察证据。
 
 PR #19 和 Issue #12 保持原状。M3-5 工作使用独立分支并回写 Issue #13，不将
 shadow 实现追加到 PR #19。

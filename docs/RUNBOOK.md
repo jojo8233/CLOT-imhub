@@ -267,11 +267,10 @@ Telegram：
    复用造成的 temp remap 碰撞，第二次真实回复已完成冷启动平台与数据库闭环。两个真实账号的
    partition 隔离也已通过现有真实消息的确定性 base upsert 重放覆盖：服务端停机时两边同时各为
    `pending=1/dead=0`，恢复后各自收敛为 `0/0`，中央库无新增副本。语音按用户决定跳过；上线前仍要
-   完成 fixture/shadow 对账。M3-5 已增加 `tdlib` / `telegram-tt` 来源观测账本、
-   语义指纹和带静默窗口的对账报告；双真实账号的接收/发送最终 base upsert
-   已 matched，TDLib delete 观测代码已完成并待真实删除验收。编辑/媒体/回复观测、
-   历史扫描、主动修复与切换门槛仍未完成。
-   这些完成前仍不能作为生产闭环。
+   取得正式 7 天观察与 canary 证据。M3-5 已增加 `tdlib` / `telegram-tt` 来源观测账本、
+   语义指纹和带静默窗口的对账报告；双真实账号的 base/delete/edit/media/reply、受限 coverage、
+   当前快照主动读取、逐账号 shadow-only 开关和精确回滚通道均已实现并完成当前开发态证据。
+   生产 7 天 active 观察与分级 canary 尚未执行；这些完成前仍不能作为生产闭环。
 
 ---
 
@@ -390,7 +389,57 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   单条 5 秒、同账号禁止并发。响应必须核对 before/after 和
   `requested/found/recorded/unavailable/unsupported/failed`；任何 failed 都不能进入切换证据。
   S1 的首次真实主动读取已从唯一 `telegramTtOnly` 收敛为 matched，中央 24 条消息及其
-  edit/delete/media/reply 聚合未变化；S5 旧算法 mismatch 仍保留。观察周期和切换门槛仍未完成。
+  edit/delete/media/reply 聚合未变化；S5 旧算法 mismatch 仍保留。观察周期、切换和回滚门槛
+  已在下节固定；正式 7 天观察与 canary 证据仍未完成。
+
+### Telegram TDLib 逐账号 shadow-only 灰度与回滚
+
+默认不切换任何账号：
+
+```text
+TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS=
+```
+
+只有满足下述门槛后，才把一个内部 Telegram 账号 UUID 加入逗号分隔 allowlist 并重启服务。
+不要使用平台外部 id，不要一次加入全部账号。启动日志只报告灰度账号数量，不输出 UUID。灰度
+账号的 TDLib 仍保持 connected，并继续记录真实 upsert/edit/delete/remap shadow 事实；但中央
+消息投影只由 telegram-tt 更新。清空或移除 UUID 并重启即恢复该账号 TDLib 后续中央入库。
+
+进入 canary 前必须从当前版本发布时刻起连续观察 7 天，至少 2 个账号、累计至少 100 个可比
+事实，并自然覆盖 base/edit/delete/media/reply。每次报告等待 120 秒静默窗口，要求：
+
+- `matched/comparable=100%`；`mismatched/tdlibOnly/telegramTtOnly/unstable=0`；
+- coverage `missing=0 / coverageUnavailable=0`，TDLib refresh candidate 与 failed 均为 0；
+- telegram-tt outbox `dead=0`，没有超过 5 分钟的 pending；
+- 账号 connected，webview control grant 有效。
+
+`preObservation`、`sourceLocal` 和观察窗外已解释的历史事实不进分母。放量依次为：单账号
+24 小时、最多 10% 账号 72 小时、50% 账号 72 小时、100% 账号 7 天；每级重新计时。任一已
+静默单边/不一致、coverage 缺口、dead-letter、超时 pending、control grant 丢失或非 connected
+立即回滚 cohort。
+
+回滚步骤：
+
+1. 从 `TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS` 移除受影响 UUID并重启；先恢复 TDLib 后续中央入库。
+2. 固定灰度起止时间，运行正式 shadow report 和全页 coverage；不要发送新探针补历史。
+3. 只对报告中最终 canonical 的 `tdlib_only` upsert id 分批调用：
+
+   ```text
+   POST /api/accounts/<account-uuid>/telegram-shadow-refresh
+   {
+     "mode": "rollback_tdlib",
+     "confirm": "ROLLBACK_TDLIB_INGEST",
+     "platformMessageIds": ["<canonical-chat-id:message-id>"],
+     "sentAfter": "<canary-start-ISO>",
+     "sentBefore": "<rollback-ISO>",
+     "limit": 10
+   }
+   ```
+
+   请求仍要求 owner、connected Telegram 账号；每批 1～10 个去重后的最终 id，只精确
+   `getMessage`，不遍历历史。
+4. `unavailable/unsupported/failed` 任一非零立即停止。delete 或被覆盖的历史 edit/base 不可由
+   当前快照证明，不得倒填；转人工事件调查。恢复后另开新的 active 观察窗，旧事实保留。
   在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。

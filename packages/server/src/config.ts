@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { parseTelegramTdlibShadowAccountIds } from './shadow/rollout.js'
 
 const schema = z.object({
   DATABASE_URL: z.string().url(),
@@ -23,6 +24,18 @@ const schema = z.object({
   SIGNAL_DATA_DIR: z.string().default('./data/signal'),
   TELEGRAM_API_ID: z.coerce.number().default(0),
   TELEGRAM_API_HASH: z.string().default(''),
+  TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS: z.string().default('')
+    .transform((value, ctx) => {
+      try {
+        return parseTelegramTdlibShadowAccountIds(value)
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS 必须是逗号分隔的账号 UUID',
+        })
+        return z.NEVER
+      }
+    }),
   PORT: z.coerce.number().default(4000),
 })
 

@@ -17,9 +17,15 @@ import { OpenAiProvider } from './translation/providers/openai.js'
 import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
-import { buildTelegramDeleteObservation, buildTelegramRemapObservation } from './shadow/telegram.js'
+import {
+  buildTelegramDeleteObservation,
+  buildTelegramRemapObservation,
+  buildTelegramUpsertObservation,
+} from './shadow/telegram.js'
 import { KyselyTelegramShadowCoverageRepo } from './shadow/coverage.js'
 import { TelegramShadowRefresher } from './shadow/refresh.js'
+import { KyselyTelegramShadowRepo } from './shadow/telegram-repo.js'
+import { TelegramTdlibIngestGate } from './shadow/rollout.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
@@ -51,9 +57,20 @@ const messageRepo = new KyselyMessageRepo(db)
 const ingestor = new MessageIngestor(messageRepo, queue)
 const telegramShadowCoverage = new KyselyTelegramShadowCoverageRepo(db)
 const telegramShadowRefresher = new TelegramShadowRefresher(adapters, ingestor)
+const telegramShadowRepo = new KyselyTelegramShadowRepo(db)
+const telegramTdlibIngestGate = new TelegramTdlibIngestGate(
+  config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS,
+  telegramShadowRepo,
+)
+
+if (config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS.length > 0) {
+  console.warn(
+    `[shadow-rollout] ${config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS.length} 个账号已启用 TDLib shadow-only`,
+  )
+}
 
 adapters.onMessage((msg) => {
-  void (async () => {
+  const activeIngest = async (): Promise<void> => {
     await ingestor.ingestDetailed(msg, async result => {
       if (!result.isNew && !msg.editedAt && msg.editVersion == null) return
 
@@ -95,11 +112,20 @@ adapters.onMessage((msg) => {
         }
       })
     }, 'tdlib')
-  })()
+  }
+  const operation = msg.platform === 'telegram'
+    ? telegramTdlibIngestGate.route(
+        buildTelegramUpsertObservation('tdlib', msg),
+        activeIngest,
+      )
+    : activeIngest()
+  void operation.catch((err: unknown) => {
+    console.error(`[server] 账号 ${msg.accountId} 处理适配器消息失败:`, err)
+  })
 })
 
-adapters.onMessageIdRemapped((accountId, oldId, newId) => {
-  void (async () => {
+adapters.onMessageIdRemapped((accountId, oldId, newId, platform) => {
+  const activeIngest = async (): Promise<void> => {
     const result = await messageRepo.remapMessageId(
       accountId,
       oldId,
@@ -123,11 +149,20 @@ adapters.onMessageIdRemapped((accountId, oldId, newId) => {
         })
       }
     }
-  })()
+  }
+  const operation = platform === 'telegram'
+    ? telegramTdlibIngestGate.route(
+        buildTelegramRemapObservation(accountId, 'tdlib', oldId, newId),
+        activeIngest,
+      )
+    : activeIngest()
+  void operation.catch((err: unknown) => {
+    console.error(`[server] 账号 ${accountId} 处理消息 id 重映射失败:`, err)
+  })
 })
 
-adapters.onMessageDeleted((accountId, platformMessageId, deletedAt) => {
-  void (async () => {
+adapters.onMessageDeleted((accountId, platformMessageId, deletedAt, platform) => {
+  const activeIngest = async (): Promise<void> => {
     const result = await messageRepo.markMessageDeleted(
       accountId,
       platformMessageId,
@@ -147,7 +182,14 @@ adapters.onMessageDeleted((accountId, platformMessageId, deletedAt) => {
         deletedAt: deletedAt.toISOString(),
       })
     }
-  })().catch((err: unknown) => {
+  }
+  const operation = platform === 'telegram'
+    ? telegramTdlibIngestGate.route(
+        buildTelegramDeleteObservation(accountId, 'tdlib', platformMessageId),
+        activeIngest,
+      )
+    : activeIngest()
+  void operation.catch((err: unknown) => {
     console.error(`[server] 账号 ${accountId} 处理 TDLib 删除事件失败:`, err)
   })
 })

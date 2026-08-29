@@ -5,12 +5,24 @@ import type {
   CredentialsHandler,
   CurrentMessageFetchResult,
   MessageHandler,
-  MessageDeletedHandler,
-  MessageIdRemapHandler,
   PlatformIdentityHandler,
   PlatformAdapter,
   StatusHandler,
 } from './types.js'
+
+type ManagedMessageIdRemapHandler = (
+  accountId: string,
+  oldPlatformMessageId: string,
+  newPlatformMessageId: string,
+  platform: Platform,
+) => void
+
+type ManagedMessageDeletedHandler = (
+  accountId: string,
+  platformMessageId: string,
+  deletedAt: Date,
+  platform: Platform,
+) => void
 
 /**
  * 逐个调用订阅者，单个失败不影响其余，也绝不向上冒泡。
@@ -41,8 +53,8 @@ export class AdapterManager {
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
-  private readonly idRemapHandlers: MessageIdRemapHandler[] = []
-  private readonly messageDeletedHandlers: MessageDeletedHandler[] = []
+  private readonly idRemapHandlers: ManagedMessageIdRemapHandler[] = []
+  private readonly messageDeletedHandlers: ManagedMessageDeletedHandler[] = []
 
   constructor(adapters: PlatformAdapter[]) {
     for (const a of adapters) {
@@ -54,9 +66,11 @@ export class AdapterManager {
       a.onPlatformIdentityUpdated?.((id, externalId) => {
         fanOut(this.platformIdentityHandlers, id, externalId)
       })
-      a.onMessageIdRemapped((id, oldId, newId) => fanOut(this.idRemapHandlers, id, oldId, newId))
+      a.onMessageIdRemapped((id, oldId, newId) => {
+        fanOut(this.idRemapHandlers, id, oldId, newId, a.platform)
+      })
       a.onMessageDeleted((id, messageId, deletedAt) => {
-        fanOut(this.messageDeletedHandlers, id, messageId, deletedAt)
+        fanOut(this.messageDeletedHandlers, id, messageId, deletedAt, a.platform)
       })
     }
   }
@@ -68,8 +82,12 @@ export class AdapterManager {
   onPlatformIdentityUpdated(handler: PlatformIdentityHandler): void {
     this.platformIdentityHandlers.push(handler)
   }
-  onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
-  onMessageDeleted(handler: MessageDeletedHandler): void { this.messageDeletedHandlers.push(handler) }
+  onMessageIdRemapped(handler: ManagedMessageIdRemapHandler): void {
+    this.idRemapHandlers.push(handler)
+  }
+  onMessageDeleted(handler: ManagedMessageDeletedHandler): void {
+    this.messageDeletedHandlers.push(handler)
+  }
 
   private require(platform: Platform): PlatformAdapter {
     const adapter = this.byPlatform.get(platform)

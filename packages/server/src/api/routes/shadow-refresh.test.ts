@@ -272,6 +272,54 @@ describe('POST /api/accounts/:id/telegram-shadow-refresh', () => {
     })
   })
 
+  it('rolls back central ingest only for explicitly confirmed canonical ids', async () => {
+    coverage.scan.mockReset()
+      .mockResolvedValueOnce(coverageReport())
+      .mockResolvedValueOnce(coverageReport())
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${accountId}/telegram-shadow-refresh`,
+      headers: auth(ownerToken),
+      payload: payload({
+        mode: 'rollback_tdlib',
+        confirm: 'ROLLBACK_TDLIB_INGEST',
+        platformMessageIds: ['6639331234:3601'],
+      }),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(refresher.refreshTdlib).toHaveBeenCalledWith(accountId, ['6639331234:3601'])
+    expect(response.json()).toMatchObject({
+      mode: 'rollback_tdlib',
+      refresh: { requested: 1, found: 1, recorded: 1, failed: 0 },
+    })
+  })
+
+  it('rejects ambiguous or non-canonical rollback targets before platform access', async () => {
+    for (const overrides of [
+      { mode: 'rollback_tdlib', platformMessageIds: ['6639331234:3601'] },
+      {
+        mode: 'rollback_tdlib',
+        confirm: 'ROLLBACK_TDLIB_INGEST',
+        platformMessageIds: ['6639331234:temp:telegram-tt:1'],
+      },
+      {
+        mode: 'dry_run',
+        platformMessageIds: ['6639331234:3601'],
+      },
+    ]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/accounts/${accountId}/telegram-shadow-refresh`,
+        headers: auth(ownerToken),
+        payload: payload(overrides),
+      })
+      expect(response.statusCode).toBe(400)
+    }
+    expect(refresher.refreshTdlib).not.toHaveBeenCalled()
+  })
+
   it('rejects a conversation outside the account before scanning', async () => {
     const otherAccountId = (await db.insertInto('accounts').values({
       platform: 'telegram',

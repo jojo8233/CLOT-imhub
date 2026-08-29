@@ -2,6 +2,33 @@
 
 日期：2026-08-29
 
+## 最新续验 checkpoint：逐账号 TDLib shadow-only 灰度与回滚门槛
+
+- 新增默认空的 `TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS`。它只接受逗号分隔、去重后的内部账号
+  UUID；空值保持所有账号现有 TDLib 中央入库。无 `all` 或全局关闭捷径，错误 UUID 会阻止
+  服务启动而不是扩大灰度。本机真实运行环境没有改动，两个真实账号当前仍是 active。
+- allowlist 内 Telegram 账号的 TDLib client 继续连接；upsert/edit、delete、remap 只以真实
+  `tdlib` 来源写 shadow 账本，不再改变中央消息投影或推送 UI。telegram-tt 仍正常中央入库。
+  manager 现在把事件所属平台一并交给组合根，Signal 等其他平台不会被 Telegram 灰度误拦截。
+- 回滚复用 owner-only `telegram-shadow-refresh`，新增 `mode=rollback_tdlib`。它要求账号
+  connected、固定确认串 `ROLLBACK_TDLIB_INGEST` 和 1～10 个去重后的最终 canonical 消息 id；
+  只用现有 TDLib client 精确 `getMessage` 并以硬编码 `tdlib` 来源进入统一 ingestor，不遍历
+  历史、不接受 temp id、不伪造已删除事实。
+- 推进门槛固定为：发布后 active 连续观察 7 天；至少 2 个账号、累计至少 100 个可比事实，且
+  覆盖 base/edit/delete/media/reply；120 秒静默后的窗口必须 `matched/comparable=100%`，
+  `mismatched/tdlibOnly/telegramTtOnly/unstable/missing/coverageUnavailable=0`，主动读取候选和
+  failed 均为 0，telegram-tt outbox `dead=0` 且无超过 5 分钟的 pending。历史
+  `preObservation`/`sourceLocal` 和窗口外已解释证据不进分母。
+- 放量顺序为单账号 24 小时、最多 10% 账号 72 小时、50% 账号 72 小时、100% 账号 7 天；
+  每级重新从零计时。任何已静默单边/不一致、coverage 缺口、dead-letter、超时 pending、
+  control grant 丢失或账号非 connected 都立即回滚受影响 cohort，不等待阶段结束。
+- 回滚先从 allowlist 移除账号并重启恢复 TDLib 中央入库，再按灰度窗口报告中的最终
+  `tdlib_only` upsert id 分批执行精确恢复。`unavailable/unsupported/failed` 任一非零即停止；
+  delete 或被覆盖的历史事件不倒填，转人工事件调查并重新开始新的 active 观察窗。
+- 新增 rollout 单元回归及 manager 平台来源回归；灰度/路由 23 tests、refresh route/service
+  11 tests、根级 `pnpm typecheck`、`git diff --check` 及全量 41 文件 380 tests（另 1 个既有
+  todo）已通过。尚未真正开启 canary，也没有发送、编辑或删除任何 Telegram 消息。
+
 ## 最新续验 checkpoint：S1 受限 TDLib 主动读取已收敛
 
 - coverage 报告现只把 `telegramTtOnly`/`missing` 且仍能取得当前快照的最终消息列入
@@ -241,5 +268,6 @@
    shadow 报告和 outbox `0/0` 均已收敛；旧 base mismatch 保留为已解释的算法发现证据。
 3. 受限历史 coverage dry-run 已实现并在双真实账号上只读验证；不得把
    `preObservation`、`sourceLocal` 或不可恢复 delete 当成待倒填缺陷。
-4. TDLib 当前快照主动读取已用 S1 真实收敛；下一步定义灰度观察、一致率与回滚门槛。在证据
-   完成前不停用 TDLib，不伪造缺失的 telegram-tt/TDLib 来源。
+4. TDLib 当前快照主动读取已用 S1 真实收敛；逐账号灰度开关、观察/一致率门槛和精确回滚通道
+   已实现。当前 allowlist 仍为空；必须先完成新的 7 天 active 观察窗，不能立即开启 canary。
+   在证据完成前不停用 TDLib，不伪造缺失的 telegram-tt/TDLib 来源。

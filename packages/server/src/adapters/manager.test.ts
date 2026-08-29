@@ -140,12 +140,12 @@ describe('AdapterManager', () => {
     const handlers: ((id: string, o: string, n: string) => void)[] = []
     tg.onMessageIdRemapped = vi.fn((h) => { handlers.push(h as never) })
 
-    const seen: [string, string, string][] = []
+    const seen: [string, string, string, Platform][] = []
     const mgr = new AdapterManager([tg])
-    mgr.onMessageIdRemapped((id, o, n) => seen.push([id, o, n]))
+    mgr.onMessageIdRemapped((id, o, n, platform) => seen.push([id, o, n, platform]))
 
     handlers[0]!('a1', '3575644161', '3576692736')
-    expect(seen).toEqual([['a1', '3575644161', '3576692736']])
+    expect(seen).toEqual([['a1', '3575644161', '3576692736', 'telegram']])
   })
 
   it('把删除事实汇聚到统一回调', () => {
@@ -153,14 +153,16 @@ describe('AdapterManager', () => {
     const handlers: ((id: string, messageId: string, deletedAt: Date) => void)[] = []
     tg.onMessageDeleted = vi.fn((handler) => { handlers.push(handler) })
 
-    const seen: [string, string, string][] = []
+    const seen: [string, string, string, Platform][] = []
     const mgr = new AdapterManager([tg])
-    mgr.onMessageDeleted((id, messageId, deletedAt) => {
-      seen.push([id, messageId, deletedAt.toISOString()])
+    mgr.onMessageDeleted((id, messageId, deletedAt, platform) => {
+      seen.push([id, messageId, deletedAt.toISOString(), platform])
     })
 
     handlers[0]!('a1', '6639331234:3497', new Date('2026-08-29T01:00:00.000Z'))
-    expect(seen).toEqual([['a1', '6639331234:3497', '2026-08-29T01:00:00.000Z']])
+    expect(seen).toEqual([
+      ['a1', '6639331234:3497', '2026-08-29T01:00:00.000Z', 'telegram'],
+    ])
   })
 
   it('disconnect 后账号不再可发送', async () => {

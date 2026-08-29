@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { parseTelegramMessageKey } from '@im-hub/shared'
 import {
   TelegramShadowCoverageInputError,
   type KyselyTelegramShadowCoverageRepo,
@@ -12,13 +13,40 @@ import type {
 
 const paramsSchema = z.object({ id: z.string().uuid() })
 const bodySchema = z.object({
-  mode: z.enum(['dry_run', 'refresh_tdlib']).default('dry_run'),
+  mode: z.enum(['dry_run', 'refresh_tdlib', 'rollback_tdlib']).default('dry_run'),
   sentAfter: z.string().datetime({ offset: true }).transform(value => new Date(value)),
   sentBefore: z.string().datetime({ offset: true }).transform(value => new Date(value)),
   conversationId: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(10).default(10),
   cursor: z.string().min(1).max(2_048).optional(),
   confirm: z.string().optional(),
+  platformMessageIds: z.array(z.string().min(1).max(256)).max(10).optional(),
+}).superRefine((body, ctx) => {
+  if (body.mode !== 'rollback_tdlib') {
+    if (body.platformMessageIds !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['platformMessageIds'],
+        message: 'platformMessageIds are only accepted for rollback_tdlib',
+      })
+    }
+    return
+  }
+  const ids = body.platformMessageIds ?? []
+  if (ids.length < 1 || new Set(ids).size !== ids.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['platformMessageIds'],
+      message: 'rollback_tdlib requires between 1 and 10 unique message ids',
+    })
+  }
+  if (ids.some(id => parseTelegramMessageKey(id)?.kind !== 'server')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['platformMessageIds'],
+      message: 'rollback_tdlib requires canonical server message ids',
+    })
+  }
 })
 
 export interface TelegramShadowRefreshRouteDeps {
@@ -83,14 +111,23 @@ export async function telegramShadowRefreshRoutes(
     if (req.actor.role === 'auditor') {
       return reply.code(403).send({ error: 'auditor is read-only' })
     }
-    if (body.data.confirm !== 'REFRESH_TDLIB_SHADOW') {
-      return reply.code(400).send({ error: 'explicit TDLib shadow refresh confirmation required' })
+    const expectedConfirmation = body.data.mode === 'rollback_tdlib'
+      ? 'ROLLBACK_TDLIB_INGEST'
+      : 'REFRESH_TDLIB_SHADOW'
+    if (body.data.confirm !== expectedConfirmation) {
+      return reply.code(400).send({
+        error: body.data.mode === 'rollback_tdlib'
+          ? 'explicit TDLib ingest rollback confirmation required'
+          : 'explicit TDLib shadow refresh confirmation required',
+      })
     }
     if (account.status !== 'connected') {
       return reply.code(409).send({ error: 'Telegram account is not connected' })
     }
 
-    const candidates = before.actions.tdlibRefreshCandidates
+    const candidates = body.data.mode === 'rollback_tdlib'
+      ? body.data.platformMessageIds ?? []
+      : before.actions.tdlibRefreshCandidates
     let refresh: TelegramShadowRefreshResult = {
       requested: 0,
       found: 0,
@@ -109,6 +146,6 @@ export async function telegramShadowRefreshRoutes(
     }
 
     const after = await deps.coverage.scan(scanInput)
-    return { mode: 'refresh_tdlib', before, refresh, after }
+    return { mode: body.data.mode, before, refresh, after }
   })
 }
