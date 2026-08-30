@@ -229,3 +229,30 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   没有读取或记录译文、ACI、本地会话 id、profile 或 token，也没有重启 Telegram 或服务端、重复
   已通过的平台切换、发送、入站生命周期或 outbox 故障矩阵。因此当前会话同步与可见原生草稿写入
   门槛已经完成；`composer.send` 仍未开放。
+
+## 11. 新会话续接 checkpoint（2026-08-30）
+
+- 继续使用隔离 worktree `/private/tmp/im-hub-m3-outbox` 和分支
+  `codex/m5-m6-signal-whatsapp`。交接时 worktree 干净；本轮提交依次为：
+  `1dadbfd`（当前会话/草稿桥接）、`a1809fa`（Signal 显示翻译坞）、`c871e3a`（可见
+  CompositionInput 双重确认）、`21883d6`（a23 真实证据）。不要另建 worktree 或回退这些提交。
+- 自动化基线为 `pnpm typecheck`、49 个测试文件 441 passed / 1 todo、desktop build；最后的可见
+  编辑器修正另通过 32 项定向测试、desktop build 和 a23 deep/strict codesign。a23 真实写入已通过
+  并已停止。Signal 可能在下次启动时恢复本轮未发送的测试草稿；由用户在原生输入框手动清空，代码
+  不替用户删除。
+- 当前能力止于 `composer.get-draft` / `composer.set-draft`；`composer.send` 始终返回
+  `signal_send_not_enabled`，没有自动发送。下一开发任务从“Signal `CompositionInput.submit` →
+  最终平台消息 ID → `attemptId` 幂等账本”设计开始：正文、`contextRevision` 与 attempt 必须绑定，
+  覆盖双击、切会话、用户改稿、命令超时、结果丢失和进程重启，只有 Signal 确认最终消息 ID 后才
+  能报告成功或清理 attempt。
+- 实现发送前先重新核对 Signal Desktop 8.25.0 本机 bundle 的 `inputApi.submit`、CompositionArea
+  `onSubmit` 与最终出向消息持久化边界；继续使用精确唯一锚点，禁止 DOM scraping。优先复用既有
+  `NativeComposerCommand`、`attemptId`、renderer pending-command 和 Telegram 已验证的结果未知语义，
+  但不要把 Telegram 本地消息 ID 算法直接套到 Signal。
+- 下一真实续验只允许一条无敏感文字验证新的“翻译坞自动发送”路径；不得重做 Telegram/WhatsApp/
+  Signal 切换、Signal 原生文字/图片/贴纸发送、入站文字/图片/贴纸、编辑/删除/回应或 503 outbox
+  矩阵，除非新代码实际修改对应边界。继续从 a23 配置生成 a24，不重启 Telegram；若服务端协议未变，
+  也不重启服务端。
+- 敏感边界保持不变：不读取或输出 `.env`、Signal profile/session、数据库正文、ACI、具体消息键、
+  媒体引用、token、二维码或密钥；数据库只做必要的聚合只读验证。不要合并 PR #19，不要关闭
+  Issue #12。
