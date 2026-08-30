@@ -191,6 +191,25 @@ describe('platform-scoped Zustand navigation', () => {
     expect(useStore.getState().nativeDrafts['tg-1:conv-1']).toBeUndefined()
   })
 
+  it('Signal 手动发送模式不会把 canSend=false 显示成草稿写入错误', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('sig-1', 'ready')
+    useStore.getState().setNativeContext('sig-1', {
+      platformConversationId: 'u:peer', contactExternalId: 'peer', contactDisplayName: null,
+      contextRevision: 1, conversationId: 'sig-conv-1',
+    })
+    useStore.getState().updateNativeDraft('sig-1:sig-conv-1', {
+      sourceText: '你好', translatedText: 'hello', status: 'ready', error: null,
+    })
+
+    useStore.getState().applyNativeComposerState('sig-1', 1, 'u:peer', 'hello', false)
+
+    expect(useStore.getState()).toMatchObject({
+      nativeBridgeByAccount: { 'sig-1': { composerCanSend: false } },
+      nativeDrafts: { 'sig-1:sig-conv-1': { status: 'ready', error: null } },
+    })
+  })
+
   it('改变回复语言后，原生框旧译文不能自行重建 ready 状态', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('tg-1', 'ready')

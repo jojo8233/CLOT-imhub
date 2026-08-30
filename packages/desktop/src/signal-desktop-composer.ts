@@ -27,14 +27,13 @@ export interface SignalDesktopReduxStoreLike {
 }
 
 interface SignalDesktopComposerActionsLike {
-  onEditorStateChange?(input: {
-    bodyRanges: unknown[]
-    caretLocation: number
-    conversationId: string
-    messageText: string
-    sendCounter: number
-  }): unknown
   setComposerFocus?(conversationId: string): unknown
+}
+
+interface SignalDesktopComposerEditorBridge {
+  conversationId: string
+  readDraft?(): unknown
+  setDraft?(text: string): unknown
 }
 
 export interface SignalDesktopComposerWindowLike extends SignalDesktopWindowLike {
@@ -42,13 +41,18 @@ export interface SignalDesktopComposerWindowLike extends SignalDesktopWindowLike
   reduxActions?: {
     composer?: SignalDesktopComposerActionsLike
   }
+  /** 由 8.25.0 CompositionInput 内部注册，只引用当前可见编辑器，不查询 DOM。 */
+  __imHubSignalComposerEditor?: SignalDesktopComposerEditorBridge
 }
 
 export interface SignalDesktopComposerSnapshot {
   /** 只在 Signal guest 内使用，绝不进入跨进程事件。 */
   localConversationId: string
   context: NativeConversationContext
+  /** 当前可见 CompositionInput 的正文；编辑器尚未注册时退回 Signal 模型草稿。 */
   draft: string
+  /** Signal ConversationModel 中已经持久化的草稿，用于拒绝可见层假成功。 */
+  persistedDraft: string
   sendCounter: number | null
 }
 
@@ -114,8 +118,18 @@ export function readSignalDesktopComposerSnapshot(
   if (!context) return null
 
   const draftValue = modelAttribute(conversation, 'draft')
-  const draft = typeof draftValue === 'string' ? draftValue : ''
-  if (draft.length > MAX_DRAFT_LENGTH) {
+  const persistedDraft = typeof draftValue === 'string' ? draftValue : ''
+  const editor = signalWindow.__imHubSignalComposerEditor
+  let draft = persistedDraft
+  if (editor?.conversationId === localConversationId && editor.readDraft) {
+    try {
+      const visibleDraft = editor.readDraft()
+      if (typeof visibleDraft === 'string') draft = visibleDraft
+    } catch {
+      // 编辑器正在重建时保留模型事实；写命令仍会要求可见接口可调用。
+    }
+  }
+  if (draft.length > MAX_DRAFT_LENGTH || persistedDraft.length > MAX_DRAFT_LENGTH) {
     throw new SignalDesktopComposerError(
       'signal_draft_too_large',
       'Signal 原生草稿超过桥接上限，请先在原生输入框中缩短内容',
@@ -125,6 +139,7 @@ export function readSignalDesktopComposerSnapshot(
     localConversationId,
     context,
     draft,
+    persistedDraft,
     sendCounter: composerSendCounter(state, localConversationId),
   }
 }
@@ -141,8 +156,9 @@ function waitForDraftPoll(): Promise<void> {
 }
 
 /**
- * 使用 Signal 8.25.0 自己的 composer action 更新并持久化草稿。草稿写入期间若切换会话，
- * 立即拒绝旧命令；不直接操作 contenteditable DOM，也不伪造发送动作。
+ * 使用 Signal 8.25.0 CompositionInput 自己的 inputApi 更新可见编辑器，再沿它原有的
+ * onEditorStateChange 路径持久化草稿。草稿写入期间若切换会话，立即拒绝旧命令；
+ * 不查询或直接操作 contenteditable DOM，也不伪造发送动作。
  */
 export async function writeSignalDesktopDraft(
   signalWindow: SignalDesktopComposerWindowLike,
@@ -150,7 +166,7 @@ export async function writeSignalDesktopDraft(
   text: string,
 ): Promise<SignalDesktopComposerSnapshot> {
   const actions = signalWindow.reduxActions?.composer
-  if (!actions?.onEditorStateChange || !actions.setComposerFocus) {
+  if (!actions?.setComposerFocus) {
     throw new SignalDesktopComposerError(
       'signal_composer_unavailable',
       'Signal 原生输入框尚未准备好，请重新打开当前会话',
@@ -176,20 +192,27 @@ export async function writeSignalDesktopDraft(
   await Promise.resolve(actions.setComposerFocus(before.localConversationId))
   const focused = readSignalDesktopComposerSnapshot(signalWindow)
   if (!signalComposerSnapshotMatches(focused, before.context.platformConversationId)
-    || focused.localConversationId !== before.localConversationId
-    || focused.sendCounter === null) {
+    || focused.localConversationId !== before.localConversationId) {
     throw new SignalDesktopComposerError(
       'signal_composer_unavailable',
       'Signal 原生输入框状态尚未准备好，请重试',
     )
   }
-  await Promise.resolve(actions.onEditorStateChange({
-    bodyRanges: [],
-    caretLocation: text.length,
-    conversationId: focused.localConversationId,
-    messageText: text,
-    sendCounter: focused.sendCounter,
-  }))
+  const editor = signalWindow.__imHubSignalComposerEditor
+  if (editor?.conversationId !== focused.localConversationId
+    || !editor.setDraft || !editor.readDraft) {
+    throw new SignalDesktopComposerError(
+      'signal_composer_unavailable',
+      'Signal 可见输入框尚未准备好，请重新打开当前会话',
+    )
+  }
+  const accepted = await Promise.resolve(editor.setDraft(text))
+  if (accepted !== true) {
+    throw new SignalDesktopComposerError(
+      'signal_draft_write_failed',
+      'Signal 可见输入框拒绝草稿写入，请重试',
+    )
+  }
 
   for (let attempt = 0; attempt < DRAFT_APPLY_ATTEMPTS; attempt += 1) {
     const current = readSignalDesktopComposerSnapshot(signalWindow)
@@ -201,7 +224,7 @@ export async function writeSignalDesktopDraft(
         'Signal 当前会话已经变化，旧译文未写入',
       )
     }
-    if (current.draft === text) return current
+    if (current.draft === text && current.persistedDraft === text) return current
     await waitForDraftPoll()
   }
   throw new SignalDesktopComposerError(

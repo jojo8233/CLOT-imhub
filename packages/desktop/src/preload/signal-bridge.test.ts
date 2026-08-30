@@ -64,9 +64,12 @@ function signalWindow() {
     composer: { conversations: { 'local-conversation-id': { sendCounter: 2 } } },
   }
   const storeListeners = new Set<() => void>()
-  const onEditorStateChange = vi.fn((input: { messageText: string }) => {
-    attributes.draft = input.messageText
+  let visibleDraft = ''
+  const setVisibleDraft = vi.fn((text: string) => {
+    visibleDraft = text
+    attributes.draft = text
     for (const listener of storeListeners) listener()
+    return true
   })
   return {
     value: {
@@ -86,12 +89,16 @@ function signalWindow() {
       reduxActions: {
         composer: {
           setComposerFocus: vi.fn(),
-          onEditorStateChange,
         },
+      },
+      __imHubSignalComposerEditor: {
+        conversationId: 'local-conversation-id',
+        readDraft: () => visibleDraft,
+        setDraft: setVisibleDraft,
       },
     },
     attributes,
-    onEditorStateChange,
+    setVisibleDraft,
   }
 }
 
@@ -148,11 +155,7 @@ describe('Signal preload composer bridge', () => {
       text: 'translated text',
     })
     await vi.advanceTimersByTimeAsync(1)
-    expect(current.onEditorStateChange).toHaveBeenCalledWith(expect.objectContaining({
-      conversationId: 'local-conversation-id',
-      messageText: 'translated text',
-      sendCounter: 2,
-    }))
+    expect(current.setVisibleDraft).toHaveBeenCalledWith('translated text')
     expect(current.attributes.draft).toBe('translated text')
     expect(electron.send).toHaveBeenCalledWith(
       'imhub:signal-bridge-bootstrap',
@@ -201,7 +204,7 @@ describe('Signal preload composer bridge', () => {
       platformConversationId: 'u:99999999-2222-3333-aaaa-555555555555',
       text: 'must not write',
     })
-    expect(current.onEditorStateChange).not.toHaveBeenCalled()
+    expect(current.setVisibleDraft).not.toHaveBeenCalled()
     expect(events()).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'command.result', requestId: 'stale-1', ok: false,

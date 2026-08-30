@@ -138,6 +138,12 @@ try {
   )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,
+    '(0,LZ.useImperativeHandle)(p,()=>({focus:_e,hasFocus:Se,insertEmoji:ve,setContents:be,reset:ye,submit:xe}),[_e,Se,ve,ye,be,xe]),(0,LZ.useEffect)(()=>{le.current=e},[e])',
+    '(0,LZ.useImperativeHandle)(p,()=>({focus:_e,hasFocus:Se,insertEmoji:ve,setContents:be,reset:ye,submit:xe}),[_e,Se,ve,ye,be,xe]),(0,LZ.useEffect)(()=>{if(!o)return;let e={conversationId:o,readDraft:()=>ce.current===void 0?null:ge().text,setDraft:e=>{if(ce.current===void 0||typeof e!=`string`)return!1;return be(e,[],!0),!0}};return window.__imHubSignalComposerEditor=e,()=>{window.__imHubSignalComposerEditor===e&&delete window.__imHubSignalComposerEditor}},[o,be]),(0,LZ.useEffect)(()=>{le.current=e},[e])',
+    'Signal 可见 Composer 草稿接口',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
     'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes))}async addSingleMessage',
     'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes),await window.__imHubSignalBridge?.onNewMessage(this,e,o))}async addSingleMessage',
     'Signal 入站消息桥接',

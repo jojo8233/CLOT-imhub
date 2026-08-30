@@ -59,6 +59,7 @@ describe('Signal Desktop composer bridge', () => {
         contactDisplayName: 'Alice',
       },
       draft: 'existing draft',
+      persistedDraft: 'existing draft',
       sendCounter: 3,
     })
     expect(JSON.stringify(snapshot?.context)).not.toContain('local-conversation-id')
@@ -110,30 +111,63 @@ describe('Signal Desktop composer bridge', () => {
     })).toBeNull()
   })
 
-  it('通过 Signal 自身 composer action 写入草稿并保留当前 revision', async () => {
+  it('通过 Signal 可见 CompositionInput 写入草稿并确认持久模型', async () => {
     const attributes: Record<string, unknown> = {
       serviceId: '99999999-2222-3333-aaaa-555555555555', draft: '',
     }
     const windowLike = signalWindow(attributes)
     const setComposerFocus = vi.fn()
-    const onEditorStateChange = vi.fn((input: { messageText: string }) => {
-      attributes.draft = input.messageText
+    let visibleDraft = ''
+    const setDraft = vi.fn((text: string) => {
+      visibleDraft = text
+      attributes.draft = text
+      return true
     })
-    windowLike.reduxActions = { composer: { setComposerFocus, onEditorStateChange } }
+    windowLike.reduxActions = { composer: { setComposerFocus } }
+    windowLike.__imHubSignalComposerEditor = {
+      conversationId: 'local-conversation-id',
+      readDraft: () => visibleDraft,
+      setDraft,
+    }
     const before = readSignalDesktopComposerSnapshot(windowLike)
     if (!before) throw new Error('expected composer snapshot')
 
     const updated = await writeSignalDesktopDraft(windowLike, before, 'translated text')
 
     expect(setComposerFocus).toHaveBeenCalledWith('local-conversation-id')
-    expect(onEditorStateChange).toHaveBeenCalledWith({
-      bodyRanges: [],
-      caretLocation: 15,
-      conversationId: 'local-conversation-id',
-      messageText: 'translated text',
-      sendCounter: 3,
-    })
+    expect(setDraft).toHaveBeenCalledWith('translated text')
     expect(updated.draft).toBe('translated text')
+    expect(updated.persistedDraft).toBe('translated text')
+  })
+
+  it('模型变化但可见编辑器未变化时不再报告写入成功', async () => {
+    vi.useFakeTimers()
+    try {
+      const attributes: Record<string, unknown> = {
+        serviceId: '99999999-2222-3333-aaaa-555555555555', draft: '',
+      }
+      const windowLike = signalWindow(attributes)
+      windowLike.reduxActions = { composer: { setComposerFocus: vi.fn() } }
+      windowLike.__imHubSignalComposerEditor = {
+        conversationId: 'local-conversation-id',
+        readDraft: () => '',
+        setDraft: (text) => {
+          attributes.draft = text
+          return true
+        },
+      }
+      const before = readSignalDesktopComposerSnapshot(windowLike)
+      if (!before) throw new Error('expected composer snapshot')
+
+      const result = expect(writeSignalDesktopDraft(windowLike, before, 'model only'))
+        .rejects.toEqual(expect.objectContaining<Partial<SignalDesktopComposerError>>({
+          code: 'signal_draft_write_failed',
+        }))
+      await vi.advanceTimersByTimeAsync(600)
+      await result
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('聚焦期间切换会话会拒绝旧草稿命令', async () => {
@@ -151,8 +185,12 @@ describe('Signal Desktop composer bridge', () => {
       reduxActions: {
         composer: {
           setComposerFocus: () => { selectedId = 'another-local-id' },
-          onEditorStateChange: vi.fn(),
         },
+      },
+      __imHubSignalComposerEditor: {
+        conversationId: 'local-conversation-id',
+        readDraft: () => '',
+        setDraft: vi.fn(),
       },
     }
     const before = readSignalDesktopComposerSnapshot(windowLike)
@@ -162,6 +200,6 @@ describe('Signal Desktop composer bridge', () => {
       .rejects.toEqual(expect.objectContaining<Partial<SignalDesktopComposerError>>({
         code: 'signal_composer_unavailable',
       }))
-    expect(windowLike.reduxActions?.composer?.onEditorStateChange).not.toHaveBeenCalled()
+    expect(windowLike.__imHubSignalComposerEditor?.setDraft).not.toHaveBeenCalled()
   })
 })

@@ -317,6 +317,7 @@ export const useStore = create<State>((set) => ({
       || existing?.status === 'translating'
       || existing?.status === 'sending'
     const hasDraft = draft.trim() !== ''
+    const manualNativeSend = s.accounts.find(account => account.id === accountId)?.platform === 'signal'
     const nextDrafts = { ...s.nativeDrafts }
     if (existing && !busy) {
       if (existing.status === 'ready' && !hasDraft) {
@@ -334,7 +335,7 @@ export const useStore = create<State>((set) => ({
       } else if (existing.status === 'ready') {
         nextDrafts[key] = {
           ...existing,
-          error: canSend ? null : '原生输入框当前不可发送',
+          error: canSend || manualNativeSend ? null : '原生输入框当前不可发送',
         }
       }
     }
