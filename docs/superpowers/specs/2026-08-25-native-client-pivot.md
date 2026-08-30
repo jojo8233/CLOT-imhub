@@ -145,10 +145,12 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
   依赖 `(account_id, platform_message_id)` 去重。
 - 入站文字的核心显示是原文加中英译文：翻译引擎检测源语言为中文时目标为英文，否则目标为中文；
   不按汉字字符猜测，避免把含汉字的日文误判成中文。中央翻译事件
-  和会话快照都携带规范平台消息键；Signal guest 用自身 DataReader 按 sender + `sent_at` 精确
-  解析当前消息模型，再核对 incoming 类型和编辑 revision。译文通过 Signal 8.25.0 原生 React
-  消息组件的唯一补丁锚点显示在原文下方，不读取或查询 DOM，也不把 Signal 本地消息 id 交给
-  renderer 或服务端。编辑/删除先清旧译文；进程重启后由中央会话快照批量回填。
+  和会话快照都携带规范平台消息键；Signal guest 用自身 DataReader 按 `sent_at` 读取候选，再用
+  消息自身的 `sourceServiceId` / `source` 匹配规范 sender，最后核对 incoming 类型和编辑 revision。
+  Signal 内部 `ii(message)` 返回本机 `ConversationModel.id`，绝不能拿来匹配规范 sender。译文通过
+  Signal 8.25.0 原生 React 消息组件的唯一补丁锚点显示在原文下方，不读取或查询 DOM，也不把
+  Signal 本地消息 id 交给 renderer 或服务端。编辑/删除先清旧译文；进程重启后由中央会话快照
+  批量回填。
 - Signal 翻译坞的纯文字发送先把 `attemptId`、首次 `contextRevision`、正文 SHA-256 fingerprint
   和 Signal 自身提交时间写入 guest IndexedDB 账本，再调用 `CompositionInput.submit`。prepared
   hook 在消息与 send job 持久化前绑定 Signal 本地消息引用，persisted hook 在事务完成后使用本账号

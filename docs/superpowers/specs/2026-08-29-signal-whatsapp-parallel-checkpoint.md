@@ -389,3 +389,22 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   插入三个新增锚点各唯一命中，deep/strict codesign 通过。a28 仅生成未启动，没有发送额外真实
   消息，也没有读取或输出 profile/session、ACI、正文或具体消息键；因此代码与打包证据已完成，
   Signal 原生双语气泡仍等待下一次允许的单条无敏感入站真实续验。
+
+## 16. Signal 双语气泡真实续验修正 checkpoint（2026-08-31）
+
+- a28 启动后只使用了一条无敏感英文入站消息。Signal 原生气泡显示了原文，但没有显示中文译文，
+  因此没有把“消息到达”误记成“双语显示通过”，也没有发送第二条消息。只读聚合核验显示近 30
+  分钟恰有 1 条 Signal 入站、1 条中文译文且源语言已识别；核验没有读取或输出正文、ACI、具体
+  消息键或译文内容，证明中央翻译 worker 与落库正常，故障位于 Signal guest 本地模型解析。
+- 复核官方 Signal Desktop 8.25.0 bundle 后确认，初版补丁使用的 `ii(message)` 是 Signal 内部
+  `helpers.getAuthorId`，返回本机 `ConversationModel.id`，不是消息的 `sourceServiceId`。把它与
+  im-hub 规范 sender 比较必然无法命中；这也是自动化 mock 能通过、真实客户端却不显示的原因。
+- 解析补丁改为继续使用官方 `DataReader.getMessagesBySentAt`，再直接按候选消息自身的
+  `type=incoming` 与 `sourceServiceId` / `source` 筛选。guest store 仍对规范 sender、`sent_at`、
+  incoming 类型和 edit revision 做第二次独立核对，所以时间戳碰撞、错误方向与迟到编辑译文仍
+  会被拒绝；没有改用 DOM、Signal 本地消息 id 或 Telegram 消息 ID 算法。
+- 修正通过 `pnpm typecheck`、Signal translation/preload/renderer 3 个文件 29 项定向测试、desktop
+  build，以及官方 8.25.0 preload 的语法与唯一补丁检查；旧 `ii(t)===e` 解析器在产物中为 0 处。
+  从 a28 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a29.app` 并通过 deep/strict codesign，
+  已只平滑重启独立 bundle id `org.imhub.SignalDesktop` 的隔离包。Telegram 和服务端均未重启，
+  没有再发送消息；a29 将复用同一条已落库译文做进程重启恢复，最终原生气泡目视结果仍需确认。
