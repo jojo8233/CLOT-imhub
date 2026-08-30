@@ -39,6 +39,7 @@ function emit(event: NativeGuestEvent): void {
  */
 export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): void {
   if (signalWindow.__imHubSignalBridge) return
+  console.info('[signal-bridge] preload installed')
   const pending = new Map<string, NativeMessageUpsertEvent>()
   let isSending = false
   let lastErrorCode: string | null = null
@@ -66,7 +67,9 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   const reportIdentity = (): boolean => {
     const normalized = readSignalDesktopAci(signalWindow)
     if (!normalized) return false
+    const identityChanged = lastIdentity !== normalized
     lastIdentity = normalized
+    if (identityChanged) console.info('[signal-bridge] identity ready')
     if (lastErrorCode === 'signal_identity_unavailable') lastErrorCode = null
     emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
@@ -93,6 +96,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
           return
         }
         pending.set(event.eventId, event)
+        console.info('[signal-bridge] inbound text queued')
         lastErrorCode = null
         emit(event)
         status()
@@ -131,6 +135,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   setTimeout(() => {
     if (lastIdentity || reportIdentity()) return
     lastErrorCode = 'signal_identity_unavailable'
+    console.error('[signal-bridge] identity unavailable after grace period')
     emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'bridge.error',

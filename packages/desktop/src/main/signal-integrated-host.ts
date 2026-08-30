@@ -34,6 +34,7 @@ const RENDERER_CONTENT_TYPE: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
 }
+const SIGNAL_BRIDGE_BOOTSTRAP_CHANNEL = 'imhub:signal-bridge-bootstrap'
 
 async function startRendererServer(connectSources: string): Promise<{ server: Server; url: string }> {
   const rendererRoot = normalize(join(import.meta.dirname, '../renderer'))
@@ -116,6 +117,22 @@ class IntegratedSignalViewHost {
 
   install(): void {
     const signalContents = this.signalView.webContents
+    ipcMain.on(SIGNAL_BRIDGE_BOOTSTRAP_CHANNEL, (event, state: unknown) => {
+      if (event.sender.id !== signalContents.id) return
+      if (state === 'start-called') {
+        console.info('[signal-bridge] exposed startApp called')
+        return
+      }
+      if (state === 'installed') {
+        console.info('[signal-bridge] preload import installed')
+        return
+      }
+      if (state === 'failed') {
+        console.error('[signal-bridge] preload import failed')
+        this.failedMessage = 'Signal 入站 bridge 安装失败；请重新生成并打开测试包'
+        this.emitCurrentState()
+      }
+    })
     signalContents.once('did-finish-load', () => {
       this.ready = true
       this.failedMessage = null

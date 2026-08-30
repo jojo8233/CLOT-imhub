@@ -85,7 +85,7 @@
 4. **M5/M6 并行推进 Signal 与 WhatsApp（执行中）**：按 2026-08-29 的产品优先级调整，
    不再等待 M3 生产观察全部结束才启动。Signal 已改用补丁版 Signal Desktop 作为用户可见
    入口，同窗口、真实关联、冷启动恢复、账号切换以及文字、图片和贴纸发送已通过；入站
-   纯文字 bridge 已实现并进入真实唯一落库续验；
+   纯文字 bridge 与真实唯一落库也已通过；
    `signal-cli` 只保留后台回退，不再由
    添加/重关联弹窗触发。WhatsApp 首检点只在 owner 的隔离
    partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发。WhatsApp
@@ -134,7 +134,7 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
   服务重启可恢复发送，但 Signal 进程重启会丢失未 ACK 项。它尚不是持久 outbox。
 
 当前只允许一个 Signal Desktop 原生账号。真实关联、冷启动恢复、Telegram/WhatsApp/Signal
-标签切换，以及 Signal 文字、图片和贴纸发送已经通过；入站纯文字 bridge 的代码与自动化验证
-已经完成，真实唯一落库证据仍待一条新消息。入站媒体、编辑/删除/回应、翻译、持久 outbox、
+标签切换，以及 Signal 文字、图片和贴纸发送已经通过；入站纯文字 bridge 的代码、自动化验证
+和一条真实消息的唯一落库证据也已完成。入站媒体、编辑/删除/回应、翻译、持久 outbox、
 正式多开、正式安装包、上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成可发布
 实现。

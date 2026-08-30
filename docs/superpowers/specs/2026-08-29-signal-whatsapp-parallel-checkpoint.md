@@ -1,7 +1,7 @@
 # M5/M6 Signal 与 WhatsApp 并行首检点
 
 日期：2026-08-29
-状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送首检，入站文字桥接已实现并待真实落库续验
+状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送首检与入站文字唯一落库
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -69,8 +69,8 @@ Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下�
 - 已复用一个隔离真实账号完成：钥匙串授权、冷启动恢复、Telegram → WhatsApp → Signal 往返
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
-- 当前只支持一个 Signal Desktop 原生账号；本 checkpoint 尚未取得 Signal 入站唯一落库、
-  编辑/删除/回应、翻译或中央回传证据，不能越级标记 M5 完成。
+- 当前只支持一个 Signal Desktop 原生账号；入站纯文字唯一落库已在本轮取得真实证据，但
+  服务重启续收、编辑/删除/回应、翻译、入站媒体与持久 outbox 仍未完成，不能越级标记 M5 完成。
 - WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
 
 续接时先验证最新同窗口开发包仍能恢复，再从“Signal 入站文字唯一落库/桥接设计”继续；不要
@@ -82,7 +82,8 @@ Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下�
 实现边界如下：
 
 - Signal Desktop 8.25.0 的原生 preload 在 `ConversationModel.onNewMessage` 完成自身持久化后
-  触发受控 hook；启动顺序会先安装 im-hub bridge，再启动 Signal renderer，避免冷启动竞态。
+  触发受控 hook；补丁包装 Signal 实际通过 `contextBridge` 暴露的 `startApp`，先安装 im-hub
+  bridge 再启动 Signal renderer，避免在 preload 返回后替换函数而错过真实调用方。
 - Signal guest 不上报 im-hub `accountId`、JWT 或 control grant。Signal 的
   `WebContentsView` 由主进程绑定账号 UUID；guest 只上报实际 ACI。服务端 owner-only grant
   首次把该 ACI 绑定到 `connection_mode=native_desktop` 账号，主进程随后继续用实际
@@ -98,8 +99,10 @@ Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下�
   因而不能把它写成 Telegram IndexedDB outbox 同等级的持久可靠性。
 
 自动化证据已通过：`pnpm typecheck`、46 个测试文件（414 passed、1 todo）、desktop build，
-以及新生成开发包的补丁锚点计数与严格 codesign 校验。同窗口开发包已完成过外壳会话冷恢复；
-当前桥接修正版仍待 Safe Storage 授权后的真实续验。
-截至本节更新时，仍待从另一台已关联设备发送一条新的纯文字消息，以只读计数确认该事件在
-重试条件下只产生一个 `(account_id, platform_message_id)`；取得该证据前不得把“入站文字唯一
-落库”门槛标记为完成。
+以及新生成开发包的补丁锚点计数与严格 codesign 校验。同窗口开发包已完成外壳会话冷恢复。
+
+真实续验证据也已通过：修正版开发包依次确认 `startApp called → preload import installed →
+integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；随后从另一台已关联设备
+补发一条纯文字，服务端只接受一次 `/api/native/events` 并回 ACK。只读数据库计数为桥接行 1、
+重复规范键 0、入站行 1、规范键格式行 1，未读取正文、ACI 值或具体消息键。因此“Signal 入站
+文字唯一落库”门槛已完成；服务重启续收和 Signal 进程重启后的未 ACK 恢复仍是下一门槛。

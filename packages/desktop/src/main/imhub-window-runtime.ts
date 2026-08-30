@@ -188,4 +188,5 @@ export function registerIntegratedNativeGuest(
 ): void {
   requireTrustedHost(hostContents)
   nativeControlHost.registerGuest(guestContents, accountId, hostContents.id)
+  console.info('[signal-bridge] integrated guest registered')
 }

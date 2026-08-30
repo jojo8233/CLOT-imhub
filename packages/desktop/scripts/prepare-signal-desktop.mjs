@@ -125,17 +125,13 @@ try {
     'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes),window.__imHubSignalBridge?.onNewMessage(this,e,o))}async addSingleMessage',
     'Signal 入站消息桥接',
   )
-  writeFileSync(signalPreloadMainPath, signalPreloadMain)
-
-  const signalPreloadWrapperPath = join(extracted, 'bundles', 'preload', 'wrapper.js')
-  let signalPreloadWrapper = readFileSync(signalPreloadWrapperPath, 'utf8')
-  signalPreloadWrapper = replaceOnce(
-    signalPreloadWrapper,
-    '(u(require,__dirname,{}),window.SignalCI?.setPreloadCacheHit(o!=null&&!l))',
-    '(u(require,__dirname,{}),(e=>{window.startApp=(...t)=>import(`../../imhub/preload/signal-bridge.mjs`).then(n=>(n.installSignalPreloadBridge(window),e(...t))).catch(()=>{throw console.error(`[im-hub] Signal bridge preload failed`),new Error(`Signal bridge preload failed`)})})(window.startApp),window.SignalCI?.setPreloadCacheHit(o!=null&&!l))',
-    'Signal preload 桥接安装',
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'u.contextBridge.exposeInMainWorld(`startApp`,window.startApp)',
+    'u.contextBridge.exposeInMainWorld(`startApp`,(...e)=>(u.ipcRenderer.send(`imhub:signal-bridge-bootstrap`,`start-called`),import(require(`node:url`).pathToFileURL(require(`node:path`).join(__dirname,`..`,`..`,`imhub`,`preload`,`signal-bridge.mjs`)).href).then(t=>(t.installSignalPreloadBridge(window),u.ipcRenderer.send(`imhub:signal-bridge-bootstrap`,`installed`),window.startApp(...e))).catch(()=>{throw u.ipcRenderer.send(`imhub:signal-bridge-bootstrap`,`failed`),console.error(`[im-hub] Signal bridge preload failed`),new Error(`Signal bridge preload failed`)})))',
+    'Signal startApp 桥接安装',
   )
-  writeFileSync(signalPreloadWrapperPath, signalPreloadWrapper)
+  writeFileSync(signalPreloadMainPath, signalPreloadMain)
 
   const imhubRoot = join(extracted, 'imhub')
   mkdirSync(imhubRoot, { recursive: true })
