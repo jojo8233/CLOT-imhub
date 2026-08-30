@@ -297,6 +297,8 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
   const ref = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<SignalDesktopState>('idle')
   const [message, setMessage] = useState<string | null>(null)
+  const [guestWebContentsId, setGuestWebContentsId] = useState<number | null>(null)
+  const [controlError, setControlError] = useState<string | null>(null)
   const bridge = window.imHub?.signalDesktop
 
   useEffect(() => {
@@ -332,6 +334,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
           if (disposed || update.accountId !== accountId) return
           setState(update.state)
           setMessage(update.message)
+          setGuestWebContentsId(update.guestWebContentsId)
         }).catch(() => {
           if (disposed) return
           setState('failed')
@@ -365,6 +368,159 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
     if (!bridge) return
     return () => { void bridge.release(accountId).catch(() => {}) }
   }, [accountId, bridge])
+
+  useEffect(() => {
+    const nativeControl = window.imHub?.nativeControl
+    if (!nativeControl || guestWebContentsId === null) return
+    const target = { accountId, guestWebContentsId }
+    let disposed = false
+    let grantRefreshTimer: ReturnType<typeof setTimeout> | null = null
+    let provisionGeneration = 0
+    let hasUsableGrant = false
+    let observedIdentity: string | null = null
+    let activeProvision: Promise<void> | null = null
+
+    const applyControlState = (control: NativeControlStateUpdate): void => {
+      if (disposed || control.accountId !== accountId) return
+      hasUsableGrant = control.expiresAt !== null && control.state !== 'blocked'
+      if (control.state === 'ready') {
+        setControlError(null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        return
+      }
+      const detail = control.message ?? 'Signal 入站桥接尚未就绪'
+      setControlError(control.state === 'blocked' ? detail : null)
+      useStore.getState().setNativeBridgeConnection(
+        accountId,
+        control.state === 'blocked' ? 'failed' : 'waiting',
+        detail,
+      )
+    }
+
+    const scheduleGrantRefresh = (expiresAt: string): void => {
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      const delay = Math.max(
+        MIN_GRANT_REFRESH_MS,
+        Date.parse(expiresAt) - Date.now() - GRANT_REFRESH_MARGIN_MS,
+      )
+      grantRefreshTimer = setTimeout(() => { void provisionControl() }, delay)
+    }
+
+    const provisionControl = (): Promise<void> => {
+      if (activeProvision) return activeProvision
+      const operation = (async (): Promise<void> => {
+        if (disposed || !observedIdentity) return
+        const generation = ++provisionGeneration
+        try {
+          const grant = await api.createNativeControlGrant(accountId, observedIdentity)
+          if (disposed || generation !== provisionGeneration) return
+          const control = await nativeControl.configure(target, grant)
+          if (disposed || generation !== provisionGeneration) return
+          applyControlState(control)
+          scheduleGrantRefresh(grant.expiresAt)
+        } catch {
+          if (disposed || generation !== provisionGeneration) return
+          hasUsableGrant = false
+          setControlError('Signal 账号身份绑定或短时授权建立失败')
+          useStore.getState().setNativeBridgeConnection(
+            accountId,
+            'failed',
+            'Signal 账号身份绑定或短时授权建立失败',
+          )
+        }
+      })().finally(() => {
+        if (activeProvision === operation) activeProvision = null
+      })
+      activeProvision = operation
+      return operation
+    }
+
+    const sendEventAck = (eventId: string, accepted: boolean, retryable: boolean): void => {
+      void nativeControl.sendCommand(target, {
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'event.ack',
+        eventId,
+        accepted,
+        retryable,
+      }).catch(() => {
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Signal 入站 ACK 桥接已断开')
+      })
+    }
+
+    const onGuestEvent = (event: NativeGuestEvent): void => {
+      if (disposed) return
+      if (event.type === 'bridge.ready') {
+        useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在核对 Signal 登录身份')
+        return
+      }
+      if (event.type === 'account.identity') {
+        const changed = observedIdentity !== event.platformAccountExternalId
+        observedIdentity = event.platformAccountExternalId
+        useStore.getState().setNativeAccountIdentity(accountId, observedIdentity)
+        if (changed || !hasUsableGrant) void provisionControl()
+        return
+      }
+      if (event.type === 'account.signed-out') {
+        observedIdentity = null
+        hasUsableGrant = false
+        useStore.getState().setNativeAccountIdentity(accountId, null)
+        setControlError('Signal 账号已退出')
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Signal 账号已退出')
+        return
+      }
+      if (event.type === 'bridge.error') {
+        setControlError(event.message)
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
+        return
+      }
+      if (event.type === 'outbox.status') {
+        useStore.getState().setNativeOutboxStatus(accountId, {
+          pendingCount: event.pendingCount,
+          deadLetterCount: event.deadLetterCount,
+          isSending: event.isSending,
+          lastErrorCode: event.lastErrorCode,
+        })
+        return
+      }
+      if (event.type !== 'message.upsert'
+        && event.type !== 'message.deleted'
+        && event.type !== 'message.id-remapped') return
+
+      void nativeControl.reportEvent(target, event).then(() => {
+        if (disposed) return
+        sendEventAck(event.eventId, true, false)
+        void api.listConversations().then(({ conversations }) => {
+          if (!disposed) useStore.getState().setConversations(conversations)
+        }).catch(() => {})
+      }).catch((error: unknown) => {
+        if (disposed) return
+        const status = nativeProxyStatus(error)
+        const retryable = status === null
+          || status === 408
+          || status === 409
+          || status === 425
+          || status === 429
+          || status >= 500
+        setControlError(retryable ? 'Signal 入站回传失败，正在重试' : 'Signal 入站回传被服务端拒绝')
+        sendEventAck(event.eventId, false, retryable)
+      })
+    }
+
+    const removeEventListener = nativeControl.onEvent(value => {
+      if (value.accountId === accountId) onGuestEvent(value.event)
+    })
+    const removeStateListener = nativeControl.onState(applyControlState)
+    useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在等待 Signal 登录身份')
+
+    return () => {
+      disposed = true
+      provisionGeneration += 1
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      removeEventListener()
+      removeStateListener()
+      void nativeControl.release(target).catch(() => {})
+    }
+  }, [accountId, guestWebContentsId])
 
   const retry = (): void => {
     const element = ref.current
@@ -415,6 +571,16 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
               重试
             </button>
           )}
+        </div>
+      )}
+      {controlError && state === 'ready' && (
+        <div style={{
+          position: 'absolute', left: 16, right: 16, top: 12, zIndex: 3,
+          padding: '9px 12px', borderRadius: theme.radius.md,
+          background: theme.color.dangerSoft, color: theme.color.danger,
+          fontSize: theme.font.size.sm, pointerEvents: 'none',
+        }}>
+          Signal 入站桥接：{controlError}
         </div>
       )}
     </div>

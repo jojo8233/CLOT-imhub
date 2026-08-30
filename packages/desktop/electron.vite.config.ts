@@ -18,6 +18,7 @@ export default defineConfig({
         input: {
           index: 'src/preload/index.ts',
           'native-bridge': 'src/preload/native-bridge.ts',
+          'signal-bridge': 'src/preload/signal-bridge.ts',
         },
       },
     },

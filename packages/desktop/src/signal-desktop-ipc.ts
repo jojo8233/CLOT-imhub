@@ -16,6 +16,8 @@ export interface SignalDesktopStateUpdate {
   accountId: string
   state: SignalDesktopState
   message: string | null
+  /** Signal guest 只暴露不可复用的 Electron 运行时 id，供可信外壳配置短时 grant。 */
+  guestWebContentsId: number | null
 }
 
 export interface SignalDesktopSyncRequest {

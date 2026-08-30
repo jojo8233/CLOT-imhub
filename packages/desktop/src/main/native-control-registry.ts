@@ -3,10 +3,12 @@ import type {
   NativeControlState,
   NativeControlStateUpdate,
   NativeGuestEvent,
+  Platform,
 } from '@im-hub/shared'
 
 interface ControlSession {
   accountId: string
+  platform: Platform
   grant: string
   expectedExternalId: string
   actualExternalId: string | null
@@ -42,7 +44,7 @@ export class NativeControlRegistry {
   ): NativeControlDecision {
     const expiresAt = Date.parse(verification.expiresAt)
     if (verification.accountId !== accountId
-      || verification.platform !== 'telegram'
+      || !['telegram', 'signal'].includes(verification.platform)
       || !Number.isFinite(expiresAt)
       || expiresAt <= now) {
       throw new NativeControlRegistryError('账号控制授权无效或已经过期')
@@ -56,13 +58,14 @@ export class NativeControlRegistry {
       : 'waiting'
     const session: ControlSession = {
       accountId,
+      platform: verification.platform,
       grant,
       expectedExternalId: verification.expectedPlatformAccountExternalId,
       actualExternalId,
       expiresAt,
       state,
       revoked: state === 'blocked',
-      message: state === 'blocked' ? 'Telegram 登录身份与 im-hub 账号不一致' : null,
+      message: state === 'blocked' ? `${platformLabel(verification.platform)} 登录身份与 im-hub 账号不一致` : null,
     }
     this.sessions.set(webContentsId, session)
     return {
@@ -90,8 +93,8 @@ export class NativeControlRegistry {
       if (session.revoked) {
         session.state = event.platformAccountExternalId === session.expectedExternalId ? 'waiting' : 'blocked'
         session.message = session.state === 'waiting'
-          ? 'Telegram 身份已更新，正在重新获取授权'
-          : 'Telegram 登录身份与 im-hub 账号不一致'
+          ? `${platformLabel(session.platform)} 身份已更新，正在重新获取授权`
+          : `${platformLabel(session.platform)} 登录身份与 im-hub 账号不一致`
         return {
           forward: true,
           state: this.stateUpdate(session, session.message),
@@ -100,7 +103,9 @@ export class NativeControlRegistry {
       }
       session.state = event.platformAccountExternalId === session.expectedExternalId ? 'ready' : 'blocked'
       session.revoked = session.state === 'blocked'
-      session.message = session.state === 'blocked' ? 'Telegram 登录身份与 im-hub 账号不一致' : null
+      session.message = session.state === 'blocked'
+        ? `${platformLabel(session.platform)} 登录身份与 im-hub 账号不一致`
+        : null
       return {
         forward: true,
         state: this.stateUpdate(session, session.message),
@@ -114,7 +119,7 @@ export class NativeControlRegistry {
       session.actualExternalId = null
       session.state = 'blocked'
       session.revoked = true
-      session.message = 'Telegram 账号已退出，控制能力已撤销'
+      session.message = `${platformLabel(session.platform)} 账号已退出，控制能力已撤销`
       return {
         forward: true,
         state: this.stateUpdate(session, session.message),
@@ -204,7 +209,8 @@ export class NativeControlRegistry {
     }
     return this.stateUpdate(
       session,
-      session.message ?? (session.state === 'waiting' ? '正在核对 Telegram 登录身份' : null),
+      session.message
+        ?? (session.state === 'waiting' ? `正在核对 ${platformLabel(session.platform)} 登录身份` : null),
     )
   }
 
@@ -216,6 +222,12 @@ export class NativeControlRegistry {
       expiresAt: new Date(session.expiresAt).toISOString(),
     }
   }
+}
+
+function platformLabel(platform: Platform): string {
+  if (platform === 'telegram') return 'Telegram'
+  if (platform === 'signal') return 'Signal'
+  return platform
 }
 
 function waitingState(accountId: string): NativeControlStateUpdate {

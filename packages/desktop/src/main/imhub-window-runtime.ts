@@ -176,3 +176,16 @@ export function attachImHubWindowRuntime(
     }
   })
 }
+
+/**
+ * Signal Desktop 与外壳同进程时没有 did-attach-webview 事件，由同窗口宿主在账号
+ * UUID 已绑定后显式登记。后续授权、事件代理和 ACK 仍走同一个 NativeControlHost。
+ */
+export function registerIntegratedNativeGuest(
+  hostContents: WebContents,
+  guestContents: WebContents,
+  accountId: string,
+): void {
+  requireTrustedHost(hostContents)
+  nativeControlHost.registerGuest(guestContents, accountId, hostContents.id)
+}

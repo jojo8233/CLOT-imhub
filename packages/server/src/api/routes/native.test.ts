@@ -257,6 +257,51 @@ describe('native bridge routes', () => {
     expect(response.json()).toMatchObject({ error: expect.stringContaining('身份尚未就绪') })
   })
 
+  it('Signal 原生账号只允许 owner 用实际 ACI 首次绑定并签发短时 grant', async () => {
+    const signalAccountId = (await db.insertInto('accounts').values({
+      platform: 'signal', owner_user_id: agentId, team_id: teamId,
+      display_name: 'Native Signal', status: 'pending_auth', connection_mode: 'native_desktop',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${signalAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: '11111111-2222-3333-AAAA-555555555555' },
+    })
+    expect(response.statusCode).toBe(200)
+    const row = await db.selectFrom('accounts')
+      .select(['platform_account_external_id', 'status', 'connection_mode', 'credentials_ref'])
+      .where('id', '=', signalAccountId)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({
+      platform_account_external_id: '11111111-2222-3333-aaaa-555555555555',
+      status: 'connected',
+      connection_mode: 'native_desktop',
+      credentials_ref: null,
+    })
+
+    const mismatch = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${signalAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: '22222222-2222-4333-AAAA-555555555555' },
+    })
+    expect(mismatch.statusCode).toBe(409)
+    expect(mismatch.json()).toMatchObject({ error: expect.stringContaining('身份') })
+
+    const invalidAciAccountId = (await db.insertInto('accounts').values({
+      platform: 'signal', owner_user_id: agentId, team_id: teamId,
+      display_name: 'Invalid Native Signal', status: 'pending_auth', connection_mode: 'native_desktop',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const invalidAci = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${invalidAciAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: 'not-an-aci' },
+    })
+    expect(invalidAci.statusCode).toBe(400)
+  })
+
   it('owner 被改成 auditor 后既有 grant 立即失效', async () => {
     await db.updateTable('users').set({ role: 'auditor' }).where('id', '=', agentId).execute()
     const response = await app.inject({
@@ -352,6 +397,68 @@ describe('native bridge routes', () => {
       'telegram-tt',
     )
     expect(publish).toHaveBeenCalledWith(agentId, expect.objectContaining({ type: 'message' }))
+  })
+
+  it('Signal 入站文字只接受 sender+timestamp 规范键且不进入 Telegram shadow', async () => {
+    const signalAci = '11111111-2222-3333-aaaa-555555555555'
+    const signalAccount = await db.updateTable('accounts')
+      .set({
+        platform: 'signal',
+        connection_mode: 'native_desktop',
+        platform_account_external_id: signalAci,
+      })
+      .where('id', '=', accountId)
+      .returning('native_control_version')
+      .executeTakeFirstOrThrow()
+    const { grant } = await signNativeControlGrant({
+      userId: agentId,
+      accountId,
+      platform: 'signal',
+      expectedPlatformAccountExternalId: signalAci,
+      controlVersion: signalAccount.native_control_version,
+    }, TEST_JWT_SECRET)
+    const platformMessageId = '99999999-2222-3333-aaaa-555555555555:1788048000000'
+    const event = {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.upsert',
+      eventId: `signal-inbound:${platformMessageId}`,
+      message: {
+        platformConversationId: 'u:99999999-2222-3333-aaaa-555555555555',
+        platformMessageId,
+        direction: 'in',
+        senderExternalId: '99999999-2222-3333-aaaa-555555555555',
+        senderDisplayName: 'Alice',
+        conversationDisplayName: 'Alice',
+        body: 'signal hello',
+        mediaRefs: [],
+        replyToPlatformMessageId: null,
+        sentAt: '2026-08-30T00:00:00.000Z',
+        editedAt: null,
+        editVersion: null,
+        raw: { source: 'signal-desktop' },
+      },
+    }
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: { accountId, event },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(ingestDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: 'signal', accountId, platformMessageId, body: 'signal hello',
+      }),
+      expect.any(Function),
+      undefined,
+    )
+
+    const invalid = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: {
+        accountId,
+        event: { ...event, message: { ...event.message, platformMessageId: 'local-sqlite-uuid' } },
+      },
+    })
+    expect(invalid.statusCode).toBe(422)
   })
 
   it('Telegram 消息拒绝未带 chat 前缀的 TDLib 旧 id', async () => {
@@ -523,14 +630,14 @@ describe('native bridge routes', () => {
         event: {
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'message.deleted', eventId: 'signal-delete',
-          platformMessageId: 'signal-message-1', deletedAt: '2026-08-26T02:00:00.000Z',
+          platformMessageId: 'signal-sender:1', deletedAt: '2026-08-26T02:00:00.000Z',
         },
       },
     })
 
     expect(response.statusCode).toBe(200)
     expect(markMessageDeleted).toHaveBeenCalledWith(
-      accountId, 'signal-message-1', new Date('2026-08-26T02:00:00.000Z'), undefined,
+      accountId, 'signal-sender:1', new Date('2026-08-26T02:00:00.000Z'), undefined,
     )
   })
 

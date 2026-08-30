@@ -219,9 +219,12 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
-  createNativeControlGrant: (accountId: string) =>
+  createNativeControlGrant: (accountId: string, platformAccountExternalId?: string) =>
     request<NativeControlGrantResponse>(`/api/accounts/${accountId}/native-control-grant`, {
       method: 'POST',
+      ...(platformAccountExternalId
+        ? { body: JSON.stringify({ platformAccountExternalId }) }
+        : {}),
     }),
   /**
    * 只翻译，不发送。用来在发送前生成可编辑的预览 + 回译对照。

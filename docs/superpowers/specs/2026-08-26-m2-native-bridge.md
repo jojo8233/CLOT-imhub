@@ -85,7 +85,8 @@ host 按事件所属常驻 webview 绑定 accountId，guest 只上报 `platformC
 - 新受控 preload 只新增 `window.imHubNativeBridge`，不通过该接口暴露 `ipcRenderer`、
   Node.js、外壳 `window.imHub`、用户 JWT 或 control grant。
 - guest 上报不包含 `accountId`。主进程根据事件来自哪个常驻 webview 绑定账号，并用
-  服务端签发的五分钟 grant 实时复核 owner、账号撤销版本与 Telegram self user id。
+  服务端签发的五分钟 grant 实时复核 owner、账号撤销版本，以及 Telegram self user id 或
+  Signal ACI。
 - manager/auditor 的“可见”范围不等于可操控平台账号。当前桥接只接受实际账号归属人。
 - 非白名单主框架导航被阻止；新窗口只允许交给系统打开 http/https 链接。
 
@@ -159,3 +160,16 @@ Telegram fork 接线状态：
   outbox 按 Telegram self user id 单飞并有界限流
 - M3-2 已完成短时 account-control grant、实际平台账号身份绑定与 guest JWT 移除
 - M3-2 已完成 Telegram 退出/账号删除时对应本地 partition 与 bridge 能力清理
+
+## 8. M5 Signal 入站文字接线
+
+Signal Desktop 不能复用 `<webview>` attach 流程；补丁版 Signal 主进程把原生 renderer 放在
+同窗口 `WebContentsView` 后，显式将其 webContents 注册进同一个 `NativeControlHost`。guest
+仍不自报 im-hub `accountId`，只上报实际 Signal ACI；服务端 owner-only grant 首次绑定
+`native_desktop` 账号的实际 ACI，registry 必须同时匹配注册的 WebContents、账号和 ACI 才转发。
+
+第一阶段只从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站纯文字
+`message.upsert`。Signal Desktop 与 signal-cli 共用 `u:` / `g:` 会话键和
+`<normalized-sender>:<sent-at-ms>` 消息键，服务端拒绝非规范键并沿用数据库唯一约束。事件用
+稳定 `eventId` 重试到 `event.ack`，但当前 Signal 队列只在进程内有界保存；服务端重启可重试，
+Signal 进程重启后的未 ACK 恢复、媒体、编辑/删除/回应、context/composer 和翻译仍未接线。

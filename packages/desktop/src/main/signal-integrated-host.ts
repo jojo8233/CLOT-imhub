@@ -18,7 +18,10 @@ import {
   type SignalDesktopStateUpdate,
   type SignalDesktopSyncRequest,
 } from '../signal-desktop-ipc.js'
-import { attachImHubWindowRuntime } from './imhub-window-runtime.js'
+import {
+  attachImHubWindowRuntime,
+  registerIntegratedNativeGuest,
+} from './imhub-window-runtime.js'
 import {
   signalIntegratedAccountIdAllowed,
   signalIntegratedBounds,
@@ -102,6 +105,7 @@ function parseAccount(value: unknown): AccountPayload | null {
 
 class IntegratedSignalViewHost {
   private accountId: string | null = null
+  private nativeGuestRegistered = false
   private ready = false
   private failedMessage: string | null = null
 
@@ -134,6 +138,21 @@ class IntegratedSignalViewHost {
         return this.state(payload.accountId, 'failed', '当前原型只允许一个 Signal Desktop 账号')
       }
       this.accountId = payload.accountId
+      if (!this.nativeGuestRegistered) {
+        registerIntegratedNativeGuest(
+          this.hostWindow.webContents,
+          this.signalView.webContents,
+          payload.accountId,
+        )
+        this.nativeGuestRegistered = true
+      }
+      if (!payload.visible) {
+        this.signalView.setVisible(false)
+        if (this.failedMessage) return this.state(payload.accountId, 'failed', this.failedMessage)
+        return this.ready
+          ? this.state(payload.accountId, 'ready', null)
+          : this.state(payload.accountId, 'starting', '正在打开 Signal Desktop')
+      }
       const content = this.hostWindow.getContentBounds()
       const bounds = signalIntegratedBounds(payload.rect, content.width, content.height)
       if (!bounds) {
@@ -141,7 +160,7 @@ class IntegratedSignalViewHost {
         return this.state(payload.accountId, 'failed', 'Signal 内嵌区域尺寸无效')
       }
       this.signalView.setBounds(bounds)
-      this.signalView.setVisible(payload.visible && this.ready && this.failedMessage === null)
+      this.signalView.setVisible(this.ready && this.failedMessage === null)
       if (this.failedMessage) return this.state(payload.accountId, 'failed', this.failedMessage)
       return this.ready
         ? this.state(payload.accountId, 'ready', null)
@@ -172,7 +191,12 @@ class IntegratedSignalViewHost {
     state: SignalDesktopStateUpdate['state'],
     message: string | null,
   ): SignalDesktopStateUpdate {
-    return { accountId, state, message }
+    return {
+      accountId,
+      state,
+      message,
+      guestWebContentsId: this.nativeGuestRegistered ? this.signalView.webContents.id : null,
+    }
   }
 
   private emitCurrentState(): void {

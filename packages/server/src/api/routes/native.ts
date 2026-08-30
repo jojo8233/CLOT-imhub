@@ -10,8 +10,12 @@ import type {
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   NATIVE_EDIT_VERSION_MAX,
+  isSignalConversationId,
   normalizeTelegramChatId,
+  parseSignalMessageKey,
   parseTelegramMessageKey,
+  signalDirectConversationId,
+  signalMessageKey,
 } from '@im-hub/shared'
 import { z } from 'zod'
 import type { MessageIngestor, UpsertConversationInput } from '../../ingest/ingestor.js'
@@ -142,6 +146,9 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     if (account.platform === 'telegram') {
       const canonicalError = validateCanonicalTelegramEvent(event)
       if (canonicalError) return reply.code(422).send({ error: canonicalError })
+    } else if (account.platform === 'signal') {
+      const canonicalError = validateCanonicalSignalEvent(event)
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
     }
     if (event.type === 'message.upsert') {
       const result = await ingestNativeMessage(
@@ -254,7 +261,11 @@ async function ingestNativeMessage(
     sentAt: new Date(event.message.sentAt),
     raw: event.message.raw,
   }
-  return ingestor.ingestDetailed(message, onStored, 'telegram-tt')
+  return ingestor.ingestDetailed(
+    message,
+    onStored,
+    platform === 'telegram' ? 'telegram-tt' : undefined,
+  )
 }
 
 function deleteNativeMessage(
@@ -347,4 +358,44 @@ function sameEditRevision(
     && message.editedAt !== null
     && event.message.editedAt !== null
     && message.editedAt.toISOString() === new Date(event.message.editedAt).toISOString()
+}
+
+function validateCanonicalSignalEvent(
+  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent | NativeMessageIdRemappedEvent,
+): string | null {
+  if (event.type === 'message.id-remapped') {
+    return 'Signal message ids cannot be remapped'
+  }
+  if (event.type === 'message.deleted') {
+    return parseSignalMessageKey(event.platformMessageId)
+      ? null
+      : 'invalid canonical Signal message id'
+  }
+
+  const { message } = event
+  if (!isSignalConversationId(message.platformConversationId)) {
+    return 'invalid canonical Signal conversation id'
+  }
+  let expectedMessageId: string
+  try {
+    expectedMessageId = signalMessageKey(
+      message.senderExternalId,
+      new Date(message.sentAt).getTime(),
+    )
+  } catch {
+    return 'invalid canonical Signal message id'
+  }
+  if (message.platformMessageId !== expectedMessageId) {
+    return 'Signal message id does not match sender and sent time'
+  }
+  if (message.platformConversationId.startsWith('u:')
+    && message.direction === 'in'
+    && message.platformConversationId !== signalDirectConversationId(message.senderExternalId)) {
+    return 'Signal direct conversation does not match inbound sender'
+  }
+  if (message.replyToPlatformMessageId
+    && !parseSignalMessageKey(message.replyToPlatformMessageId)) {
+    return 'invalid canonical Signal reply id'
+  }
+  return null
 }

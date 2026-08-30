@@ -269,7 +269,7 @@ export class NativeControlHost {
     const value = await response.json() as unknown
     if (!record(value)
       || !ACCOUNT_ID.test(String(value.accountId))
-      || value.platform !== 'telegram'
+      || !['telegram', 'signal'].includes(String(value.platform))
       || typeof value.expectedPlatformAccountExternalId !== 'string'
       || value.expectedPlatformAccountExternalId === ''
       || typeof value.expiresAt !== 'string') {

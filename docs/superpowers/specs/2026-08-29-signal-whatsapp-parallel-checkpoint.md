@@ -1,7 +1,7 @@
 # M5/M6 Signal 与 WhatsApp 并行首检点
 
 日期：2026-08-29
-状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送首检
+状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送首检，入站文字桥接已实现并待真实落库续验
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -27,8 +27,8 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
 - 用户可见会话入口使用补丁版 Signal Desktop。`connection_mode=native_desktop` 的账号只在
   服务端登记归属与 UUID，profile 和同窗口 `WebContentsView` 由 Signal Desktop 基座进程托管，
   不触发 signal-cli 鉴权。
-- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；编辑、删除、回应、翻译、中央
-  回传、正式多开与安装包仍属于后续 M5。
+- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；当前已实现入站纯文字的中央
+  回传，入站媒体、编辑、删除、回应、翻译、正式多开与安装包仍属于后续 M5。
 - 启动真实测试前必须明确验证本机 `signal-cli` 与所需 Java 运行时。不得因为命令缺失让账号
   无限停在“待登录”而没有诊断。
 
@@ -75,3 +75,31 @@ Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下�
 
 续接时先验证最新同窗口开发包仍能恢复，再从“Signal 入站文字唯一落库/桥接设计”继续；不要
 重做上述窗口切换和原生文字/图片/贴纸发送矩阵。
+
+## 6. Signal 入站文字桥接实现 checkpoint（2026-08-30）
+
+本轮从 `539fb7e` 复用既有隔离 worktree 续接，没有重做三平台切换和 Signal 发送矩阵。
+实现边界如下：
+
+- Signal Desktop 8.25.0 的原生 preload 在 `ConversationModel.onNewMessage` 完成自身持久化后
+  触发受控 hook；启动顺序会先安装 im-hub bridge，再启动 Signal renderer，避免冷启动竞态。
+- Signal guest 不上报 im-hub `accountId`、JWT 或 control grant。Signal 的
+  `WebContentsView` 由主进程绑定账号 UUID；guest 只上报实际 ACI。服务端 owner-only grant
+  首次把该 ACI 绑定到 `connection_mode=native_desktop` 账号，主进程随后继续用实际
+  WebContents 与 grant 中的 ACI 逐次匹配。
+- Signal Desktop 与 `signal-cli` 共用 `packages/shared/src/signal.ts` 的规范身份算法。私聊
+  会话键为 `u:<normalized-aci>`，群会话键为 `g:<group-id>`，消息键为
+  `<normalized-sender>:<sent-at-ms>`；服务端拒绝非规范键、入站私聊发送者不匹配和 Signal
+  remap，数据库仍按 `(account_id, platform_message_id)` 幂等落库。
+- 当前只桥接 `type=incoming` 且正文非空的纯文字 `message.upsert`。媒体、贴纸、回应、编辑、
+  删除和 composer/context 命令均未开放；这些事实不能从 Signal DOM 推断或伪造。
+- 事件在 Signal 进程内使用稳定 `eventId`、两秒重试和 `event.ack`。服务停机但 Signal 进程
+  仍在时可继续重试；队列当前是最多 1000 项的内存队列，Signal 进程自身退出时尚不能恢复，
+  因而不能把它写成 Telegram IndexedDB outbox 同等级的持久可靠性。
+
+自动化证据已通过：`pnpm typecheck`、46 个测试文件（414 passed、1 todo）、desktop build，
+以及新生成开发包的补丁锚点计数与严格 codesign 校验。同窗口开发包已完成过外壳会话冷恢复；
+当前桥接修正版仍待 Safe Storage 授权后的真实续验。
+截至本节更新时，仍待从另一台已关联设备发送一条新的纯文字消息，以只读计数确认该事件在
+重试条件下只产生一个 `(account_id, platform_message_id)`；取得该证据前不得把“入站文字唯一
+落库”门槛标记为完成。
