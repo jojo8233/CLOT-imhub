@@ -173,5 +173,5 @@ Signal Desktop 不能复用 `<webview>` attach 流程；补丁版 Signal 主进�
 `<normalized-sender>:<sent-at-ms>` 消息键，服务端拒绝非规范键并沿用数据库唯一约束。事件用
 稳定 `eventId` 先写入专用 IndexedDB，再严格顺序重试到 `event.ack`；接受后删除，永久拒绝进入
 有界 dead-letter，存储和容量故障经非敏感 UI 提示。自动化已覆盖 outbox 对象重建后的同键重放，
-真实 Signal 进程重启后的未 ACK 恢复仍待取证；媒体、编辑/删除/回应、context/composer 和翻译
-仍未接线。
+真实 Signal 进程重启后的未 ACK 恢复也已通过隔离 503 故障取证；媒体、编辑/删除/回应、
+context/composer 和翻译仍未接线。

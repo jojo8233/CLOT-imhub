@@ -191,14 +191,15 @@ pnpm --filter @im-hub/desktop prepare:signal -- \
 首次运行新签名测试包时，macOS 可能询问读取 `Signal Safe Storage`；仅在确认路径是本次生成的
 本机测试包后授权。该模式仍只允许一个 Signal 账号，不能作为多账号发布配置。
 
-验证 Signal 入站 bridge 时，先启动服务端，再打开同窗口开发包；只需从另一台已关联设备发送
-一条新的纯文字消息，不要重复三平台切换或文字/图片/贴纸发送矩阵。当前 bridge 只处理 Signal
+验证 Signal 入站 bridge 时，先启动服务端，再打开同窗口开发包；只需由另一个 Signal 联系人向
+当前已登录账号发送一条新的纯文字消息，不要重复三平台切换或文字/图片/贴纸发送矩阵。当前 bridge 只处理 Signal
 自身已持久化的入站非空文字，媒体、贴纸、回应、编辑和删除尚未接入。事件先按实际 Signal ACI
 写入专用 IndexedDB，再以同一 `eventId` 严格顺序重试到服务端 ACK；pending 和 dead-letter
 分别最多 1000 项，永久拒绝必须经明确的重试或清理操作处理。核验数据库时只查询新增行数和
 `platform_message_id` 重复数，不要读取正文、`raw`、账号 ACI 或 profile。自动化已覆盖 outbox
-对象重建后的同键重放；真实未 ACK 消息跨 Signal 进程退出/重开的续收仍要在隔离服务地址上取证，
-不能只用启动时 pending=0 代替。
+对象重建后的同键重放；2026-08-30 也已用仅对 Signal 生效的隔离 503 地址完成真实未 ACK 消息
+跨 Signal 进程退出/重开的续收证据。后续除非改动这条链路，不要重复该故障矩阵，也不能用启动时
+pending=0 替代回归证据。
 
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
@@ -345,7 +346,7 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站纯文字 bridge
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
-  dead-letter 运维与故障提示也已实现，真实跨进程续收证据仍待完成。WhatsApp 只接入官方 Web
+  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入官方 Web
   的 owner-only 隔离壳。Signal 尚无入站媒体、编辑/删除/回应或翻译，WhatsApp 尚无统一 bridge；
   两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
   延后到 M8。

@@ -132,10 +132,11 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
   依赖 `(account_id, platform_message_id)` 去重。
 - Signal 入站事件先按实际 ACI 写入独立 IndexedDB，再以稳定 `eventId` 严格顺序重试到 ACK；
   接受后删除，永久拒绝进入有界 dead-letter，存储或容量故障必须显示非敏感提示。自动化已覆盖
-  outbox 对象重建后的同键重放，真实未 ACK 消息跨 Signal 进程退出/重开的证据仍待完成。
+  outbox 对象重建后的同键重放；真实未 ACK 消息经隔离 503、Signal 进程退出和正常进程重开后，
+  已用同一事件完成一次回传、ACK 清队列与数据库唯一落库。
 
 当前只允许一个 Signal Desktop 原生账号。真实关联、冷启动恢复、Telegram/WhatsApp/Signal
 标签切换，以及 Signal 文字、图片和贴纸发送已经通过；入站纯文字 bridge 的代码、自动化验证
 和一条真实消息的唯一落库证据也已完成。持久 outbox 代码、自动化、打包与空队列运行态初始化
-已通过，但真实未 ACK 进程重放尚未取证。入站媒体、编辑/删除/回应、翻译、正式多开、正式安装包、
+以及真实未 ACK 进程重放均已通过。入站媒体、编辑/删除/回应、翻译、正式多开、正式安装包、
 上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成可发布实现。
