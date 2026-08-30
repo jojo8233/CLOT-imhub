@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MIN, clampWidths, defaultWidths, visiblePanels } from './layout.js'
+import {
+  MIN,
+  clampWidths,
+  defaultWidths,
+  showsNativeTranslationDock,
+  visiblePanels,
+} from './layout.js'
 
 /** 三栏刚好都能按最小宽度放下的可用宽度 */
 const TIGHT = MIN.list + MIN.chat + MIN.customer
@@ -65,5 +71,13 @@ describe('visiblePanels', () => {
 
   it('连会话列表都放不下时两栏全收', () => {
     expect(visiblePanels(MIN.list + MIN.chat - 1)).toEqual({ list: false, customer: false })
+  })
+})
+
+describe('showsNativeTranslationDock', () => {
+  it('Telegram 与 Signal 显示翻译坞，WhatsApp 隔离壳不显示', () => {
+    expect(showsNativeTranslationDock('telegram')).toBe(true)
+    expect(showsNativeTranslationDock('signal')).toBe(true)
+    expect(showsNativeTranslationDock('whatsapp')).toBe(false)
   })
 })

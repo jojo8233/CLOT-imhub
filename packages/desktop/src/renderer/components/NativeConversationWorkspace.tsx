@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { nativeOutboxBridge } from '../native-bridge.js'
 import { useStore } from '../store.js'
 import { theme } from '../theme.js'
-import { loadWidths, MIN, RESIZER_WIDTH, saveWidths } from '../layout.js'
+import {
+  loadWidths,
+  MIN,
+  RESIZER_WIDTH,
+  saveWidths,
+  showsNativeTranslationDock,
+} from '../layout.js'
 import { CustomerPanel } from './CustomerPanel.js'
 import { NativeClient, signalOutboxStatusError } from './NativeClient.js'
 import { Resizer } from './Resizer.js'
@@ -121,6 +127,7 @@ export function NativeConversationWorkspace() {
     <div ref={rowRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <NativeClient />
+        {showsNativeTranslationDock(activePlatform) ? <TranslationDock /> : null}
         {activePlatform === 'whatsapp' || activePlatform === 'signal'
           ? (
             <div style={{
@@ -168,7 +175,7 @@ export function NativeConversationWorkspace() {
               ) : null}
             </div>
           )
-          : <TranslationDock />}
+          : null}
       </div>
 
       {showCustomer && (
