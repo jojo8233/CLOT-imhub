@@ -407,4 +407,9 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   build，以及官方 8.25.0 preload 的语法与唯一补丁检查；旧 `ii(t)===e` 解析器在产物中为 0 处。
   从 a28 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a29.app` 并通过 deep/strict codesign，
   已只平滑重启独立 bundle id `org.imhub.SignalDesktop` 的隔离包。Telegram 和服务端均未重启，
-  没有再发送消息；a29 将复用同一条已落库译文做进程重启恢复，最终原生气泡目视结果仍需确认。
+  没有再发送消息。
+- a29 重启后，同一条既有无敏感英文入站消息在原文下方显示中文译文；更早的已编辑入站消息也由
+  中央快照恢复为原文加译文。由此关闭 Signal“英文入站实时显示 + 进程重启历史回填”的真实门槛，
+  全程只使用 a28 阶段已经发送的那一条入站消息，没有新增消息。截图中本账号发出的蓝色出站消息
+  仍只显示 Signal 保存的单一正文，这是当前 `direction=in` 产品边界，不属于本次入站双语验收；
+  若产品要求出站也双语，必须另行定义员工原文与最终平台正文的保存、编辑和删除语义。
