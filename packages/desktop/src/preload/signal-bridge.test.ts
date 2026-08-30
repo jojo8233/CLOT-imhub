@@ -20,6 +20,15 @@ const outbox = vi.hoisted(() => ({
   retryDeadLetters: vi.fn(),
 }))
 
+const sendLedger = vi.hoisted(() => ({
+  acknowledge: vi.fn().mockResolvedValue(undefined),
+  activate: vi.fn(),
+  onOutgoingMessagePersisted: vi.fn().mockResolvedValue(undefined),
+  onOutgoingMessagePrepared: vi.fn().mockResolvedValue(undefined),
+  recover: vi.fn().mockResolvedValue(undefined),
+  send: vi.fn().mockResolvedValue('signal-final-message'),
+}))
+
 vi.mock('electron', () => ({
   ipcRenderer: {
     on: (channel: string, listener: (event: unknown, command: NativeHostCommand) => void) => {
@@ -32,6 +41,12 @@ vi.mock('electron', () => ({
 vi.mock('../signal-desktop-outbox.js', () => ({
   createIndexedDbSignalOutboxStorage: vi.fn(() => ({})),
   createSignalDesktopOutbox: vi.fn(() => outbox),
+}))
+
+vi.mock('../signal-desktop-send.js', () => ({
+  createIndexedDbSignalSendAttemptStorage: vi.fn(() => ({})),
+  createSignalDesktopSendLedger: vi.fn(() => sendLedger),
+  SignalDesktopSendError: class extends Error {},
 }))
 
 import { installSignalPreloadBridge } from './signal-bridge.js'
@@ -61,7 +76,11 @@ function signalWindow() {
   }
   const state = {
     nav: { selectedLocation: { tab: 'Chats', details: { conversationId: 'local-conversation-id' } } },
-    composer: { conversations: { 'local-conversation-id': { sendCounter: 2 } } },
+    composer: {
+      conversations: {
+        'local-conversation-id': { sendCounter: 2, attachments: [], isViewOnce: false },
+      },
+    },
   }
   const storeListeners = new Set<() => void>()
   let visibleDraft = ''
@@ -95,6 +114,7 @@ function signalWindow() {
         conversationId: 'local-conversation-id',
         readDraft: () => visibleDraft,
         setDraft: setVisibleDraft,
+        submit: vi.fn(() => true),
       },
     },
     attributes,
@@ -107,6 +127,9 @@ beforeEach(() => {
   electron.listeners.clear()
   electron.send.mockClear()
   for (const value of Object.values(outbox)) value.mockClear()
+  for (const value of Object.values(sendLedger)) value.mockClear()
+  sendLedger.recover.mockResolvedValue(undefined)
+  sendLedger.send.mockResolvedValue('signal-final-message')
 })
 
 afterEach(() => {
@@ -114,7 +137,7 @@ afterEach(() => {
 })
 
 describe('Signal preload composer bridge', () => {
-  it('重放规范当前会话与不可自动发送的 composer 状态', async () => {
+  it('重放规范当前会话与纯文字 composer 状态', async () => {
     const current = signalWindow()
     installSignalPreloadBridge(current.value)
     await vi.advanceTimersByTimeAsync(250)
@@ -140,7 +163,7 @@ describe('Signal preload composer bridge', () => {
     expect(JSON.stringify(events())).not.toContain('local-conversation-id')
   })
 
-  it('草稿命令写入 Signal action，自动发送命令明确拒绝', async () => {
+  it('草稿命令写入 Signal action，发送命令等待账本确认最终消息 ID', async () => {
     const current = signalWindow()
     installSignalPreloadBridge(current.value)
     await vi.advanceTimersByTimeAsync(250)
@@ -166,7 +189,7 @@ describe('Signal preload composer bridge', () => {
         type: 'command.result', requestId: 'set-1', command: 'composer.set-draft', ok: true,
       }),
       expect.objectContaining({
-        type: 'composer.state', draft: 'translated text', canSend: false,
+        type: 'composer.state', draft: 'translated text', canSend: true,
       }),
     ]))
 
@@ -177,17 +200,36 @@ describe('Signal preload composer bridge', () => {
       contextRevision: 1,
       platformConversationId: 'u:99999999-2222-3333-aaaa-555555555555',
       attemptId: 'attempt-1',
+      attemptContextRevision: 1,
+      draftFingerprint: 'a'.repeat(64),
     })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(sendLedger.send).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptId: 'attempt-1', draftFingerprint: 'a'.repeat(64) }),
+      expect.objectContaining({ draft: 'translated text' }),
+    )
     expect(events()).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'command.result',
         requestId: 'send-1',
         command: 'composer.send',
         attemptId: 'attempt-1',
-        ok: false,
-        error: expect.objectContaining({ code: 'signal_send_not_enabled' }),
+        ok: true,
+        platformMessageId: 'signal-final-message',
       }),
     ]))
+
+    command({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.ack-send',
+      attemptId: 'attempt-1',
+      platformMessageId: 'signal-final-message',
+    })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(sendLedger.acknowledge).toHaveBeenCalledWith(
+      'attempt-1',
+      'signal-final-message',
+    )
   })
 
   it('旧 revision 的草稿命令不会跨会话写入', async () => {

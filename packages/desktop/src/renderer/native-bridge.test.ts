@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { NATIVE_BRIDGE_PROTOCOL_VERSION, type NativeComposerCommand } from '@im-hub/shared'
 import {
   handleNativeCommandResult,
@@ -75,6 +75,28 @@ describe('parseNativeGuestEvent', () => {
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'account.signed-out',
     })).toMatchObject({ type: 'account.signed-out' })
+  })
+
+  it('只接受带有效正文指纹的 Signal attempt 恢复状态', () => {
+    const state = {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.state',
+      contextRevision: 3,
+      platformConversationId: 'u:peer',
+      draft: '',
+      canSend: false,
+      sendAttempt: {
+        attemptId: 'attempt-1',
+        contextRevision: 2,
+        draftFingerprint: 'a'.repeat(64),
+        platformMessageId: 'sender:123',
+      },
+    }
+    expect(parseNativeGuestEvent(state)).toEqual(state)
+    expect(parseNativeGuestEvent({
+      ...state,
+      sendAttempt: { ...state.sendAttempt, draftFingerprint: 'invalid' },
+    })).toBeNull()
   })
 
   it('拒绝缺平台消息 id 的回传事件', () => {
@@ -176,7 +198,25 @@ describe('nativeComposerBridge', () => {
       contextRevision: 2,
       platformConversationId: '-100123',
       attemptId: 'attempt-1',
+      attemptContextRevision: 2,
+      draftFingerprint: 'a'.repeat(64),
     })).toMatchObject({ type: 'composer.send', attemptId: 'attempt-1' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.ack-send',
+      attemptId: 'attempt-1',
+      platformMessageId: 'sender:123',
+    })).toMatchObject({ type: 'composer.ack-send', attemptId: 'attempt-1' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.send',
+      requestId: 'request-2',
+      contextRevision: 2,
+      platformConversationId: '-100123',
+      attemptId: 'attempt-1',
+      attemptContextRevision: -1,
+      draftFingerprint: 'invalid',
+    })).toBeNull()
     expect(parseNativeHostCommand({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'open-devtools',
@@ -240,6 +280,27 @@ describe('nativeComposerBridge', () => {
     unregister()
   })
 
+  it('8 秒没有最终结果时只报告 result_unknown，不把 attempt 当作未发送', async () => {
+    vi.useFakeTimers()
+    try {
+      const unregister = registerNativeCommandTarget(context.accountId, {
+        send: () => {},
+      })
+      const pending = nativeComposerBridge.send(
+        context,
+        'attempt-timeout',
+        'a'.repeat(64),
+        7,
+      )
+      const result = expect(pending).rejects.toMatchObject({ code: 'result_unknown' })
+      await vi.advanceTimersByTimeAsync(8_000)
+      await result
+      unregister()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('保留 guest 的脱敏错误码供外壳区分明确失败与结果未知', async () => {
     let sent: NativeComposerCommand | null = null
     const unregister = registerNativeCommandTarget(context.accountId, {
@@ -255,6 +316,23 @@ describe('nativeComposerBridge', () => {
       error: { code: 'send_failed', message: 'Telegram 原生发送失败' },
     })
     await expect(pending).rejects.toMatchObject({ code: 'send_failed' })
+    unregister()
+  })
+
+  it('Signal 最终结果提交后向同一账号 guest 发送 attempt ACK', async () => {
+    const sent: unknown[] = []
+    const unregister = registerNativeCommandTarget(context.accountId, {
+      send: (_channel, command) => { sent.push(command) },
+    })
+
+    await nativeComposerBridge.acknowledgeSend(context.accountId, 'attempt-1', 'sender:123')
+
+    expect(sent).toEqual([{
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.ack-send',
+      attemptId: 'attempt-1',
+      platformMessageId: 'sender:123',
+    }])
     unregister()
   })
 })

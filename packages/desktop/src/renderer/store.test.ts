@@ -191,7 +191,7 @@ describe('platform-scoped Zustand navigation', () => {
     expect(useStore.getState().nativeDrafts['tg-1:conv-1']).toBeUndefined()
   })
 
-  it('Signal 手动发送模式不会把 canSend=false 显示成草稿写入错误', () => {
+  it('Signal 自动发送启用后按原生 canSend=false 关闭草稿发送门禁', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('sig-1', 'ready')
     useStore.getState().setNativeContext('sig-1', {
@@ -206,7 +206,42 @@ describe('platform-scoped Zustand navigation', () => {
 
     expect(useStore.getState()).toMatchObject({
       nativeBridgeByAccount: { 'sig-1': { composerCanSend: false } },
-      nativeDrafts: { 'sig-1:sig-conv-1': { status: 'ready', error: null } },
+      nativeDrafts: {
+        'sig-1:sig-conv-1': { status: 'ready', error: '原生输入框当前不可发送' },
+      },
+    })
+  })
+
+  it('Signal 进程重启后恢复原 attemptId、正文指纹与首次 context revision', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('sig-1', 'ready')
+    useStore.getState().setNativeContext('sig-1', {
+      platformConversationId: 'u:peer', contactExternalId: 'peer', contactDisplayName: null,
+      contextRevision: 1, conversationId: 'sig-conv-1',
+    })
+
+    useStore.getState().applyNativeComposerState('sig-1', 1, 'u:peer', '', false, {
+      attemptId: 'attempt-before-restart',
+      contextRevision: 4,
+      draftFingerprint: 'a'.repeat(64),
+      platformMessageId: 'sender:123',
+    })
+
+    expect(useStore.getState().nativeDrafts['sig-1:sig-conv-1']).toMatchObject({
+      status: 'failed',
+      sendAttemptId: 'attempt-before-restart',
+      sendAttemptFingerprint: 'a'.repeat(64),
+      sendAttemptContextRevision: 4,
+      sendAttemptConfirmed: true,
+    })
+
+    useStore.getState().applyNativeComposerState('sig-1', 1, 'u:peer', '', false)
+
+    expect(useStore.getState().nativeDrafts['sig-1:sig-conv-1']).toMatchObject({
+      status: 'idle',
+      error: null,
+      sendAttemptId: null,
+      sendAttemptConfirmed: false,
     })
   })
 

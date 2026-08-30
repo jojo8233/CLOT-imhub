@@ -26,6 +26,12 @@ import {
   type SignalDesktopReduxStoreLike,
 } from '../signal-desktop-composer.js'
 import {
+  createIndexedDbSignalSendAttemptStorage,
+  createSignalDesktopSendLedger,
+  SignalDesktopSendError,
+  type SignalOutgoingMessageLike,
+} from '../signal-desktop-send.js'
+import {
   createIndexedDbSignalOutboxStorage,
   createSignalDesktopOutbox,
   type SignalOutboxEvent,
@@ -55,6 +61,8 @@ interface SignalBridgeWindow extends SignalDesktopComposerWindowLike {
       reaction: unknown,
       reactorConversation: SignalDesktopModelLike | null,
     ): Promise<void>
+    onOutgoingMessagePrepared(message: SignalOutgoingMessageLike): Promise<void>
+    onOutgoingMessagePersisted(message: SignalOutgoingMessageLike): Promise<void>
   }
 }
 
@@ -72,13 +80,18 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   const outbox = createSignalDesktopOutbox(
     createIndexedDbSignalOutboxStorage(globalThis.indexedDB),
   )
+  const sendLedger = createSignalDesktopSendLedger(
+    createIndexedDbSignalSendAttemptStorage(globalThis.indexedDB),
+    signalWindow,
+  )
   let lastIdentity: string | null = null
   let composerStore: SignalDesktopReduxStoreLike | null = null
   let unsubscribeComposer: (() => void) | null = null
   let currentComposer: SignalDesktopComposerSnapshot | null = null
   let contextRevision = 0
   let lastPlatformConversationId: string | null | undefined
-  let lastDraft: string | undefined
+  let lastComposerSignature: string | undefined
+  let composerEmissionGeneration = 0
 
   const accountIdentity = (): string => {
     const accountExternalId = lastIdentity ?? readSignalDesktopAci(signalWindow)
@@ -86,6 +99,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     if (lastIdentity !== accountExternalId) {
       lastIdentity = accountExternalId
       outbox.activate(accountExternalId, emit)
+      sendLedger.activate(accountExternalId)
     }
     return accountExternalId
   }
@@ -115,6 +129,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     if (identityChanged) {
       console.info('[signal-bridge] identity ready')
       outbox.activate(normalized, emit)
+      sendLedger.activate(normalized)
     }
     emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
@@ -128,16 +143,46 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     snapshot: SignalDesktopComposerSnapshot,
     force: boolean,
   ): void => {
-    if (!force && lastDraft === snapshot.draft) return
-    lastDraft = snapshot.draft
-    emit({
-      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
-      type: 'composer.state',
-      contextRevision,
-      platformConversationId: snapshot.context.platformConversationId,
-      draft: snapshot.draft,
-      // 本 checkpoint 只开放草稿读写；自动发送必须在稳定 attempt 幂等完成后单独启用。
-      canSend: false,
+    const generation = ++composerEmissionGeneration
+    const capturedRevision = contextRevision
+    void sendLedger.recover(snapshot.context.platformConversationId).then(sendAttempt => {
+      if (generation !== composerEmissionGeneration
+        || capturedRevision !== contextRevision
+        || currentComposer?.localConversationId !== snapshot.localConversationId
+        || currentComposer.context.platformConversationId
+          !== snapshot.context.platformConversationId) return
+      const signature = JSON.stringify({
+        draft: snapshot.draft,
+        canSend: snapshot.canSendPlainText,
+        sendAttempt,
+      })
+      if (!force && lastComposerSignature === signature) return
+      lastComposerSignature = signature
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'composer.state',
+        contextRevision,
+        platformConversationId: snapshot.context.platformConversationId,
+        draft: snapshot.draft,
+        canSend: snapshot.canSendPlainText,
+        ...(sendAttempt ? { sendAttempt } : {}),
+      })
+    }).catch(() => {
+      if (generation !== composerEmissionGeneration || capturedRevision !== contextRevision) return
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'composer.state',
+        contextRevision,
+        platformConversationId: snapshot.context.platformConversationId,
+        draft: snapshot.draft,
+        canSend: false,
+      })
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'bridge.error',
+        code: 'signal_send_ledger_unavailable',
+        message: 'Signal 发送 attempt 持久账本暂时不可用；自动发送已关闭',
+      })
     })
   }
 
@@ -163,7 +208,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     if (contextChanged) {
       contextRevision += 1
       lastPlatformConversationId = platformConversationId
-      lastDraft = undefined
+      lastComposerSignature = undefined
     }
     currentComposer = snapshot
     if (contextChanged || force) {
@@ -191,7 +236,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   const commandResult = (
     command: NativeComposerCommand,
     ok: boolean,
-    value?: { draft?: string; code?: string; message?: string },
+    value?: { draft?: string; platformMessageId?: string; code?: string; message?: string },
   ): NativeCommandResultEvent => ({
     protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
     type: 'command.result',
@@ -201,6 +246,9 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     ok,
     ...(command.type === 'composer.send' ? { attemptId: command.attemptId } : {}),
     ...(value?.draft !== undefined ? { draft: value.draft } : {}),
+    ...(value?.platformMessageId !== undefined
+      ? { platformMessageId: value.platformMessageId }
+      : {}),
     ...(!ok ? {
       error: {
         code: value?.code ?? 'signal_composer_command_failed',
@@ -210,13 +258,6 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   })
 
   const handleComposerCommand = async (command: NativeComposerCommand): Promise<void> => {
-    if (command.type === 'composer.send') {
-      emit(commandResult(command, false, {
-        code: 'signal_send_not_enabled',
-        message: 'Signal 自动发送尚未启用，请在原生输入框中确认后手动发送',
-      }))
-      return
-    }
     const snapshot = refreshComposer()
     if (command.contextRevision !== contextRevision
       || !signalComposerSnapshotMatches(snapshot, command.platformConversationId)) {
@@ -224,6 +265,22 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
         code: 'stale_signal_context',
         message: 'Signal 当前会话已经变化，请重新翻译',
       }))
+      return
+    }
+    if (command.type === 'composer.send') {
+      try {
+        const platformMessageId = await sendLedger.send(command, snapshot)
+        emit(commandResult(command, true, { platformMessageId }))
+        const updated = refreshComposer()
+        if (updated) emitComposerState(updated, true)
+        ipcRenderer.send(BOOTSTRAP_CHANNEL, 'composer-send-confirmed')
+      } catch (error) {
+        const sendError = error instanceof SignalDesktopSendError ? error : null
+        emit(commandResult(command, false, {
+          code: sendError?.code ?? 'signal_send_result_unknown',
+          message: sendError?.safeMessage ?? 'Signal 自动发送结果暂时无法确认',
+        }))
+      }
       return
     }
     if (command.type === 'composer.get-draft') {
@@ -284,6 +341,12 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
         reportInboundError(error)
       }
     },
+    async onOutgoingMessagePrepared(message): Promise<void> {
+      await sendLedger.onOutgoingMessagePrepared(message)
+    },
+    async onOutgoingMessagePersisted(message): Promise<void> {
+      await sendLedger.onOutgoingMessagePersisted(message)
+    },
   }
 
   ipcRenderer.on(COMMAND_CHANNEL, (_event, command: NativeHostCommand) => {
@@ -305,6 +368,22 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       return
     }
     if (command.type === 'outbox.discard-dead-letters') void outbox.discardDeadLetters()
+    if (command.type === 'composer.ack-send') {
+      void sendLedger.acknowledge(command.attemptId, command.platformMessageId)
+        .then(() => {
+          const snapshot = refreshComposer()
+          if (snapshot) emitComposerState(snapshot, true)
+        })
+        .catch(() => {
+          emit({
+            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+            type: 'bridge.error',
+            code: 'signal_send_ack_failed',
+            message: 'Signal 已确认发送结果，但 attempt ACK 暂时无法清理',
+          })
+        })
+      return
+    }
     if (command.type === 'composer.set-draft'
       || command.type === 'composer.get-draft'
       || command.type === 'composer.send') {

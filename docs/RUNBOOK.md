@@ -211,13 +211,21 @@ pending=0 替代回归证据。
 媒体引用。除非修改图片/贴纸归一化、outbox 或 ACK 链路，不要重复该真实矩阵。
 
 Signal 入站编辑、为所有人删除和普通回应已经通过真实续验；除非修改对应归一化、outbox 或 ACK
-链路，不要重复。当前翻译 checkpoint 只开放当前会话同步与 `composer.get-draft` /
-`composer.set-draft`：在 Signal 原生页面打开一个会话后，固定输入坞应从“等待原生输入桥接”变为
-可翻译；翻译结果必须写入同一 Signal 原生输入框。成功判定必须同时确认可见 CompositionInput
-正文和 ConversationModel 持久草稿，不能只看模型或脱敏日志。`composer.send` 仍明确拒绝，底栏
-要求客服在 Signal 输入框确认后手动发送。验证时只用一条无敏感内容的临时草稿，不读取或打印
-联系人 ACI、本地 ConversationModel id、草稿正文、profile 或 token；切换会话后的旧 revision
-必须被拒绝。a23 已完成该真实续验，除非修改会话、可见编辑器或草稿持久化边界，不要重复。
+链路，不要重复。a23 已完成当前会话同步、`composer.get-draft` / `composer.set-draft` 和可见原生
+草稿写入的真实续验；除非修改会话、可见编辑器或草稿持久化边界，不要重复。
+
+a24 在上述边界上增加翻译坞纯文字自动发送。它只在可见 CompositionInput 与 ConversationModel
+草稿完全相同，且没有附件、编辑、引用或 view-once 状态时开放。正文 fingerprint、首次
+`contextRevision` 与 `attemptId` 在 Signal guest 的持久账本中绑定；命令超时或结果丢失时再次点击
+必须沿用同一 attempt，不能重新翻译或生成新 attempt。只有 Signal 自身完成 outgoing 消息和 send
+job 持久化、并确认最终平台消息 ID 后，外壳才能显示成功并 ACK 清理账本；输入框清空、submit
+被调用或没有立即报错都不算成功。切会话、用户改稿和旧 revision 必须拒绝。账本不保存正文。
+
+当前 a24 已完成唯一一条无敏感纯文字续验：接收端精确收到一条，最终 ID 主链成功，但 ACK 前的
+已确认 attempt 状态回放让翻译坞误显示“操作失败”。消息没有失败或重复。a25 已把该短暂状态显式
+标记，并在 ACK 后的无 attempt 状态到达时清理；相关自动化、构建和签名均通过。按单条上限不要
+再发消息复验；当前修正版为 `/private/tmp/Signal-imhub-integrated-a25.app`。仍不得读取或打印联系人
+ACI、本地 ConversationModel id、草稿正文、最终消息键、profile 或 token，也不要重做其他矩阵。
 
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
@@ -367,7 +375,8 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入官方 Web
   的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
   入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
-  通过真实客户端续验，自动发送尚未开放；WhatsApp 尚无统一 bridge；
+  通过真实客户端续验。纯文字自动发送的真实单条送达与最终 ID 主链已通过；a24 的成功态 UI 竞态
+  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp 尚无统一 bridge；
   两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，

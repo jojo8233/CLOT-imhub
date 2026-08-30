@@ -61,6 +61,7 @@ describe('Signal Desktop composer bridge', () => {
       draft: 'existing draft',
       persistedDraft: 'existing draft',
       sendCounter: 3,
+      canSendPlainText: false,
     })
     expect(JSON.stringify(snapshot?.context)).not.toContain('local-conversation-id')
   })
@@ -85,6 +86,42 @@ describe('Signal Desktop composer bridge', () => {
       contactExternalId: 'g:Z3JvdXA=',
       contactDisplayName: '客服群',
     })
+  })
+
+  it('只有可见正文已持久化且没有附件、引用或编辑时开放纯文字自动发送', () => {
+    const attributes: Record<string, unknown> = {
+      serviceId: '99999999-2222-3333-aaaa-555555555555',
+      draft: 'ready text',
+      draftAttachments: [],
+    }
+    const windowLike = signalWindow(attributes)
+    windowLike.reduxStore = {
+      getState: () => ({
+        nav: {
+          selectedLocation: {
+            tab: 'Chats', details: { conversationId: 'local-conversation-id' },
+          },
+        },
+        composer: {
+          conversations: {
+            'local-conversation-id': {
+              sendCounter: 3, attachments: [], isViewOnce: false,
+            },
+          },
+        },
+      }),
+      subscribe: () => () => {},
+    }
+    windowLike.__imHubSignalComposerEditor = {
+      conversationId: 'local-conversation-id',
+      readDraft: () => 'ready text',
+      setDraft: () => true,
+      submit: () => true,
+    }
+
+    expect(readSignalDesktopComposerSnapshot(windowLike)?.canSendPlainText).toBe(true)
+    attributes.quotedMessageId = 'quoted-message'
+    expect(readSignalDesktopComposerSnapshot(windowLike)?.canSendPlainText).toBe(false)
   })
 
   it('没有选中会话时不伪造上下文', () => {

@@ -138,9 +138,33 @@ try {
   )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,
+    'xe=(0,LZ.useCallback)(()=>{let e=Date.now();if(ce.current===void 0)return;if(!ue.current){rLn.warn(`Not submitting message - cannot send right now`);return}let{text:t,bodyRanges:n}=ge();rLn.info(`Submitting message ${e} with ${n.length} ranges`),ue.current=!1,T(t,n,e)||(ue.current=!0)},[T])',
+    'xe=(0,LZ.useCallback)(e=>{if(e=e===void 0?Date.now():e,!Number.isSafeInteger(e)||ce.current===void 0)return!1;if(!ue.current)return rLn.warn(`Not submitting message - cannot send right now`),!1;let{text:t,bodyRanges:n}=ge();rLn.info(`Submitting message ${e} with ${n.length} ranges`),ue.current=!1;let a=T(t,n,e);return a||(ue.current=!0),a},[T])',
+    'Signal CompositionInput attempt 时间戳提交',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
     '(0,LZ.useImperativeHandle)(p,()=>({focus:_e,hasFocus:Se,insertEmoji:ve,setContents:be,reset:ye,submit:xe}),[_e,Se,ve,ye,be,xe]),(0,LZ.useEffect)(()=>{le.current=e},[e])',
-    '(0,LZ.useImperativeHandle)(p,()=>({focus:_e,hasFocus:Se,insertEmoji:ve,setContents:be,reset:ye,submit:xe}),[_e,Se,ve,ye,be,xe]),(0,LZ.useEffect)(()=>{if(!o)return;let e={conversationId:o,readDraft:()=>ce.current===void 0?null:ge().text,setDraft:e=>{if(ce.current===void 0||typeof e!=`string`)return!1;return be(e,[],!0),!0}};return window.__imHubSignalComposerEditor=e,()=>{window.__imHubSignalComposerEditor===e&&delete window.__imHubSignalComposerEditor}},[o,be]),(0,LZ.useEffect)(()=>{le.current=e},[e])',
+    '(0,LZ.useImperativeHandle)(p,()=>({focus:_e,hasFocus:Se,insertEmoji:ve,setContents:be,reset:ye,submit:xe}),[_e,Se,ve,ye,be,xe]),(0,LZ.useEffect)(()=>{if(!o)return;let e={conversationId:o,readDraft:()=>ce.current===void 0?null:ge().text,setDraft:e=>{if(ce.current===void 0||typeof e!=`string`)return!1;return be(e,[],!0),!0},submit:e=>Number.isSafeInteger(e)&&xe(e)===!0};return window.__imHubSignalComposerEditor=e,()=>{window.__imHubSignalComposerEditor===e&&delete window.__imHubSignalComposerEditor}},[o,be,xe]),(0,LZ.useEffect)(()=>{le.current=e},[e])',
     'Signal 可见 Composer 草稿接口',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'if(r)return window.MessageCache.register(new Hp(r))}var lle,Gp=',
+    'if(r)return window.MessageCache.register(new Hp(r))}window.__imHubSignalResolveOutgoingMessage=e=>Aa.getMessageById(e);var lle,Gp=',
+    'Signal 最终出向消息恢复 action',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'E=window.MessageCache.register(new Hp(T)),D=Date.now();t.ca(typeof E.get(`timestamp`)==`number`,`Expected a timestamp`),this.enableProfileSharing',
+    'E=window.MessageCache.register(new Hp(T)),D=Date.now();await window.__imHubSignalBridge?.onOutgoingMessagePrepared(E),t.ca(typeof E.get(`timestamp`)==`number`,`Expected a timestamp`),this.enableProfileSharing',
+    'Signal 出向 attempt 本地消息标识',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'await window.MessageCache.saveMessage(E,{jobToInsert:e,forceSave:!0})});let O=Date.now()-D;',
+    'await window.MessageCache.saveMessage(E,{jobToInsert:e,forceSave:!0})}),await window.__imHubSignalBridge?.onOutgoingMessagePersisted(E);let O=Date.now()-D;',
+    'Signal 最终出向消息持久化确认',
   )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,

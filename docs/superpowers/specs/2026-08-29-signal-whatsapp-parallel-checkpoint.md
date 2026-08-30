@@ -59,8 +59,10 @@ im-hub 发出文字且手机端收到、服务重启后继续收信。WhatsApp �
 对应 partition。
 
 Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字唯一落库、真实未 ACK 跨进程重放、
-入站图片/贴纸结构化元数据和编辑/删除/回应真实续验均已完成。下一 Signal checkpoint 是当前会话
-同步与翻译写入原生草稿。WhatsApp
+入站图片/贴纸结构化元数据、编辑/删除/回应以及当前会话/原生草稿真实续验均已完成。Signal
+纯文字自动发送的 attempt 账本、最终消息 ID 确认代码和 a24 测试包已经完成。a24 的唯一一条
+无敏感文字已真实送达，但成功后的 ACK 状态回放让翻译坞误显示“操作失败”；a25 已修复并通过
+自动化，尚未补发第二条，因此完整 UI 验收仍保持开放。WhatsApp
 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
 其他受控方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram
 的通用 preload，也禁止用 DOM scraping 冒充稳定消息协议。
@@ -74,8 +76,9 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
 - 当前只支持一个 Signal Desktop 原生账号；入站文字、图片/贴纸结构化元数据及编辑/删除/回应
-  均已取得真实证据；当前会话与可见原生草稿写入也已真实续验；自动发送、附件二进制与其他
-  入站媒体仍未完成。
+  均已取得真实证据；当前会话与可见原生草稿写入也已真实续验。纯文字自动发送的唯一一条真实
+  消息已送达并确认最终结果；a24 暴露的成功态 UI 竞态已在 a25 修复并自动化验证，但未再发消息。
+  附件二进制与其他入站媒体仍未完成。
   持久 outbox 实现、空队列初始化与
   真实未 ACK 消息跨进程重放均已通过，但仍不能越级标记 M5 完成。
 - WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
@@ -256,3 +259,53 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - 敏感边界保持不变：不读取或输出 `.env`、Signal profile/session、数据库正文、ACI、具体消息键、
   媒体引用、token、二维码或密钥；数据库只做必要的聚合只读验证。不要合并 PR #19，不要关闭
   Issue #12。
+
+## 12. Signal 纯文字发送 attempt 账本实现 checkpoint（2026-08-31）
+
+- 本轮从 `7e58a07` 继续复用原隔离 worktree。重新核对官方 Signal Desktop 8.25.0 程序 bundle 后，
+  发送链确定为 `CompositionInput.inputApi.submit(timestamp)` → CompositionArea `onSubmit` →
+  Signal `sendMultiMediaMessage` → `ConversationModel.enqueueMessageForSend` → 消息与 send job 的同一
+  持久化事务。补丁只在这些 Signal 自身 action/状态和持久化点增加精确唯一 hook，不读取 DOM。
+- 当前自动路径严格限于纯文字：可见 CompositionInput 正文必须与 ConversationModel 持久草稿
+  完全相同，Redux composer 和模型都不能有附件、编辑、引用或 view-once 状态。图片、贴纸、编辑、
+  回应及其他既有发送边界不经过本账本，因此没有重做已通过的原生发送或入站矩阵。
+- renderer 为正文计算精确 UTF-8 SHA-256，仅把 fingerprint、`attemptId`、当前会话和首次
+  `contextRevision` 交给 Signal guest。持久 IndexedDB 账本不保存正文，只保存实际 Signal 账号、
+  规范会话、guest 内部会话引用、首次 revision、fingerprint、提交时间、本地消息引用和最终平台
+  消息 ID；最多保留 100 项。首次 revision 以 `attemptContextRevision` 固定，不能被重试时的新
+  revision 偷换。
+- 新 attempt 在写入账本后才调用原生 `submit`，并在提交前再次核对会话、revision、正文
+  fingerprint 和纯文字资格。同一 attempt 的双击与并发请求合并为一次 submit；切会话或用户改稿
+  会拒绝旧 attempt；同会话同 fingerprint 尚未得到最终结果时，新 attempt 也会冲突，避免超时后
+  以新 ID 重发。
+- Signal 创建实际 outgoing model 后、写消息与 send job 之前，prepared hook 先把 Signal 本地
+  消息引用绑定到 attempt；事务完成后的 persisted hook 再验证 outgoing 类型、会话、实际
+  `sent_at` 与正文 fingerprint。最终平台消息 ID 只使用 Signal 自身“本账号 sender + 实际
+  `sent_at`”规范键生成，不套用 Telegram 临时/最终消息 ID 映射算法。
+- 只有 persisted hook 确认最终平台消息 ID 后，`composer.send` 才返回成功。命令超时保持
+  `result_unknown`，再次点击沿用原 attempt；若 command result 丢失或进程重启，账本可直接重放
+  已持久结果，或按 prepared 阶段保存的 Signal 本地消息引用从 Signal 自身 DataReader 重新验证，
+  不再次 submit。外壳收到成功后另发 `composer.ack-send`；只有 attempt 和最终平台消息 ID 精确
+  匹配时才删除账本，ACK 丢失则留待重启恢复。
+- host/guest 命令增加 fingerprint、首次 revision、恢复状态和最终 ID ACK，仍保持 bridge protocol
+  version 3；服务端 HTTP、WebSocket、数据库和 `/api/native/events` 合约均未变化，因此本轮没有
+  重启服务端或 Telegram。
+- 自动化已通过 `pnpm typecheck`、Signal/renderer/host 7 个文件 65 项定向测试、全量 50 个文件
+  457 passed / 1 todo，以及 desktop build。准备脚本从官方 8.25.0 程序和 a23 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a24.app`；submit timestamp、DataReader 恢复、prepared 和
+  persisted 四个新增锚点各唯一命中，deep/strict codesign 通过。过程中未读取配置内容或任何
+  profile/session 数据。
+- a24 启动时发现本机 4000 没有服务进程；服务端从隔离 worktree 启动后，旧外壳不会自动重试首次
+  bootstrap，因此只重启了独立 bundle id `org.imhub.SignalDesktop` 的 a24。随后会话恢复、账号/
+  会话列表、WebSocket 和原生 control grant 均成功，没有重启 Telegram 客户端。
+- 用户只发送了一条无敏感纯文字，接收端确认精确收到一条，证明 submit → Signal 消息/send job
+  持久化 → 最终平台消息 ID → command result 的真实主链成功；未读取正文、ACI、本地/平台消息键、
+  profile、token 或数据库内容，也没有重复任何既有矩阵。
+- 同一次续验暴露纯 UI 竞态：renderer 收到成功并清空翻译坞后，guest 在 ACK 删除账本前回放一次
+  “最终 ID 已确认”的 attempt，翻译坞被重新建成“操作失败”；ACK 后的无 attempt 状态原先没有
+  收掉它。消息本身没有重复或失败。renderer 现显式记录 `sendAttemptConfirmed`，只在 Signal 的
+  后续无 attempt 状态到达时清除该短暂恢复态；待核对或未确认 attempt 不受影响。
+- 修正后相关 store/TranslationDock 25 项测试、`pnpm typecheck`、desktop build 均通过；从 a24
+  不透明配置生成 `/private/tmp/Signal-imhub-integrated-a25.app` 并通过 deep/strict codesign。
+  遵守单条上限，没有用第二条消息重验 a25，因此“真实送达与最终 ID 主链”已通过，“成功后 UI
+  收敛”仍只有自动化证据，不能把整个纯文字自动发送标记为完整真实验收。

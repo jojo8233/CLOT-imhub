@@ -86,7 +86,10 @@
    不再等待 M3 生产观察全部结束才启动。Signal 已改用补丁版 Signal Desktop 作为用户可见
    入口，同窗口、真实关联、冷启动恢复、账号切换以及文字、图片和贴纸发送已通过；入站
    文字、图片与贴纸结构化元数据 bridge、编辑/删除/回应及真实唯一落库均已通过；当前会话
-   与原生草稿读写已接入既有 control grant，自动发送仍保持关闭；
+   与原生草稿读写已接入既有 control grant。纯文字自动发送已实现持久 attempt 账本、正文
+   fingerprint、最终 Signal 消息 ID 确认和重启恢复。a24 的唯一一条真实纯文字已精确送达，
+   证明最终 ID 主链成功；成功后的 ACK 状态回放曾让翻译坞误显示失败，a25 已修复并通过自动化，
+   尚未用第二条消息复验，因此仍不能标记完整 UI 已验收；
    `signal-cli` 只保留后台回退，不再由
    添加/重关联弹窗触发。WhatsApp 首检点只在 owner 的隔离
    partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发。WhatsApp
@@ -137,6 +140,12 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 - Signal Desktop 与 `signal-cli` 使用同一个规范键实现：私聊 `u:<normalized-aci>`、群聊
   `g:<group-id>`、消息 `<normalized-sender>:<sent-at-ms>`。服务端只接受规范 Signal 键并继续
   依赖 `(account_id, platform_message_id)` 去重。
+- Signal 翻译坞的纯文字发送先把 `attemptId`、首次 `contextRevision`、正文 SHA-256 fingerprint
+  和 Signal 自身提交时间写入 guest IndexedDB 账本，再调用 `CompositionInput.submit`。prepared
+  hook 在消息与 send job 持久化前绑定 Signal 本地消息引用，persisted hook 在事务完成后使用本账号
+  sender 与实际 `sent_at` 生成最终规范消息键。只有最终键确认后才能报告成功；超时、结果丢失和
+  进程重启沿用同一 attempt，最终 ID 精确 ACK 后才清理。账本不保存正文，也不套用 Telegram 的
+  临时/最终消息 ID 算法。
 - Signal 入站事件先按实际 ACI 写入独立 IndexedDB，再以稳定 `eventId` 严格顺序重试到 ACK；
   接受后删除，永久拒绝进入有界 dead-letter，存储或容量故障必须显示非敏感提示。自动化已覆盖
   outbox 对象重建后的同键重放；真实未 ACK 消息经隔离 503、Signal 进程退出和正常进程重开后，
@@ -147,6 +156,7 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 和一条真实消息的唯一落库证据也已完成。持久 outbox 代码、自动化、打包与空队列运行态初始化
 以及真实未 ACK 进程重放均已通过。入站图片/贴纸结构化元数据的真实唯一落库也已通过；附件
 二进制和其他入站媒体仍未接入。编辑/删除/回应的代码、数据库迁移、自动化和真实客户端续验
-均已完成。翻译输入坞的 Signal 当前会话同步与可见原生草稿写入也已通过真实客户端续验；自动发送、
-正式多开、正式安装包、
+均已完成。翻译输入坞的 Signal 当前会话同步与可见原生草稿写入也已通过真实客户端续验；纯文字
+自动发送的真实单条送达与最终 ID 主链已通过；a24 暴露的成功态 UI 竞态已在 a25 修复并自动化
+验证，但按单条上限未再次真实发送。正式多开、正式安装包、
 上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成可发布实现。

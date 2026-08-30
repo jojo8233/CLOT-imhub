@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { AuthChallengeKind } from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
-import type { NativeConversationContext } from '@im-hub/shared'
+import type { NativeComposerStateEvent, NativeConversationContext } from '@im-hub/shared'
 import {
   initialNavigation,
   reconcileNavigation,
@@ -62,12 +62,20 @@ export interface NativeDraftState {
   /** 结果未知时与最终原生草稿绑定，重试必须沿用同一个逻辑发送标识。 */
   sendAttemptId: string | null
   sendAttemptDraft: string | null
+  /** Signal 只恢复正文指纹，不把消息正文复制进持久 attempt 账本。 */
+  sendAttemptFingerprint: string | null
+  sendAttemptContextRevision: number | null
+  /** guest 已确认最终 ID、正在等待最终 ACK 状态回放完成。 */
+  sendAttemptConfirmed: boolean
 }
 
 const EMPTY_DRAFT: NativeDraftState = {
   sourceText: '', translatedText: '', backTranslated: null,
   targetLang: null, status: 'idle', error: null,
   sendAttemptId: null, sendAttemptDraft: null,
+  sendAttemptFingerprint: null,
+  sendAttemptContextRevision: null,
+  sendAttemptConfirmed: false,
 }
 
 interface State {
@@ -123,6 +131,7 @@ interface State {
     platformConversationId: string,
     draft: string,
     canSend: boolean,
+    sendAttempt?: NonNullable<NativeComposerStateEvent['sendAttempt']>,
   ): void
   updateNativeDraft(key: string, patch: Partial<NativeDraftState>): void
   clearNativeDraft(key: string): void
@@ -304,6 +313,7 @@ export const useStore = create<State>((set) => ({
     platformConversationId,
     draft,
     canSend,
+    sendAttempt,
   ) => set((s) => {
     const current = s.nativeBridgeByAccount[accountId]
     if (!current?.context
@@ -317,10 +327,40 @@ export const useStore = create<State>((set) => ({
       || existing?.status === 'translating'
       || existing?.status === 'sending'
     const hasDraft = draft.trim() !== ''
-    const manualNativeSend = s.accounts.find(account => account.id === accountId)?.platform === 'signal'
+    const signalAccount = s.accounts.some(account => account.id === accountId
+      && account.platform === 'signal')
     const nextDrafts = { ...s.nativeDrafts }
-    if (existing && !busy) {
-      if (existing.status === 'ready' && !hasDraft) {
+    if (sendAttempt && !busy
+      && (!existing?.sendAttemptId || existing.sendAttemptId === sendAttempt.attemptId)) {
+      nextDrafts[key] = {
+        ...(existing ?? EMPTY_DRAFT),
+        status: 'failed',
+        error: sendAttempt.platformMessageId
+          ? '上次 Signal 发送已确认，点击发送完成结果恢复'
+          : '上次 Signal 发送结果待确认，点击发送继续核对',
+        sendAttemptId: sendAttempt.attemptId,
+        sendAttemptDraft: null,
+        sendAttemptFingerprint: sendAttempt.draftFingerprint,
+        sendAttemptContextRevision: sendAttempt.contextRevision,
+        sendAttemptConfirmed: sendAttempt.platformMessageId !== null,
+      }
+    } else if (existing && !busy) {
+      if (signalAccount && existing.sendAttemptConfirmed && !sendAttempt) {
+        // 最终 ID 已确认的 attempt 可能在 renderer 清空成功态后、guest 完成 ACK 前短暂
+        // 回放一次。ACK 后的无 attempt 状态必须收掉这个短暂恢复态，不能继续显示失败。
+        nextDrafts[key] = {
+          ...existing,
+          translatedText: '',
+          backTranslated: null,
+          status: 'idle',
+          error: null,
+          sendAttemptId: null,
+          sendAttemptDraft: null,
+          sendAttemptFingerprint: null,
+          sendAttemptContextRevision: null,
+          sendAttemptConfirmed: false,
+        }
+      } else if (existing.status === 'ready' && !hasDraft && !existing.sendAttemptId) {
         // 原生框在 ready 后被清空，通常表示用户从原生端发送/删除了草稿。
         // 清掉外壳的可发送门禁，避免再点一次发送重复消息。
         nextDrafts[key] = {
@@ -331,11 +371,14 @@ export const useStore = create<State>((set) => ({
           error: null,
           sendAttemptId: null,
           sendAttemptDraft: null,
+          sendAttemptFingerprint: null,
+          sendAttemptContextRevision: null,
+          sendAttemptConfirmed: false,
         }
       } else if (existing.status === 'ready') {
         nextDrafts[key] = {
           ...existing,
-          error: canSend || manualNativeSend ? null : '原生输入框当前不可发送',
+          error: canSend ? null : '原生输入框当前不可发送',
         }
       }
     }

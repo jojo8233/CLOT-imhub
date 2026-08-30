@@ -34,6 +34,8 @@ interface SignalDesktopComposerEditorBridge {
   conversationId: string
   readDraft?(): unknown
   setDraft?(text: string): unknown
+  /** 调用 Signal 8.25.0 CompositionInput.inputApi.submit；timestamp 由 attempt 账本固定。 */
+  submit?(timestamp: number): unknown
 }
 
 export interface SignalDesktopComposerWindowLike extends SignalDesktopWindowLike {
@@ -54,6 +56,8 @@ export interface SignalDesktopComposerSnapshot {
   /** Signal ConversationModel 中已经持久化的草稿，用于拒绝可见层假成功。 */
   persistedDraft: string
   sendCounter: number | null
+  /** 只允许纯文字新消息；附件、引用、编辑和 view-once 继续交给 Signal 原生 UI。 */
+  canSendPlainText: boolean
 }
 
 export type SignalDesktopComposerErrorCode =
@@ -90,6 +94,15 @@ function composerSendCounter(state: unknown, conversationId: string): number | n
   if (!record(composer) || !Number.isSafeInteger(composer.sendCounter)) return null
   const sendCounter = composer.sendCounter as number
   return sendCounter >= 0 ? sendCounter : null
+}
+
+function composerHasUnsupportedSendState(state: unknown, conversationId: string): boolean {
+  if (!record(state) || !record(state.composer) || !record(state.composer.conversations)) return true
+  const composer = state.composer.conversations[conversationId]
+  if (!record(composer)) return true
+  return !Array.isArray(composer.attachments)
+    || composer.attachments.length > 0
+    || composer.isViewOnce === true
 }
 
 /** 只从 Signal 的 Redux 选中态与 ConversationModel 读取，不依赖 DOM。 */
@@ -135,12 +148,24 @@ export function readSignalDesktopComposerSnapshot(
       'Signal 原生草稿超过桥接上限，请先在原生输入框中缩短内容',
     )
   }
+  const hasUnsupportedModelState = (Array.isArray(modelAttribute(conversation, 'draftAttachments'))
+    ? (modelAttribute(conversation, 'draftAttachments') as unknown[]).length > 0
+    : modelAttribute(conversation, 'draftAttachments') != null)
+    || modelAttribute(conversation, 'draftEditMessage') != null
+    || modelAttribute(conversation, 'quotedMessageId') != null
+    || modelAttribute(conversation, 'draftIsViewOnce') === true
   return {
     localConversationId,
     context,
     draft,
     persistedDraft,
     sendCounter: composerSendCounter(state, localConversationId),
+    canSendPlainText: draft.trim() !== ''
+      && draft === persistedDraft
+      && editor?.conversationId === localConversationId
+      && typeof editor.submit === 'function'
+      && !composerHasUnsupportedSendState(state, localConversationId)
+      && !hasUnsupportedModelState,
   }
 }
 

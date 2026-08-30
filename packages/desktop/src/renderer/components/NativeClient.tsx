@@ -141,6 +141,8 @@ export function signalInboundErrorIsNonfatal(code: string): boolean {
     || code === 'invalid_signal_reaction'
     || code === 'signal_composer_state_unavailable'
     || code === 'signal_draft_too_large'
+    || code === 'signal_send_ledger_unavailable'
+    || code === 'signal_send_ack_failed'
 }
 
 interface NativeWebviewLoadProbe {
@@ -557,6 +559,14 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
             context.platformConversationId,
             conversationId,
           )
+          // 初次 composer.state 可能先于服务端 conversation UUID 解析完成。
+          // 解析后要求 Signal 重放，确保进程重启留下的发送 attempt 不会丢在竞态里。
+          void nativeControl.sendCommand(target, {
+            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+            type: 'bridge.request-state',
+          }).catch(() => {
+            useStore.getState().setNativeBridgeNotice(accountId, 'Signal 发送状态重放失败，请重试')
+          })
           void api.listConversations().then(({ conversations }) => {
             if (!disposed) useStore.getState().setConversations(conversations)
           }).catch(() => {})
@@ -579,6 +589,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
           event.platformConversationId,
           event.draft,
           event.canSend,
+          event.sendAttempt,
         )
         return
       }
