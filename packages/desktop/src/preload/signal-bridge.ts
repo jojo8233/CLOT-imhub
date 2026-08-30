@@ -8,6 +8,7 @@ import { NATIVE_GUEST_EVENT_CHANNEL } from '../native-control-ipc.js'
 import {
   normalizeSignalDesktopInbound,
   readSignalDesktopAci,
+  SignalDesktopInboundError,
   type SignalDesktopModelLike,
   type SignalDesktopWindowLike,
 } from '../signal-desktop-message.js'
@@ -75,13 +76,14 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
           outbox.activate(accountExternalId, emit)
         }
         const queued = await outbox.enqueue(accountExternalId, event)
-        if (queued) console.info('[signal-bridge] inbound text persisted')
-      } catch {
+        if (queued) console.info('[signal-bridge] inbound message persisted')
+      } catch (error) {
+        const inboundError = error instanceof SignalDesktopInboundError ? error : null
         emit({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'bridge.error',
-          code: 'invalid_signal_inbound',
-          message: 'Signal 入站文字缺少稳定身份，已拒绝回传',
+          code: inboundError?.code ?? 'invalid_signal_inbound',
+          message: inboundError?.safeMessage ?? 'Signal 入站消息无法安全归一化，已拒绝回传',
         })
       }
     },

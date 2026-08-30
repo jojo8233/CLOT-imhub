@@ -131,6 +131,13 @@ export function signalOutboxStatusError(
   return null
 }
 
+/** 单条入站消息归一化失败不影响账号授权，也不能阻断后续消息继续回传。 */
+export function signalInboundErrorIsNonfatal(code: string): boolean {
+  return code === 'invalid_signal_inbound'
+    || code === 'invalid_signal_media'
+    || code === 'unsupported_signal_media'
+}
+
 interface NativeWebviewLoadProbe {
   getURL(): string
   getWebContentsId(): number
@@ -464,6 +471,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
     const onGuestEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
+        useStore.getState().setNativeBridgeNotice(accountId, null)
         useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在核对 Signal 登录身份')
         return
       }
@@ -478,11 +486,17 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
         observedIdentity = null
         hasUsableGrant = false
         useStore.getState().setNativeAccountIdentity(accountId, null)
+        useStore.getState().setNativeBridgeNotice(accountId, null)
         setControlError('Signal 账号已退出')
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Signal 账号已退出')
         return
       }
       if (event.type === 'bridge.error') {
+        if (signalInboundErrorIsNonfatal(event.code)) {
+          useStore.getState().setNativeBridgeNotice(accountId, event.message)
+          return
+        }
+        useStore.getState().setNativeBridgeNotice(accountId, null)
         setControlError(event.message)
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
         return
@@ -503,6 +517,9 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
 
       void nativeControl.reportEvent(target, event).then(() => {
         if (disposed) return
+        setControlError(null)
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'ready')
         sendEventAck(event.eventId, true, false)
         void api.listConversations().then(({ conversations }) => {
           if (!disposed) useStore.getState().setConversations(conversations)
@@ -516,7 +533,8 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
           || status === 425
           || status === 429
           || status >= 500
-        setControlError(retryable ? 'Signal 入站回传失败，正在重试' : 'Signal 入站回传被服务端拒绝')
+        const detail = retryable ? 'Signal 入站回传失败，正在重试' : 'Signal 入站回传被服务端拒绝'
+        useStore.getState().setNativeBridgeNotice(accountId, detail)
         sendEventAck(event.eventId, false, retryable)
       })
     }

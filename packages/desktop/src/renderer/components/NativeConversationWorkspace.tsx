@@ -33,6 +33,10 @@ export function NativeConversationWorkspace() {
       : signalOutbox?.pendingCount
         ? `消息回传队列待处理 ${signalOutbox.pendingCount} 条`
         : null
+  const signalBridgeNotice = activePlatform === 'signal'
+    ? activeNative?.notice
+      ?? (activeNative?.connection === 'failed' ? activeNative.error : null)
+    : null
 
   const clampCustomerWidth = useCallback((width: number): number => {
     const max = Math.max(MIN.customer, rowWidth - MIN.chat - RESIZER_WIDTH)
@@ -126,17 +130,19 @@ export function NativeConversationWorkspace() {
             }}>
               <div>
                 {activePlatform === 'signal'
-                  ? 'Signal Desktop 首检模式：同窗口登录及原生发送已验证；入站纯文字回传已接入，入站媒体与翻译尚未开启。'
+                  ? 'Signal Desktop 首检模式：入站文字已续验；图片与贴纸元数据桥接已接入、待真实入站续验，其他媒体与翻译尚未开启。'
                   : 'WhatsApp Web 测试模式：当前验证独立登录、多开和原生文字收发；翻译与消息回传尚未开启。'}
               </div>
-              {activePlatform === 'signal' && (signalOutboxNotice || outboxActionError) ? (
+              {activePlatform === 'signal'
+                && (signalBridgeNotice || signalOutboxNotice || outboxActionError) ? (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: theme.space.sm,
-                  marginTop: 6, color: signalOutbox?.deadLetterCount || signalOutbox?.lastErrorCode
+                  marginTop: 6, color: signalBridgeNotice
+                    || signalOutbox?.deadLetterCount || signalOutbox?.lastErrorCode
                     ? theme.color.danger
                     : theme.color.textFaint,
                 }}>
-                  <span>{signalOutboxNotice ?? outboxActionError}</span>
+                  <span>{signalBridgeNotice ?? signalOutboxNotice ?? outboxActionError}</span>
                   {signalOutbox?.deadLetterCount ? (
                     <>
                       <button
@@ -155,7 +161,9 @@ export function NativeConversationWorkspace() {
                       </button>
                     </>
                   ) : null}
-                  {signalOutboxNotice && outboxActionError ? <span>{outboxActionError}</span> : null}
+                  {(signalBridgeNotice || signalOutboxNotice) && outboxActionError
+                    ? <span>{outboxActionError}</span>
+                    : null}
                 </div>
               ) : null}
             </div>

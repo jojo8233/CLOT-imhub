@@ -1,7 +1,8 @@
 # M5/M6 Signal 与 WhatsApp 并行首检点
 
 日期：2026-08-29
-状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库及持久 outbox 初始化
+状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库、持久 outbox
+真实重放；图片/贴纸结构化元数据桥接代码已完成，真实入站续验待办
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -27,8 +28,9 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
 - 用户可见会话入口使用补丁版 Signal Desktop。`connection_mode=native_desktop` 的账号只在
   服务端登记归属与 UUID，profile 和同窗口 `WebContentsView` 由 Signal Desktop 基座进程托管，
   不触发 signal-cli 鉴权。
-- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；当前已实现入站纯文字的中央
-  回传，入站媒体、编辑、删除、回应、翻译、正式多开与安装包仍属于后续 M5。
+- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；当前已实现入站文字中央回传，
+  图片/贴纸结构化元数据桥接代码已接入并等待真实续验。附件二进制、其他入站媒体、编辑、删除、
+  回应、翻译、正式多开与安装包仍属于后续 M5。
 - 启动真实测试前必须明确验证本机 `signal-cli` 与所需 Java 运行时。不得因为命令缺失让账号
   无限停在“待登录”而没有诊断。
 
@@ -57,7 +59,8 @@ im-hub 发出文字且手机端收到、服务重启后继续收信。WhatsApp �
 对应 partition。
 
 Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字唯一落库和真实未 ACK 跨进程重放
-均已完成；下一 checkpoint 从入站图片/贴纸的结构化事件边界设计继续。WhatsApp 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
+均已完成；入站图片/贴纸的结构化事件边界与自动化已完成，下一步只做真实入站续验。WhatsApp
+先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
 其他受控方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram
 的通用 preload，也禁止用 DOM scraping 冒充稳定消息协议。
 
@@ -69,13 +72,15 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
 - 已复用一个隔离真实账号完成：钥匙串授权、冷启动恢复、Telegram → WhatsApp → Signal 往返
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
-- 当前只支持一个 Signal Desktop 原生账号；入站纯文字唯一落库已在本轮取得真实证据，但
-  服务重启续收、编辑/删除/回应、翻译和入站媒体仍未完成。持久 outbox 实现、空队列初始化与
+- 当前只支持一个 Signal Desktop 原生账号；入站文字唯一落库已在本轮取得真实证据，
+  图片/贴纸结构化元数据桥接代码已完成但真实续验待办；编辑/删除/回应、翻译、附件二进制与
+  其他入站媒体仍未完成。持久 outbox 实现、空队列初始化与
   真实未 ACK 消息跨进程重放均已通过，但仍不能越级标记 M5 完成。
 - WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
 
-续接时先验证最新同窗口开发包仍能恢复，再从“Signal 入站图片/贴纸结构化桥接边界”继续；不要
-重做上述窗口切换、原生文字/图片/贴纸发送矩阵或未 ACK 跨进程重放矩阵。
+续接时先验证最新同窗口开发包仍能恢复，再让另一个 Signal 联系人各发一条图片与贴纸，只验证
+结构化媒体引用的唯一落库；不要重做上述窗口切换、原生文字/图片/贴纸发送矩阵或未 ACK 跨进程
+重放矩阵。
 
 ## 6. Signal 入站文字桥接实现 checkpoint（2026-08-30）
 
@@ -93,8 +98,9 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
   会话键为 `u:<normalized-aci>`，群会话键为 `g:<group-id>`，消息键为
   `<normalized-sender>:<sent-at-ms>`；服务端拒绝非规范键、入站私聊发送者不匹配和 Signal
   remap，数据库仍按 `(account_id, platform_message_id)` 幂等落库。
-- 当前只桥接 `type=incoming` 且正文非空的纯文字 `message.upsert`。媒体、贴纸、回应、编辑、
-  删除和 composer/context 命令均未开放；这些事实不能从 Signal DOM 推断或伪造。
+- 本 checkpoint 当时只桥接 `type=incoming` 且正文非空的纯文字 `message.upsert`；第 8 节已在
+  同一事件边界上增加图片/贴纸结构化元数据。回应、编辑、删除和 composer/context 命令仍未
+  开放；这些事实不能从 Signal DOM 推断或伪造。
 - 事件使用稳定 `eventId`，先按实际 Signal ACI 写入专用 IndexedDB，再严格顺序重试到
   `event.ack`。接受后删除，永久拒绝进入最多 1000 项的 dead-letter；pending 也最多 1000 项。
   存储、容量和永久失败只显示非敏感状态，不把正文或 ACI 暴露给外壳。
@@ -106,7 +112,7 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
 integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；随后由另一个 Signal 联系人
 向当前账号补发一条纯文字，服务端只接受一次 `/api/native/events` 并回 ACK。只读数据库计数为桥接行 1、
 重复规范键 0、入站行 1、规范键格式行 1，未读取正文、ACI 值或具体消息键。因此“Signal 入站
-文字唯一落库”门槛已完成；服务重启续收仍待后续取证。
+文字唯一落库”门槛已完成；其后的未 ACK 跨进程续收取证见第 7 节。
 
 ## 7. Signal 入站持久 outbox 实现 checkpoint（2026-08-30）
 
@@ -129,3 +135,22 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - 只读聚合数据库核验为最近 Signal 行 1、入站行 1、非规范消息键 0、重复键组 0；未读取正文、
   ACI、profile 或具体消息键。因此真实未 ACK 消息跨 Signal 进程退出/重开的持久重放与唯一落库
   门槛已经完成。
+
+## 8. Signal 入站图片/贴纸结构化桥接 checkpoint（2026-08-30）
+
+- 以 Signal Desktop 8.25.0 自身类型为边界：普通媒体来自 `message.attachments[]`，贴纸来自
+  独立 `message.sticker`。只接受 `image/*` 普通附件和贴纸；无正文的纯图片/贴纸也会生成
+  `message.upsert`。
+- `mediaRefs.remoteId` 仅由 Signal 本地消息 id 与消息内 `attachment:<index>` / `sticker`
+  槽位构成。事件只可携带 kind、文件名、MIME 和非负大小，不读取或导出 `path`、`localKey`、
+  附件 key、pack key、cdn 字段或二进制数据。
+- 消息规范键、`eventId`、实际 ACI 分区、IndexedDB outbox、ACK 和服务端数据库唯一约束均沿用
+  已续验文字链路，因此同一消息重放仍应命中 `(account_id, platform_message_id)` 唯一边界，
+  不为每个附件额外制造消息行。
+- 视频、音频、文件或媒体结构异常会整条拒绝，避免带 caption 的消息只落正文形成不完整存档。
+  这类单条消息错误在底栏显示非致命提示，不撤销 control grant；下一条成功事件会清除提示。
+- 自动化已覆盖图片无正文、贴纸、稳定槽位、路径/密钥/二进制不泄露、缺本地消息 id、未支持
+  媒体整条拒绝、非致命错误分类及提示不被身份心跳提前清除。`pnpm typecheck`、47 文件
+  423 passed / 1 todo、desktop build、a18 补丁打包与严格 codesign 均已通过。真实入站图片/贴纸
+  的唯一落库、媒体 kind 聚合与 ACK 清队列尚待新开发包续验，完成前不能声称附件内容已归档
+  或可预览。

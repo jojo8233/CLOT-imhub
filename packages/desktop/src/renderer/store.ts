@@ -34,6 +34,8 @@ export interface NativeConversationState extends NativeConversationContext {
 export interface NativeAccountBridgeState {
   connection: NativeBridgeConnection
   error: string | null
+  /** 不影响账号授权的消息级提示；身份心跳不得把它提前清除。 */
+  notice: string | null
   /** guest 报告的实际平台登录账号；M3 control grant 用它做身份绑定。 */
   platformAccountExternalId: string | null
   context: NativeConversationState | null
@@ -102,6 +104,7 @@ interface State {
   setAccountStatus(accountId: string, status: string): void
   updateConversationTargetLang(id: string, targetLang: string | null): void
   setNativeBridgeConnection(accountId: string, connection: NativeBridgeConnection, error?: string | null): void
+  setNativeBridgeNotice(accountId: string, notice: string | null): void
   setNativeOutboxStatus(
     accountId: string,
     status: NonNullable<NativeAccountBridgeState['outbox']>,
@@ -210,6 +213,7 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection,
         error,
+        notice: s.nativeBridgeByAccount[accountId]?.notice ?? null,
         platformAccountExternalId:
           s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context: s.nativeBridgeByAccount[accountId]?.context ?? null,
@@ -220,6 +224,16 @@ export const useStore = create<State>((set) => ({
       },
     },
   })),
+  setNativeBridgeNotice: (accountId, notice) => set((s) => {
+    const current = s.nativeBridgeByAccount[accountId]
+    if (!current) return {}
+    return {
+      nativeBridgeByAccount: {
+        ...s.nativeBridgeByAccount,
+        [accountId]: { ...current, notice },
+      },
+    }
+  }),
   setNativeOutboxStatus: (accountId, status) => set((s) => {
     const current = s.nativeBridgeByAccount[accountId]
     if (!current) return {}
@@ -236,6 +250,7 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
         error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        notice: s.nativeBridgeByAccount[accountId]?.notice ?? null,
         platformAccountExternalId,
         context: s.nativeBridgeByAccount[accountId]?.context ?? null,
         composerCanSend: s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false,
@@ -249,6 +264,7 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
         error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        notice: s.nativeBridgeByAccount[accountId]?.notice ?? null,
         platformAccountExternalId:
           s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context,

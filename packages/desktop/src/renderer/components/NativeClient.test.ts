@@ -7,6 +7,7 @@ import {
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
   signalDesktopAccountIdsToMount,
+  signalInboundErrorIsNonfatal,
   signalOutboxStatusError,
 } from './NativeClient.js'
 
@@ -130,6 +131,15 @@ describe('Signal persistent outbox status', () => {
       deadLetterCount: 2,
       lastErrorCode: 'permanent_rejection',
     })).toBe('2 条事件永久失败，等待人工处理')
+  })
+})
+
+describe('Signal inbound message errors', () => {
+  it('单条消息归一化或媒体不支持只提示，不把账号桥接标记为致命故障', () => {
+    expect(signalInboundErrorIsNonfatal('invalid_signal_inbound')).toBe(true)
+    expect(signalInboundErrorIsNonfatal('invalid_signal_media')).toBe(true)
+    expect(signalInboundErrorIsNonfatal('unsupported_signal_media')).toBe(true)
+    expect(signalInboundErrorIsNonfatal('signal_identity_unavailable')).toBe(false)
   })
 })
 

@@ -135,6 +135,19 @@ describe('platform-scoped Zustand navigation', () => {
     expect(useStore.getState().nativeBridgeByAccount['tg-2']?.outbox).toBeUndefined()
   })
 
+  it('消息级提示不被身份心跳清除，只在显式成功后恢复', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeBridgeNotice('tg-1', '当前媒体尚未支持')
+    useStore.getState().setNativeAccountIdentity('tg-1', '123456')
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.notice)
+      .toBe('当前媒体尚未支持')
+
+    useStore.getState().setNativeBridgeNotice('tg-1', null)
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.notice).toBeNull()
+  })
+
   it('只接受当前会话 revision 的 composer 状态，并以原生框可发送性为准', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('tg-1', 'ready')

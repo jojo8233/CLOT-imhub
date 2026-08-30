@@ -161,17 +161,23 @@ Telegram fork 接线状态：
 - M3-2 已完成短时 account-control grant、实际平台账号身份绑定与 guest JWT 移除
 - M3-2 已完成 Telegram 退出/账号删除时对应本地 partition 与 bridge 能力清理
 
-## 8. M5 Signal 入站文字接线
+## 8. M5 Signal 入站消息接线
 
 Signal Desktop 不能复用 `<webview>` attach 流程；补丁版 Signal 主进程把原生 renderer 放在
 同窗口 `WebContentsView` 后，显式将其 webContents 注册进同一个 `NativeControlHost`。guest
 仍不自报 im-hub `accountId`，只上报实际 Signal ACI；服务端 owner-only grant 首次绑定
 `native_desktop` 账号的实际 ACI，registry 必须同时匹配注册的 WebContents、账号和 ACI 才转发。
 
-第一阶段只从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站纯文字
-`message.upsert`。Signal Desktop 与 signal-cli 共用 `u:` / `g:` 会话键和
+第一阶段从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站文字、图片和贴纸
+`message.upsert`。图片读取 `attachments[]`，贴纸读取独立 `sticker` 字段；桥内只保留类型、
+文件名、MIME、大小和由本地消息 id + 槽位生成的稳定 `remoteId`，不读取或导出本机路径、附件
+密钥、pack key 或二进制。视频、音频和文件尚未接入，包含这些附件的消息整条拒绝，不能只落
+caption。单条消息归一化错误只产生可见的非致命提示，下一条成功事件继续正常处理。
+
+Signal Desktop 与 signal-cli 共用 `u:` / `g:` 会话键和
 `<normalized-sender>:<sent-at-ms>` 消息键，服务端拒绝非规范键并沿用数据库唯一约束。事件用
 稳定 `eventId` 先写入专用 IndexedDB，再严格顺序重试到 `event.ack`；接受后删除，永久拒绝进入
 有界 dead-letter，存储和容量故障经非敏感 UI 提示。自动化已覆盖 outbox 对象重建后的同键重放，
-真实 Signal 进程重启后的未 ACK 恢复也已通过隔离 503 故障取证；媒体、编辑/删除/回应、
+真实 Signal 进程重启后的未 ACK 恢复也已通过隔离 503 故障取证。图片/贴纸结构化元数据代码与
+自动化已完成，真实入站唯一落库仍待续验；附件二进制、其他媒体、编辑/删除/回应、
 context/composer 和翻译仍未接线。
