@@ -237,15 +237,29 @@ ConversationModel id、草稿正文、最终消息键、profile 或 token，也�
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
 再生成 CLI 二维码。
 
-WhatsApp 首检点不需要服务端凭据：owner 创建 WhatsApp 账号后，会话区域直接加载官方
-`web.whatsapp.com`，二维码在官方页面内扫描。每个账号使用独立 Electron partition。当前只
-验证页面内登录、多开和文字收发；没有 im-hub 翻译、消息回传或中央归档。若页面没有出现，
+WhatsApp 首检点不需要服务端凭据：owner 创建的账号会登记为 `connection_mode=web_shell`，
+会话区域直接加载官方 `web.whatsapp.com`，二维码在官方页面内扫描。每个账号使用独立 Electron
+partition。当前只验证页面内登录、多开和原生收发；没有 im-hub 翻译、消息回传或中央归档，
+也不注入 preload 或读取 DOM。历史 `connection_mode=adapter` 账号保留兼容，不要批量改写或删除。
+若页面没有出现，
 先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
 启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确
 WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽其他 guest 权限。若官方
 页面已经完整但 im-hub 显示自己的“等了 20 秒”遮罩，检查 shell-only 就绪判定是否错误依赖
 `webview.isLoading()`；WhatsApp 登录后该标志可能长期为 `true`，应按已附着的精确 origin
 显示页面，同时继续用 `did-fail-load` 处理真实主框架错误。
+
+WhatsApp 统一消息链必须另行接入 Business Platform。当前数据库只预留
+`connection_mode=cloud_api`，创建接口会明确拒绝，直到以下前置条件全部满足：
+
+- Meta Business/Developer 应用与适用的业务资质已经准备，并通过官方 Embedded Signup 为客户授权；
+- 服务端有公开 HTTPS Webhook，能完成验证、按官方方案校验回调真实性并订阅目标 WABA；
+- WABA id、phone-number id 与 im-hub owner/account 的绑定经过服务端复核；access token 仅以
+  服务端 secret reference 保存，绝不进入 renderer、webview、日志或 `credentials_ref` 明文；
+- 入站直接使用 Webhook `messages[].id`，出站只在 Graph API 响应返回 `messages[].id` 后报告
+  “平台已接受”，后续 `sent/delivered/read/failed` 由状态 Webhook 按同一 id 更新；
+- 请求超时或响应丢失时不得假设平台支持客户端幂等键并自动重发。先按选定 Graph API 版本的
+  官方文档确定去重/对账策略，再实现 `attemptId` 账本；禁止套用 Telegram 或 Signal 的 id 算法。
 
 ---
 
@@ -378,12 +392,13 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站文字 bridge
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
-  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入官方 Web
+  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入 `web_shell` 官方 Web
   的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
   入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
   通过真实客户端续验。纯文字自动发送的真实单条送达与最终 ID 主链已通过；a24 的成功态 UI 竞态
-  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp 尚无统一 bridge；
-  两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
+  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp `cloud_api` 尚无官方授权、
+  Webhook 或统一 bridge；两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp
+  Business Platform 闭环仍待后续，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
   约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。

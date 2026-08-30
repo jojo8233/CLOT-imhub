@@ -23,15 +23,17 @@ describe('native account ownership gate', () => {
 
   it('宿主启动时预挂载 owner 的全部已支持账号，不依赖先点开 tab', () => {
     const accounts = [
-      { id: 'tg-1', platform: 'telegram', owner_user_id: 'user-1' },
-      { id: 'tg-2', platform: 'telegram', owner_user_id: 'user-1' },
-      { id: 'signal-1', platform: 'signal', owner_user_id: 'user-1' },
-      { id: 'wa-1', platform: 'whatsapp', owner_user_id: 'user-1' },
-      { id: 'other-tg', platform: 'telegram', owner_user_id: 'user-2' },
+      { id: 'tg-1', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
+      { id: 'tg-2', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
+      { id: 'signal-1', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop' as const },
+      { id: 'wa-1', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'web_shell' as const },
+      { id: 'wa-old', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
+      { id: 'wa-api', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'cloud_api' as const },
+      { id: 'other-tg', platform: 'telegram', owner_user_id: 'user-2', connection_mode: 'adapter' as const },
     ]
 
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, true))
-      .toEqual(['tg-1', 'tg-2', 'wa-1'])
+      .toEqual(['tg-1', 'tg-2', 'wa-1', 'wa-old'])
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'auditor' }, true))
       .toEqual([])
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, false))

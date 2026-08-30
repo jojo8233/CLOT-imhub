@@ -42,7 +42,7 @@ export interface AccountsTable {
   team_id: string | null
   display_name: string
   status: AccountStatus
-  /** 服务端适配器或桌面原生客户端；有默认值以兼容既有账号和 seed。 */
+  /** 服务端适配器、桌面原生客户端、官方网页壳或官方 Cloud API。 */
   connection_mode: Generated<AccountConnectionMode>
   credentials_ref: string | null
   /** 由平台适配器确认的实际登录身份；Telegram 使用 self user id。 */

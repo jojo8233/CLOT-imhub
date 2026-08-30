@@ -325,3 +325,37 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   `/private/tmp/Signal-imhub-integrated-a26.app` 及 deep/strict codesign 均通过。
 - 本修复只涉及 im-hub 外壳连接恢复，不修改 Signal/Telegram/WhatsApp guest、发送 attempt、
   HTTP/WS 合约或服务端。没有停止服务端做真实断线探针，也没有发送第二条 Signal 消息。
+
+## 14. WhatsApp 官方接入边界 checkpoint（2026-08-31）
+
+- 重新核对 WhatsApp 官方条款与 Meta 官方 Business Platform 资料后，M6 不再尝试给
+  `web.whatsapp.com` 注入 preload、抓取 DOM 或执行页面脚本。WhatsApp Business 条款明确限制
+  未经书面许可的逆向、数据抓取和交互应用；官方网页也没有向 im-hub 承诺稳定的身份/消息事件
+  合约。该页面只保留为 owner-only、每账号独立 partition 的原生 UI 壳。
+- `AccountConnectionMode` 新增 `web_shell` 与 `cloud_api`。新建 WhatsApp 官方网页账号默认登记为
+  `web_shell`，不会启动服务端占位适配器；历史 `adapter` 账号与实现继续保留兼容，不批量迁移、
+  不删除。桌面端只为 `web_shell` 和历史 `adapter` WhatsApp 账号加载官方页面，绝不为未来
+  `cloud_api` 账号误挂网页 session。
+- `cloud_api` 是统一消息链的唯一计划路线：通过 Embedded Signup 取得业务授权，以 WABA id 与
+  phone-number id 绑定 im-hub 账号；服务端使用官方 Graph API 发送，使用可公开访问的 HTTPS
+  WABA Webhook 接收入站和状态事件。token 必须只存在服务端 secret store，账号行保存引用而非明文，
+  renderer/webview 不得接触。
+- 平台消息 id 直接来自官方事件/响应：入站使用 Webhook `messages[].id`；出站只有 Graph API
+  成功响应返回 `messages[].id` 后才能报告“平台已接受”，之后 `sent/delivered/read/failed` 状态
+  以 Webhook 中相同 id 更新。不能套用 Telegram temp/final remap 或 Signal sender/timestamp 键。
+- `cloud_api` 当前只完成 schema/protocol 预留，创建接口明确返回未配置，避免产生假账号。公开
+  Webhook、Meta 应用/业务授权、回调真实性校验和 secret reference 均未就绪，因此本 checkpoint
+  没有发送 WhatsApp 消息、没有重扫二维码，也不能声称统一桥接已接入。
+- 未来发送 attempt 必须先持久化正文 fingerprint、目标、账号授权 revision 与 attemptId。Graph
+  请求超时或响应丢失时，在选定 API 版本的官方幂等/查询能力没有明确证据前不得盲目自动重发；
+  结果未知应保持待对账或人工处置。最终账本只能绑定 WhatsApp 返回的平台 id。
+- 官方事实来源：[WhatsApp Business Terms](https://www.whatsapp.com/legal/business-terms)、
+  WhatsApp Business Platform 的 Meta 官方 Postman collection（[Messages](https://www.postman.com/meta/whatsapp-business-platform/folder/o48mro7/messages)
+  与 [Webhook Payload Reference](https://www.postman.com/meta/whatsapp-business-platform/folder/vzaxn16/webhook-payload-reference)），
+  以及 [WhatsApp Business Partner](https://whatsappbusiness.com/partners/become-a-partner/) 页面中
+  Tech Provider/Embedded Signup 的说明。实现时仍须锁定具体 Graph API 版本并复核当期官方文档。
+- migration 已分别在开发库和按规则派生的隔离 `_test` 库成功应用；账号路由 33 项、全量 51 个
+  文件 462 passed / 1 todo、`pnpm typecheck` 与 desktop build 均通过。当前服务端仍在 4000 监听，
+  从 a26 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a27.app` 并通过 deep/strict codesign。
+  本轮没有重启 Telegram、没有打开第二个服务端实例、没有发送 WhatsApp 或 Signal 消息；a27
+  仅生成未启动。

@@ -99,23 +99,24 @@ interface PlatformAdapter {
 - 发送走 Zoom REST API
 - 注意：Zoom Team Chat 面向团队内部沟通，客户侧覆盖有限
 
-### 5.4 WhatsApp — 客户端网页容器（唯一例外）
+### 5.4 WhatsApp — 官方网页壳与 Business Platform 双边界
 
-消息源在客户端，方向与其他三个相反：
+> 2026-08-31 校正：本节原先提出的 preload/selector 抓取方案已废弃，不能作为实现依据。
+> WhatsApp Business 条款明确限制未授权的抓取、逆向和交互应用；网页改版也不存在可维护的
+> 消息事件合约。当前决定以 `2026-08-29-signal-whatsapp-parallel-checkpoint.md` 第 14 节为准。
 
-```
-web.whatsapp.com（WebContentsView，每账号独立 session partition）
-      │ preload 注入抓取
-      ▼
-   desktop ──WebSocket──► server 归一化入库 ──► 同一条 pipeline
-发送：server 下发指令 ──► desktop 注入执行
-```
+两种账号必须显式分开：
 
-**两条必须接受的后果：**
-1. 员工电脑关机时 WhatsApp 收不到消息，其他三平台照常
-2. Meta 改版会打断消息抓取，需要跟进维护
+1. `connection_mode=web_shell`：每账号一个隔离 Electron partition，只承载官方
+   `web.whatsapp.com` 页面和页面内原生操作；不注入 im-hub preload、不读取 DOM、不声称有
+   消息回传、翻译或中央归档。历史 `adapter` 账号暂时保留兼容，不在本轮批量改写。
+2. `connection_mode=cloud_api`：未来统一消息链只能使用 WhatsApp Business Platform 官方
+   Graph API、WABA Webhook 与 Embedded Signup。当前只预留连接模式，官方授权和 Webhook
+   尚未实现时创建接口必须明确拒绝，不能生成假凭据或把浏览器 session 冒充 API token。
 
-**隔离要求：** 独立包 `adapters/whatsapp-webview`，坏掉不得影响其他平台。抓取选择器集中在一个 `selectors.ts`，改版时只改这一个文件。
+Cloud API 的账号身份以 WABA 与 phone-number id 为边界；入站消息使用 Webhook 的平台消息 id，
+出站消息只接受 Graph API 成功响应返回的平台消息 id，并由后续状态 Webhook 按同一 id 更新。
+不得复用 Telegram 临时 id 或 Signal sender/timestamp 规范键算法。
 
 ## 6. 数据模型
 

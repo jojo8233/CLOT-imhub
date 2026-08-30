@@ -385,8 +385,18 @@ async function connectRegisteredAccounts(): Promise<void> {
 
   const adapterAccounts = all.filter(a => a.connection_mode === 'adapter')
   const nativeDesktopAccounts = all.filter(a => a.connection_mode === 'native_desktop')
+  const webShellAccounts = all.filter(a => a.connection_mode === 'web_shell')
+  const cloudApiAccounts = all.filter(a => a.connection_mode === 'cloud_api')
   if (nativeDesktopAccounts.length > 0) {
     console.log(`[server] ${nativeDesktopAccounts.length} 个原生桌面账号交由 im-hub 桌面主进程托管`)
+  }
+  if (webShellAccounts.length > 0) {
+    console.log(`[server] ${webShellAccounts.length} 个官方网页壳账号交由 im-hub 桌面主进程托管`)
+  }
+  if (cloudApiAccounts.length > 0) {
+    console.warn(
+      `[server] ${cloudApiAccounts.length} 个 Cloud API 账号尚未启用；请完成官方授权配置后再连接`,
+    )
   }
 
   // 只自动连接「服务端适配器模式且本机确实有可用 session」的账号，

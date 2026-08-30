@@ -92,9 +92,12 @@
    尚未用第二条消息复验，因此仍不能标记完整 UI 已验收；
    `signal-cli` 只保留后台回退，不再由
    添加/重关联弹窗触发。WhatsApp 首检点只在 owner 的隔离
-   partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发。WhatsApp
-   尚未注入 im-hub preload、桥接或翻译能力，不能写成统一消息闭环。两条路线后续再分别补齐
-   原生桥接、身份绑定、消息回传和安装包；Zoom 延后。
+   partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发；该路线现明确
+   标记为 `web_shell`，不会注入 im-hub preload、抓取 DOM、桥接或翻译。需要统一回传与发送的
+   WhatsApp 账号必须走独立 `cloud_api` 路线，以 Business Platform 官方 Graph API、WABA Webhook
+   和 Embedded Signup 建立身份与事件合约。当前只预留模式并拒绝创建，不能把网页 partition
+   冒充 Cloud API 凭据或写成统一消息闭环。历史 `adapter` 路线继续保留兼容，不在本轮删除；
+   Zoom 延后。
 
 ## Signal 同窗口宿主的历史与边界
 

@@ -10,7 +10,7 @@ import { Chip, PlatformIcon } from './ui.js'
 const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
   { key: 'signal', blurb: '使用 Signal Desktop 关联，图片和贴纸保持原生能力', ready: true },
-  { key: 'whatsapp', blurb: '官方 Web 独立登录，首阶段测试原生收发', ready: true },
+  { key: 'whatsapp', blurb: '官方 Web 隔离壳；统一归档需 Business Platform', ready: true },
 ]
 
 type Step = 'pick' | 'linking'
@@ -63,7 +63,11 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
       const account = await api.createAccount({
         platform,
         displayName: name.trim(),
-        connectionMode: platform === 'signal' ? 'native_desktop' : 'adapter',
+        connectionMode: platform === 'signal'
+          ? 'native_desktop'
+          : platform === 'whatsapp'
+            ? 'web_shell'
+            : 'adapter',
       })
       setAccountId(account.id)
       setLinkingPlatform(platform)
@@ -200,6 +204,16 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                 }}>
                   这里只登记由 Signal Desktop 托管的原生账号，不会启动 signal-cli，
                   也不会生成 signal-cli 二维码。
+                </div>
+              )}
+              {platform === 'whatsapp' && (
+                <div style={{
+                  marginTop: theme.space.md, padding: theme.space.md,
+                  background: theme.color.surface, borderRadius: theme.radius.lg,
+                  fontSize: theme.font.size.sm, color: theme.color.textMuted, lineHeight: 1.8,
+                }}>
+                  当前创建的是隔离的 WhatsApp 官方网页壳，不会抓取页面或把网页登录态
+                  当成 Business Platform API 凭据；消息回传、翻译和中央归档尚未开放。
                 </div>
               )}
               {error && (

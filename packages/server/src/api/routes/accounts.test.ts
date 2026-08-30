@@ -206,10 +206,30 @@ describe('POST /api/accounts', () => {
       payload: { platform: 'whatsapp', displayName: 'WA' },
     })
     expect(res.statusCode).toBe(201)
+    expect(res.json().account).toMatchObject({
+      platform: 'whatsapp', connection_mode: 'web_shell', status: 'pending_auth',
+    })
+    expect(adapters.connect).not.toHaveBeenCalled()
+  })
+
+  it('显式既有 WhatsApp adapter 模式继续保留，不因网页壳分流而删除', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(agentToken),
+      payload: { platform: 'whatsapp', displayName: 'WA legacy', connectionMode: 'adapter' },
+    })
+    expect(res.statusCode).toBe(201)
     expect(adapters.connect).toHaveBeenCalledWith('whatsapp', expect.objectContaining({
-      displayName: 'WA',
-      credentialsRef: null,
+      displayName: 'WA legacy', credentialsRef: null,
     }))
+  })
+
+  it('Cloud API 只预留结构，官方授权未接入前不能创建假账号', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(agentToken),
+      payload: { platform: 'whatsapp', displayName: 'WA Cloud', connectionMode: 'cloud_api' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(adapters.connect).not.toHaveBeenCalled()
   })
 
   it('适配器还没接入的平台直接挡住，不留下建了连不上的空账号', async () => {
@@ -307,6 +327,19 @@ describe('POST /api/accounts/:id/relink', () => {
 
   it('原生 Signal 账号拒绝启动服务端重关联', async () => {
     const id = await createNativeSignal()
+    const res = await app.inject({
+      method: 'POST', url: `/api/accounts/${id}/relink`, headers: auth(agentToken),
+    })
+    expect(res.statusCode).toBe(409)
+    expect(adapters.disconnect).not.toHaveBeenCalled()
+    expect(adapters.connect).not.toHaveBeenCalled()
+  })
+
+  it('WhatsApp Web shell 只允许在官方页面重关联', async () => {
+    const id = (await db.insertInto('accounts').values({
+      platform: 'whatsapp', owner_user_id: AGENT_ID, team_id: TEAM_ID,
+      display_name: 'WA Web', status: 'pending_auth', connection_mode: 'web_shell',
+    }).returning('id').executeTakeFirstOrThrow()).id
     const res = await app.inject({
       method: 'POST', url: `/api/accounts/${id}/relink`, headers: auth(agentToken),
     })
@@ -451,7 +484,7 @@ describe('DELETE /api/accounts/:id', () => {
   it('WhatsApp 账号提示用户从手机移除浏览器会话', async () => {
     const wa = await db.insertInto('accounts').values({
       platform: 'whatsapp', owner_user_id: AGENT_ID, team_id: TEAM_ID,
-      display_name: 'WA', status: 'pending_auth',
+      display_name: 'WA', status: 'pending_auth', connection_mode: 'web_shell',
     }).returning('id').executeTakeFirstOrThrow()
 
     const res = await app.inject({
@@ -460,5 +493,6 @@ describe('DELETE /api/accounts/:id', () => {
     })
     expect(res.json().manualCleanup).toContain('WhatsApp')
     expect(res.json().manualCleanup).toContain('已关联设备')
+    expect(adapters.purge).not.toHaveBeenCalled()
   })
 })

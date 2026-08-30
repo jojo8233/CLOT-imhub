@@ -94,13 +94,17 @@ export function nativeAccountControllable(
  * 隐藏 pane 继续用各自 partition 接收平台 update 并清空 outbox。
  */
 export function nativeAccountIdsToMount(
-  accounts: ReadonlyArray<Pick<AccountRow, 'id' | 'platform' | 'owner_user_id'>>,
+  accounts: ReadonlyArray<Pick<AccountRow,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
   user: Pick<SessionUser, 'id' | 'role'> | null,
   supportsWebview: boolean,
 ): string[] {
   if (!supportsWebview) return []
   return accounts
     .filter(account => nativeClientSupported(account.platform)
+      && (account.platform !== 'whatsapp'
+        || account.connection_mode === 'adapter'
+        || account.connection_mode === 'web_shell')
       && nativeAccountControllable(account, user))
     .map(account => account.id)
 }
@@ -249,6 +253,15 @@ export function NativeClient() {
     overlay = (
       <EmptyHint>
         Signal Desktop 宿主桥接不可用。<br />请重新启动 im-hub 桌面开发进程。
+      </EmptyHint>
+    )
+  } else if (active.platform === 'whatsapp'
+    && active.connection_mode !== 'adapter'
+    && active.connection_mode !== 'web_shell') {
+    overlay = (
+      <EmptyHint>
+        这个账号不是 WhatsApp 官方网页壳，不会加载 web.whatsapp.com。<br />
+        Business Platform 需要单独完成 Cloud API 授权与 Webhook 配置。
       </EmptyHint>
     )
   } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform)) {

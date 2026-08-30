@@ -14,8 +14,10 @@ import type {
  * WhatsApp Web shell adapter.
  *
  * Authentication and interaction happen inside the owner's isolated Electron
- * partition. This server-side adapter deliberately does not scrape the official
- * page, invent credentials, or claim that native events are already available.
+ * partition. This server-side adapter is retained for historical adapter accounts
+ * only. It deliberately does not scrape the official page, invent credentials,
+ * or claim that native events are already available. The planned unified message
+ * route is a separate WhatsApp Business Platform Cloud API account.
  */
 export class WhatsAppWebAdapter implements PlatformAdapter {
   readonly platform = 'whatsapp' as const

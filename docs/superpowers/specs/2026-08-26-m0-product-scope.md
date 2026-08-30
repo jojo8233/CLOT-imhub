@@ -71,7 +71,7 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 |---|---|---|---|
 | Telegram | 补丁版 `telegram-tt` + Electron webview | bridge/composer/outbox 与约定范围真实故障矩阵已完成；shadow 账本已接线，真实对账和切换门槛待完成 | M3 |
 | Signal | 补丁版 Signal Desktop，以独立 profile 多开 | `signal-cli` 适配器与统一会话 UI 作为首检点；真实关联/收发待验，原生交付路线尚未完成 | M5（与 M6 并行） |
-| WhatsApp | 官方 Web 受控壳，以独立 partition 多开 | owner-only 隔离壳已接线；扫码/原生文字收发待验，尚无桥接、翻译或中央回传 | M6（与 M5 并行） |
+| WhatsApp | 官方 Web `web_shell` 仅保留原生页面；统一消息使用 Business Platform `cloud_api` | owner-only 隔离壳、登录与页面内原生收发首检已完成；Cloud API 仅预留模式，尚无授权、Webhook、翻译或中央回传 | M6（与 M5 并行） |
 | Zoom | 后续单独评估 Team Chat 官方能力 | 只有平台类型预留 | M8 |
 
 `packages/server/src/adapters/` 的现有适配器路线暂时保留。只有当对应原生客户端的
@@ -103,7 +103,7 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 | M3 | Telegram 多开、翻译、媒体、回传和存档完整闭环 |
 | M4 | 团队、客户档案、关键词告警、审计日志和管理后台 |
 | M5 | Signal 首检点与原生多开完整闭环；与 M6 并行推进 |
-| M6 | WhatsApp 官方 Web 隔离壳、原生多开与完整闭环；与 M5 并行推进 |
+| M6 | WhatsApp 官方 Web 隔离壳；另以 Business Platform Cloud API 完成统一消息闭环；与 M5 并行推进 |
 | M7 | 集成测试、安装包、更新、部署和正式交付 |
 | M8 | Zoom 未来接入 |
 

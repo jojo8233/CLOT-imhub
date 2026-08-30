@@ -4,13 +4,13 @@ import { ACCOUNT_CONNECTION_MODES, PLATFORMS } from '@im-hub/shared'
 import { db } from '../../db/client.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 
-/** 已经有可用适配器实现的平台。没实现的平台建了也连不上，直接挡在门口 */
+/** 已有可用适配器或受控原生壳的平台；没实现的平台建了也连不上，直接挡在门口。 */
 const IMPLEMENTED = new Set(['telegram', 'signal', 'whatsapp'])
 
 const createBody = z.object({
   platform: z.enum(PLATFORMS),
   displayName: z.string().trim().min(1, '账号名称不能为空').max(60, '账号名称最长 60 个字'),
-  connectionMode: z.enum(ACCOUNT_CONNECTION_MODES).optional().default('adapter'),
+  connectionMode: z.enum(ACCOUNT_CONNECTION_MODES).optional(),
 })
 
 const answerBody = z.object({
@@ -69,13 +69,25 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? '参数不合法' })
     }
-    const { platform, displayName, connectionMode } = parsed.data
+    const { platform, displayName } = parsed.data
+    const connectionMode = parsed.data.connectionMode
+      ?? (platform === 'whatsapp' ? 'web_shell' : 'adapter')
 
     if (!IMPLEMENTED.has(platform)) {
       return reply.code(400).send({ error: `${platform} 的适配器还没接入，暂时建不了` })
     }
-    if (connectionMode === 'native_desktop' && platform !== 'signal') {
-      return reply.code(400).send({ error: '当前只有 Signal 支持原生桌面账号模式' })
+    if (connectionMode === 'cloud_api') {
+      return reply.code(400).send({
+        error: 'WhatsApp Business Platform 尚未配置，当前不能创建 Cloud API 账号',
+      })
+    }
+    const validConnectionMode = (platform === 'telegram' && connectionMode === 'adapter')
+      || (platform === 'signal'
+        && (connectionMode === 'adapter' || connectionMode === 'native_desktop'))
+      || (platform === 'whatsapp'
+        && (connectionMode === 'adapter' || connectionMode === 'web_shell'))
+    if (!validConnectionMode) {
+      return reply.code(400).send({ error: `${platform} 不支持 ${connectionMode} 账号模式` })
     }
 
     // 账号归属跟着创建者走：他在哪个组，账号就属于哪个组，管理员才看得见。
@@ -130,6 +142,12 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
     if (!account) return reply.code(404).send({ error: '账号不存在或不属于你' })
     if (account.connection_mode === 'native_desktop') {
       return reply.code(409).send({ error: 'Signal 原生账号请直接在 Signal Desktop 中重新关联' })
+    }
+    if (account.connection_mode === 'web_shell') {
+      return reply.code(409).send({ error: 'WhatsApp Web 账号请直接在官方页面中重新关联' })
+    }
+    if (account.connection_mode === 'cloud_api') {
+      return reply.code(409).send({ error: 'WhatsApp Cloud API 账号请通过官方重新授权流程关联' })
     }
     if (account.status === 'connected') {
       return reply.code(409).send({ error: '账号已经在线，不需要重新关联' })
@@ -218,7 +236,8 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
 
     if (account.connection_mode === 'adapter') {
       // 先清适配器数据。这一步失败就中止——宁可什么都没删，也不要删一半。
-      // native_desktop 的 profile 归桌面主进程管理，服务端不能误删 signal-cli 数据。
+      // native_desktop 的 profile 与 web_shell 的 partition 归桌面主进程管理，
+      // 服务端不能误删平台本地数据。cloud_api 未来必须走单独的授权撤销流程。
       try {
         await deps.adapters.purge(account.platform, account.id)
       } catch (err) {
@@ -236,7 +255,9 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
       manualCleanup: account.platform === 'signal'
         ? '请到手机 Signal 的「设置 → 已关联设备」里移除这台设备'
         : account.platform === 'whatsapp'
-          ? '请到手机 WhatsApp 的「设置 → 已关联设备」里移除这个浏览器会话'
+          ? account.connection_mode === 'cloud_api'
+            ? '请在 Meta Business 中确认该 WhatsApp Business Platform 授权已经撤销'
+            : '请到手机 WhatsApp 的「设置 → 已关联设备」里移除这个浏览器会话'
           : null,
     }
   })
@@ -253,8 +274,8 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
 
     const account = await requireOwnedAccount(req.actor.userId, params.data.id)
     if (!account) return reply.code(404).send({ error: '账号不存在或不属于你' })
-    if (account.connection_mode === 'native_desktop') {
-      return reply.code(409).send({ error: 'Signal 原生账号不接受服务端验证码或密码' })
+    if (account.connection_mode !== 'adapter') {
+      return reply.code(409).send({ error: '该账号模式不接受服务端验证码或密码' })
     }
 
     try {
