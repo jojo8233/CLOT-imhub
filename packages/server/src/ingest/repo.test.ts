@@ -19,6 +19,7 @@ let ownerUserId: string
 beforeEach(async () => {
   // 每个用例从干净状态开始；顺序按外键依赖倒序
   await db.deleteFrom('message_translations').execute()
+  await db.deleteFrom('message_reactions').execute()
   await db.deleteFrom('messages').execute()
   await db.deleteFrom('conversations').execute()
   await db.deleteFrom('accounts').execute()
@@ -96,6 +97,53 @@ describe('KyselyMessageRepo.upsertConversation', () => {
     row = await db.selectFrom('conversations').select('contact_external_id')
       .where('platform_conversation_id', '=', 'c2').executeTakeFirstOrThrow()
     expect(row.contact_external_id).toBe('888')
+  })
+})
+
+describe('KyselyMessageRepo.upsertMessageReaction', () => {
+  it('目标消息未到也保存唯一回应，并拒绝同时间或更旧的乱序覆盖', async () => {
+    const target = 'sender:1700000000000'
+    const reactor = 'reactor'
+    const firstAt = new Date('2026-08-30T01:00:00.000Z')
+    const removedAt = new Date('2026-08-30T01:01:00.000Z')
+
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '👍', firstAt,
+    )).resolves.toEqual({ changed: true })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '❤️', firstAt,
+    )).resolves.toEqual({ changed: false })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, null, removedAt,
+    )).resolves.toEqual({ changed: true })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '👍', new Date('2026-08-30T01:00:30.000Z'),
+    )).resolves.toEqual({ changed: false })
+
+    const row = await db.selectFrom('message_reactions')
+      .select(['emoji', 'reacted_at'])
+      .where('account_id', '=', accountId)
+      .where('platform_message_id', '=', target)
+      .where('reactor_external_id', '=', reactor)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ emoji: null, reacted_at: removedAt })
+  })
+
+  it('同一目标的不同回应者各自保留一行', async () => {
+    const target = 'sender:1700000000000'
+    const reactedAt = new Date('2026-08-30T01:00:00.000Z')
+    await repo.upsertMessageReaction(accountId, target, 'reactor-1', '👍', reactedAt)
+    await repo.upsertMessageReaction(accountId, target, 'reactor-2', '❤️', reactedAt)
+    const rows = await db.selectFrom('message_reactions')
+      .select('reactor_external_id')
+      .where('account_id', '=', accountId)
+      .where('platform_message_id', '=', target)
+      .orderBy('reactor_external_id')
+      .execute()
+    expect(rows).toEqual([
+      { reactor_external_id: 'reactor-1' },
+      { reactor_external_id: 'reactor-2' },
+    ])
   })
 })
 

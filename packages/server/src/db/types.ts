@@ -101,6 +101,15 @@ export interface MessageTranslationsTable {
   created_at: Generated<Timestamp>
 }
 
+export interface MessageReactionsTable {
+  account_id: string
+  platform_message_id: string
+  reactor_external_id: string
+  /** null 是删除回应的墓碑，防止迟到的旧 add 在乱序重放时复活。 */
+  emoji: string | null
+  reacted_at: RequiredTimestamp
+}
+
 export interface TelegramShadowObservationsTable {
   account_id: string
   source: TelegramShadowSource
@@ -121,6 +130,7 @@ export interface Database {
   conversations: ConversationsTable
   messages: MessagesTable
   message_translations: MessageTranslationsTable
+  message_reactions: MessageReactionsTable
   message_id_aliases: MessageIdAliasesTable
   telegram_shadow_observations: TelegramShadowObservationsTable
 }

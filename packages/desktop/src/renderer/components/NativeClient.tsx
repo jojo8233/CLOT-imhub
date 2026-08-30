@@ -136,6 +136,9 @@ export function signalInboundErrorIsNonfatal(code: string): boolean {
   return code === 'invalid_signal_inbound'
     || code === 'invalid_signal_media'
     || code === 'unsupported_signal_media'
+    || code === 'invalid_signal_edit'
+    || code === 'invalid_signal_delete'
+    || code === 'invalid_signal_reaction'
 }
 
 interface NativeWebviewLoadProbe {
@@ -513,7 +516,8 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
       }
       if (event.type !== 'message.upsert'
         && event.type !== 'message.deleted'
-        && event.type !== 'message.id-remapped') return
+        && event.type !== 'message.id-remapped'
+        && event.type !== 'message.reaction') return
 
       void nativeControl.reportEvent(target, event).then(() => {
         if (disposed) return

@@ -127,6 +127,24 @@ try {
   )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,
+    'if(await U.saveEditedMessage(c.attributes,W.user.getCheckedAci(),{conversationId:t.conversationId,messageId:e.id,readStatus:v,sentAt:u.timestamp}),_){',
+    'if(await U.saveEditedMessage(c.attributes,W.user.getCheckedAci(),{conversationId:t.conversationId,messageId:e.id,readStatus:v,sentAt:u.timestamp}),await window.__imHubSignalBridge?.onMessageEdited(_,c,window.ConversationController.get(t.fromId)),_){',
+    'Signal 入站编辑桥接',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'n&&(await U.removeMessageById(e.attributes.id,{cleanupMessages:async()=>{}}),await window.MessageCache.saveMessage(e.attributes,{forceSave:!0}))}finally',
+    'n&&(await U.removeMessageById(e.attributes.id,{cleanupMessages:async()=>{}}),await window.MessageCache.saveMessage(e.attributes,{forceSave:!0})),await window.__imHubSignalBridge?.onMessageDeleted(e,t)}finally',
+    'Signal 入站删除桥接',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'else o&&!qr(e.attributes)&&(await window.MessageCache.saveMessage(e.attributes),window.reduxActions.conversations.markOpenConversationRead(c.id))}var jJt',
+    'else o&&!qr(e.attributes)&&(await window.MessageCache.saveMessage(e.attributes),window.reduxActions.conversations.markOpenConversationRead(c.id));r||await window.__imHubSignalBridge?.onReaction(e,n,window.ConversationController.get(n.fromId))}var jJt',
+    'Signal 入站回应桥接',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
     'u.contextBridge.exposeInMainWorld(`startApp`,window.startApp)',
     'u.contextBridge.exposeInMainWorld(`startApp`,(...e)=>(u.ipcRenderer.send(`imhub:signal-bridge-bootstrap`,`start-called`),import(require(`node:url`).pathToFileURL(require(`node:path`).join(__dirname,`..`,`..`,`imhub`,`preload`,`signal-bridge.mjs`)).href).then(t=>(t.installSignalPreloadBridge(window),u.ipcRenderer.send(`imhub:signal-bridge-bootstrap`,`installed`),window.startApp(...e))).catch(()=>{throw u.ipcRenderer.send(`imhub:signal-bridge-bootstrap`,`failed`),console.error(`[im-hub] Signal bridge preload failed`),new Error(`Signal bridge preload failed`)})))',
     'Signal startApp 桥接安装',

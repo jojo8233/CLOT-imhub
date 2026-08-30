@@ -2,7 +2,7 @@
 
 日期：2026-08-29
 状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库、持久 outbox
-真实重放及图片/贴纸结构化元数据真实唯一落库
+真实重放及图片/贴纸结构化元数据真实唯一落库；编辑/删除/回应已完成实现，待真实续验
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -29,8 +29,8 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
   服务端登记归属与 UUID，profile 和同窗口 `WebContentsView` 由 Signal Desktop 基座进程托管，
   不触发 signal-cli 鉴权。
 - 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；当前已实现入站文字中央回传，
-  图片/贴纸结构化元数据桥接及真实唯一落库已通过。附件二进制、其他入站媒体、编辑、删除、
-  回应、翻译、正式多开与安装包仍属于后续 M5。
+  图片/贴纸结构化元数据桥接及真实唯一落库已通过。编辑、删除、回应已完成代码和自动化，
+  尚未取得真实客户端证据；附件二进制、其他入站媒体、翻译、正式多开与安装包仍属于后续 M5。
 - 启动真实测试前必须明确验证本机 `signal-cli` 与所需 Java 运行时。不得因为命令缺失让账号
   无限停在“待登录”而没有诊断。
 
@@ -60,7 +60,7 @@ im-hub 发出文字且手机端收到、服务重启后继续收信。WhatsApp �
 
 Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字唯一落库和真实未 ACK 跨进程重放
 均已完成；入站图片/贴纸的结构化事件边界、自动化与真实唯一落库也已完成。下一 Signal checkpoint
-从入站编辑/删除/回应事件边界继续。WhatsApp
+是入站编辑/删除/回应真实续验。WhatsApp
 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
 其他受控方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram
 的通用 preload，也禁止用 DOM scraping 冒充稳定消息协议。
@@ -74,12 +74,12 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
 - 当前只支持一个 Signal Desktop 原生账号；入站文字及图片/贴纸结构化元数据唯一落库均已取得
-  真实证据；编辑/删除/回应、翻译、附件二进制与
-  其他入站媒体仍未完成。持久 outbox 实现、空队列初始化与
+  真实证据；编辑/删除/回应已完成实现但尚待真实续验；翻译、附件二进制与其他入站媒体仍未完成。
+  持久 outbox 实现、空队列初始化与
   真实未 ACK 消息跨进程重放均已通过，但仍不能越级标记 M5 完成。
 - WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
 
-续接时从 Signal 入站编辑/删除/回应事件边界继续；不要重做上述窗口切换、原生文字/图片/贴纸
+续接时只做 Signal 入站编辑/删除/回应真实续验；不要重做上述窗口切换、原生文字/图片/贴纸
 发送矩阵、入站图片/贴纸唯一落库或未 ACK 跨进程重放矩阵。
 
 ## 6. Signal 入站文字桥接实现 checkpoint（2026-08-30）
@@ -99,8 +99,8 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
   `<normalized-sender>:<sent-at-ms>`；服务端拒绝非规范键、入站私聊发送者不匹配和 Signal
   remap，数据库仍按 `(account_id, platform_message_id)` 幂等落库。
 - 本 checkpoint 当时只桥接 `type=incoming` 且正文非空的纯文字 `message.upsert`；第 8 节已在
-  同一事件边界上增加图片/贴纸结构化元数据。回应、编辑、删除和 composer/context 命令仍未
-  开放；这些事实不能从 Signal DOM 推断或伪造。
+  同一事件边界上增加图片/贴纸结构化元数据，第 9 节又从 Signal 自身持久化函数接入编辑、删除
+  和普通回应。composer/context 命令仍未开放；这些事实不能从 Signal DOM 推断或伪造。
 - 事件使用稳定 `eventId`，先按实际 Signal ACI 写入专用 IndexedDB，再严格顺序重试到
   `event.ack`。接受后删除，永久拒绝进入最多 1000 项的 dead-letter；pending 也最多 1000 项。
   存储、容量和永久失败只显示非敏感状态，不把正文或 ACI 暴露给外壳。
@@ -159,3 +159,26 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   具体消息键或媒体引用。
 - 因此图片/贴纸结构化元数据的真实唯一落库门槛已经完成；附件二进制仍未回传，不能声称附件
   内容已归档或可预览。
+
+## 9. Signal 入站编辑/删除/回应实现 checkpoint（2026-08-30）
+
+- 以 Signal Desktop 8.25.0 自身持久化点为边界：编辑 hook 位于 `saveEditedMessage` 成功之后，
+  删除 hook 位于删除目标与消息缓存保存之后，普通回应 hook 位于回应数据库与目标消息缓存处理
+  之后；story 回应不在本 checkpoint。准备脚本继续要求每个精确锚点唯一命中，否则拒绝打包。
+- 编辑只接收 `type=incoming`，沿用原 sender + 原 `sent_at` 规范键，当前正文/媒体成为新的
+  `message.upsert` 快照，`editMessageTimestamp` 写入 `editedAt`。Signal 毫秒时间戳超过共享 int32
+  `editVersion` 上限，因此保持 `editVersion=null`，由服务端现有 `editedAt` 单调条件拒绝旧编辑。
+- 为所有人删除只接收入站目标；删除事件携带原规范消息键和 `deleteServerTimestamp`。原消息尚未
+  落库时服务端按幂等已删除接受；不会伪造正文或从删除模型导出其他字段。
+- 回应以 Signal 自身的 `targetAuthorAci + targetTimestamp` 生成目标规范键，回应者从 sender
+  conversation 的平台身份取得，绝不使用本地 `fromId`。本账号产生的回应和 story 回应不进入
+  入站链路；`emoji=null` 表示删除回应。
+- migration `0009_message_reactions` 按 `(account, target, reactor)` 保存唯一当前态，允许回应先于
+  目标消息到达，并只接受更晚的 `reacted_at`。删除墓碑会阻止迟到旧新增复活。回应事件继续先入
+  Signal IndexedDB outbox，再由相同 ACK/dead-letter 机制送达服务端；没有读取或回传 profile、
+  本地会话 UUID、密钥或消息正文以外的模型字段。
+- 自动化覆盖规范键、编辑空正文、删除目标时间匹配、回应添加/删除、本账号回应过滤、本地字段
+  不泄露、协议有界校验、平台拒绝、回应先于目标消息、不同回应者隔离、墓碑与乱序重放。开发库
+  与隔离测试库 migration 已成功；`pnpm typecheck`、47 文件 431 passed / 1 todo、desktop build
+  均通过。a19 的普通消息、编辑、删除、回应四个补丁各唯一命中并通过严格 codesign；真实 Signal
+  客户端矩阵和只读聚合核验仍待完成，因此不能写成已真实验收。

@@ -46,6 +46,7 @@ const ingestDetailed = vi.fn(async (
 })
 const markMessageDeleted = vi.fn()
 const remapMessageId = vi.fn()
+const upsertMessageReaction = vi.fn()
 let publicationSnapshot: MessagePublicationSnapshot
 const withMessageForPublish = vi.fn(async (
   _messageId: string,
@@ -84,6 +85,7 @@ beforeEach(async () => {
   ingestResult.contentChanged = false
   markMessageDeleted.mockReset()
   remapMessageId.mockReset()
+  upsertMessageReaction.mockReset().mockResolvedValue({ changed: true })
   withMessageForPublish.mockReset().mockImplementation(async (
     _messageId: string,
     action: (message: MessagePublicationSnapshot) => void,
@@ -95,6 +97,7 @@ beforeEach(async () => {
   translate.mockClear()
 
   await db.deleteFrom('message_translations').execute()
+  await db.deleteFrom('message_reactions').execute()
   await db.deleteFrom('messages').execute()
   await db.deleteFrom('conversations').execute()
   await db.deleteFrom('accounts').execute()
@@ -140,7 +143,13 @@ beforeEach(async () => {
     gateway: { translate } as never,
     native: {
       ingestor: { ingestDetailed } as never,
-      repo: { upsertConversation, withMessageForPublish, markMessageDeleted, remapMessageId },
+      repo: {
+        upsertConversation,
+        withMessageForPublish,
+        markMessageDeleted,
+        remapMessageId,
+        upsertMessageReaction,
+      },
       publish,
     },
   }, new (await import('../ws.js')).WsHub(), { actorRepo: actorRepo() })
@@ -459,6 +468,101 @@ describe('native bridge routes', () => {
       },
     })
     expect(invalid.statusCode).toBe(422)
+  })
+
+  it('Signal 入站回应接受规范目标与回应者，并把删除回应作为墓碑落库', async () => {
+    const signalAci = '11111111-2222-3333-aaaa-555555555555'
+    const signalAccount = await db.updateTable('accounts')
+      .set({
+        platform: 'signal', connection_mode: 'native_desktop',
+        platform_account_external_id: signalAci,
+      })
+      .where('id', '=', accountId)
+      .returning('native_control_version')
+      .executeTakeFirstOrThrow()
+    const { grant } = await signNativeControlGrant({
+      userId: agentId,
+      accountId,
+      platform: 'signal',
+      expectedPlatformAccountExternalId: signalAci,
+      controlVersion: signalAccount.native_control_version,
+    }, TEST_JWT_SECRET)
+    upsertMessageReaction.mockResolvedValue({ changed: false })
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: {
+        accountId,
+        event: {
+          protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+          type: 'message.reaction', eventId: 'signal-reaction-1',
+          targetPlatformMessageId: '22222222-2222-3333-aaaa-555555555555:1788048000000',
+          reactorExternalId: '99999999-2222-3333-aaaa-555555555555',
+          emoji: null,
+          reactedAt: '2026-08-30T01:00:00.000Z',
+        },
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ accepted: true, duplicate: true })
+    expect(upsertMessageReaction).toHaveBeenCalledWith(
+      accountId,
+      '22222222-2222-3333-aaaa-555555555555:1788048000000',
+      '99999999-2222-3333-aaaa-555555555555',
+      null,
+      new Date('2026-08-30T01:00:00.000Z'),
+    )
+  })
+
+  it('回应永久拒绝 Telegram、非规范 Signal 回应者和本账号回应', async () => {
+    const telegramResponse = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(),
+      payload: {
+        accountId,
+        event: {
+          protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+          type: 'message.reaction', eventId: 'telegram-reaction',
+          targetPlatformMessageId: canonicalMessageId,
+          reactorExternalId: '777000', emoji: '👍',
+          reactedAt: '2026-08-30T01:00:00.000Z',
+        },
+      },
+    })
+    expect(telegramResponse.statusCode).toBe(422)
+
+    const signalAci = '11111111-2222-3333-aaaa-555555555555'
+    const signalAccount = await db.updateTable('accounts')
+      .set({ platform: 'signal', platform_account_external_id: signalAci })
+      .where('id', '=', accountId)
+      .returning('native_control_version')
+      .executeTakeFirstOrThrow()
+    const { grant } = await signNativeControlGrant({
+      userId: agentId, accountId, platform: 'signal',
+      expectedPlatformAccountExternalId: signalAci,
+      controlVersion: signalAccount.native_control_version,
+    }, TEST_JWT_SECRET)
+    const baseEvent = {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.reaction', eventId: 'signal-reaction-invalid',
+      targetPlatformMessageId: '22222222-2222-3333-aaaa-555555555555:1788048000000',
+      reactorExternalId: '99999999-2222-3333-AAAA-555555555555', emoji: '👍',
+      reactedAt: '2026-08-30T01:00:00.000Z',
+    }
+    const noncanonical = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: { accountId, event: baseEvent },
+    })
+    expect(noncanonical.statusCode).toBe(422)
+
+    const ownReaction = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: {
+        accountId,
+        event: { ...baseEvent, eventId: 'signal-own-reaction', reactorExternalId: signalAci },
+      },
+    })
+    expect(ownReaction.statusCode).toBe(422)
+    expect(upsertMessageReaction).not.toHaveBeenCalled()
   })
 
   it('Telegram 消息拒绝未带 chat 前缀的 TDLib 旧 id', async () => {

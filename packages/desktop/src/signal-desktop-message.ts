@@ -1,4 +1,9 @@
-import type { MediaRef, NativeMessageUpsertEvent } from '@im-hub/shared'
+import type {
+  MediaRef,
+  NativeMessageDeletedEvent,
+  NativeMessageReactionEvent,
+  NativeMessageUpsertEvent,
+} from '@im-hub/shared'
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   normalizeSignalAci,
@@ -11,6 +16,7 @@ import {
 export interface SignalDesktopModelLike {
   attributes?: Record<string, unknown>
   get?(key: string): unknown
+  getAci?(): unknown
   getTitle?(): unknown
 }
 
@@ -26,6 +32,9 @@ export type SignalDesktopInboundErrorCode =
   | 'invalid_signal_inbound'
   | 'invalid_signal_media'
   | 'unsupported_signal_media'
+  | 'invalid_signal_edit'
+  | 'invalid_signal_delete'
+  | 'invalid_signal_reaction'
 
 export class SignalDesktopInboundError extends Error {
   constructor(
@@ -56,6 +65,17 @@ function optionalBoundedString(value: unknown, maxLength: number): string | unde
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function safeTimestamp(value: unknown): number | null {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) return null
+  const timestamp = value as number
+  return Number.isNaN(new Date(timestamp).getTime()) ? null : timestamp
+}
+
+function boundedEventId(value: string, code: SignalDesktopInboundErrorCode): string {
+  if (value.length <= 128) return value
+  throw new SignalDesktopInboundError(code, 'Signal 入站生命周期事件标识超过桥接上限')
 }
 
 export function readSignalDesktopAci(signalWindow: SignalDesktopWindowLike): string | null {
@@ -198,61 +218,189 @@ function signalDesktopMediaRemoteId(
   return `signal-desktop:${localMessageId}:${slot}`
 }
 
-/**
- * 覆盖入站纯文字、图片与贴纸。编辑、删除、回应及其他媒体类型继续由后续事件分支接入。
- */
+function normalizeSignalDesktopMessage(
+  conversation: SignalDesktopModelLike,
+  message: SignalDesktopModelLike,
+  senderConversation: SignalDesktopModelLike | null,
+  editedAtMs: number | null,
+  allowEmpty: boolean,
+): NativeMessageUpsertEvent['message'] | null {
+  if (attribute(message, 'type') !== 'incoming') return null
+  const body = nonEmptyString(attribute(message, 'body')) ?? ''
+  const localMessageId = nonEmptyString(attribute(message, 'id'))
+  const normalizedMediaRefs = mediaRefs(message, localMessageId)
+  if (!allowEmpty && !body && normalizedMediaRefs.length === 0) return null
+
+  const senderValue = nonEmptyString(attribute(message, 'sourceServiceId'))
+    ?? nonEmptyString(attribute(message, 'source'))
+  const sentAtMs = safeTimestamp(attribute(message, 'sent_at'))
+  if (!senderValue || sentAtMs === null) {
+    throw new SignalDesktopInboundError(
+      editedAtMs === null ? 'invalid_signal_inbound' : 'invalid_signal_edit',
+      editedAtMs === null
+        ? 'Signal 入站消息缺少稳定身份或发送时间，已拒绝回传'
+        : 'Signal 入站编辑缺少原消息身份或发送时间，已拒绝回传',
+    )
+  }
+  const senderExternalId = normalizeSignalPersonId(senderValue)
+  const platformMessageId = signalMessageKey(senderExternalId, sentAtMs)
+  const groupId = nonEmptyString(attribute(conversation, 'groupId'))
+  const platformConversationId = groupId
+    ? signalGroupConversationId(groupId)
+    : signalDirectConversationId(senderExternalId)
+  const receivedAtMs = attribute(message, 'received_at_ms')
+
+  return {
+    platformConversationId,
+    platformMessageId,
+    direction: 'in',
+    senderExternalId,
+    senderDisplayName: displayName(senderConversation),
+    conversationDisplayName: displayName(conversation),
+    body,
+    mediaRefs: normalizedMediaRefs,
+    replyToPlatformMessageId: null,
+    sentAt: new Date(sentAtMs).toISOString(),
+    editedAt: editedAtMs === null ? null : new Date(editedAtMs).toISOString(),
+    // Signal 的编辑 revision 是毫秒时间戳，超过共享协议的 int32 上限；editedAt
+    // 已由中央库作为同消息的单调版本使用，不能截断或伪造 editVersion。
+    editVersion: null,
+    raw: {
+      source: 'signal-desktop',
+      signalMessageId: localMessageId,
+      receivedAtMs: Number.isSafeInteger(receivedAtMs) ? receivedAtMs : null,
+    },
+  }
+}
+
+/** 普通入站文字、图片与贴纸；编辑、删除、回应使用下方独立生命周期事件。 */
 export function normalizeSignalDesktopInbound(
   conversation: SignalDesktopModelLike,
   message: SignalDesktopModelLike,
   senderConversation: SignalDesktopModelLike | null,
 ): NativeMessageUpsertEvent | null {
-  if (attribute(message, 'type') !== 'incoming') return null
-  const body = nonEmptyString(attribute(message, 'body')) ?? ''
-  const localMessageId = nonEmptyString(attribute(message, 'id'))
-  const normalizedMediaRefs = mediaRefs(message, localMessageId)
-  if (!body && normalizedMediaRefs.length === 0) return null
-
-  const senderValue = nonEmptyString(attribute(message, 'sourceServiceId'))
-    ?? nonEmptyString(attribute(message, 'source'))
-  const sentAtMs = attribute(message, 'sent_at')
-  if (!senderValue || !Number.isSafeInteger(sentAtMs) || (sentAtMs as number) < 0) {
-    throw new SignalDesktopInboundError(
-      'invalid_signal_inbound',
-      'Signal 入站消息缺少稳定身份或发送时间，已拒绝回传',
-    )
-  }
-  const senderExternalId = normalizeSignalPersonId(senderValue)
-  const platformMessageId = signalMessageKey(senderExternalId, sentAtMs as number)
-  const groupId = nonEmptyString(attribute(conversation, 'groupId'))
-  const platformConversationId = groupId
-    ? signalGroupConversationId(groupId)
-    : signalDirectConversationId(senderExternalId)
-  const eventId = `signal-inbound:${platformMessageId}`
-  if (eventId.length > 128) throw new Error('Signal inbound event id exceeds protocol limit')
-
-  const receivedAtMs = attribute(message, 'received_at_ms')
+  const normalized = normalizeSignalDesktopMessage(
+    conversation, message, senderConversation, null, false,
+  )
+  if (!normalized) return null
   return {
     protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
     type: 'message.upsert',
-    eventId,
-    message: {
-      platformConversationId,
-      platformMessageId,
-      direction: 'in',
-      senderExternalId,
-      senderDisplayName: displayName(senderConversation),
-      conversationDisplayName: displayName(conversation),
-      body,
-      mediaRefs: normalizedMediaRefs,
-      replyToPlatformMessageId: null,
-      sentAt: new Date(sentAtMs as number).toISOString(),
-      editedAt: null,
-      editVersion: null,
-      raw: {
-        source: 'signal-desktop',
-        signalMessageId: localMessageId,
-        receivedAtMs: Number.isSafeInteger(receivedAtMs) ? receivedAtMs : null,
-      },
-    },
+    eventId: boundedEventId(`signal-inbound:${normalized.platformMessageId}`, 'invalid_signal_inbound'),
+    message: normalized,
+  }
+}
+
+/** 编辑沿用原 sender+sent_at 规范键，只以 editMessageTimestamp 推进中央版本。 */
+export function normalizeSignalDesktopEdit(
+  conversation: SignalDesktopModelLike,
+  message: SignalDesktopModelLike,
+  senderConversation: SignalDesktopModelLike | null,
+): NativeMessageUpsertEvent | null {
+  if (attribute(message, 'type') !== 'incoming') return null
+  const editedAtMs = safeTimestamp(attribute(message, 'editMessageTimestamp'))
+  if (editedAtMs === null) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_edit',
+      'Signal 入站编辑缺少稳定编辑时间，已拒绝回传',
+    )
+  }
+  const normalized = normalizeSignalDesktopMessage(
+    conversation, message, senderConversation, editedAtMs, true,
+  )
+  if (!normalized) return null
+  return {
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type: 'message.upsert',
+    eventId: boundedEventId(
+      `signal-edit:${normalized.platformMessageId}:${editedAtMs}`,
+      'invalid_signal_edit',
+    ),
+    message: normalized,
+  }
+}
+
+/** 为所有人删除只桥接入站目标；目标不存在时服务端仍按幂等已删除接受。 */
+export function normalizeSignalDesktopDelete(
+  message: SignalDesktopModelLike,
+  deleteDetails: unknown,
+): NativeMessageDeletedEvent | null {
+  if (attribute(message, 'type') !== 'incoming') return null
+  if (!record(deleteDetails)) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_delete',
+      'Signal 入站删除结构无效，已拒绝回传',
+    )
+  }
+  const senderValue = nonEmptyString(attribute(message, 'sourceServiceId'))
+    ?? nonEmptyString(attribute(message, 'source'))
+  const sentAtMs = safeTimestamp(attribute(message, 'sent_at'))
+  const targetSentAtMs = safeTimestamp(deleteDetails.targetSentTimestamp)
+  const deletedAtMs = safeTimestamp(deleteDetails.deleteServerTimestamp)
+  if (!senderValue || sentAtMs === null || targetSentAtMs !== sentAtMs || deletedAtMs === null) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_delete',
+      'Signal 入站删除缺少匹配的原消息身份或删除时间，已拒绝回传',
+    )
+  }
+  const platformMessageId = signalMessageKey(normalizeSignalPersonId(senderValue), sentAtMs)
+  return {
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type: 'message.deleted',
+    eventId: boundedEventId(
+      `signal-delete:${platformMessageId}:${deletedAtMs}`,
+      'invalid_signal_delete',
+    ),
+    platformMessageId,
+    deletedAt: new Date(deletedAtMs).toISOString(),
+  }
+}
+
+/** 回应以 target sender+timestamp 定位，reactor 用平台身份；fromId 等本地 UUID 不外传。 */
+export function normalizeSignalDesktopReaction(
+  targetMessage: SignalDesktopModelLike,
+  reaction: unknown,
+  reactorConversation: SignalDesktopModelLike | null,
+  accountExternalId: string,
+): NativeMessageReactionEvent | null {
+  if (!record(reaction)) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_reaction',
+      'Signal 入站回应结构无效，已拒绝回传',
+    )
+  }
+  const targetType = attribute(targetMessage, 'type')
+  if (targetType !== 'incoming' && targetType !== 'outgoing') return null
+  const targetAuthor = nonEmptyString(reaction.targetAuthorAci)
+  const targetTimestamp = safeTimestamp(reaction.targetTimestamp)
+  const reactedAtMs = safeTimestamp(reaction.timestamp)
+  const reactorValue = nonEmptyString(reactorConversation?.getAci?.())
+    ?? nonEmptyString(attribute(reactorConversation, 'serviceId'))
+  const isRemove = reaction.remove
+  const emoji = nonEmptyString(reaction.emoji)
+  if (!targetAuthor || targetTimestamp === null || reactedAtMs === null
+    || !reactorValue || typeof isRemove !== 'boolean' || !emoji || emoji.length > 64) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_reaction',
+      'Signal 入站回应缺少稳定目标、回应者、表情或时间，已拒绝回传',
+    )
+  }
+  const reactorExternalId = normalizeSignalPersonId(reactorValue)
+  if (reactorExternalId === normalizeSignalAci(accountExternalId)) return null
+  const targetPlatformMessageId = signalMessageKey(
+    normalizeSignalPersonId(targetAuthor),
+    targetTimestamp,
+  )
+  return {
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type: 'message.reaction',
+    eventId: boundedEventId(
+      `signal-reaction:${reactorExternalId}:${targetPlatformMessageId}:${reactedAtMs}`,
+      'invalid_signal_reaction',
+    ),
+    targetPlatformMessageId,
+    reactorExternalId,
+    emoji: isRemove ? null : emoji,
+    reactedAt: new Date(reactedAtMs).toISOString(),
   }
 }

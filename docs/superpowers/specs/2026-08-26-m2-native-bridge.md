@@ -28,7 +28,9 @@ canonical key 幂等处理，但真实 fixture/shadow 对账尚未完成，不�
 引入 canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调 `editVersion`。
 M3-4 当前版本为 3，新增 `outbox.status` 的非敏感队列指标；详细规则分别见
 `2026-08-26-m3-telegram-message-identity.md`、`2026-08-26-m3-account-control.md` 与
-`2026-08-27-m3-telegram-outbox.md`。
+`2026-08-27-m3-telegram-outbox.md`。M5 在版本 3 上向后兼容地增加 `message.reaction`；没有
+改变既有 frame 语义，也没有提升协议号，避免正在运行的 Telegram v3 guest 因 Signal 增量事件
+被迫同步升级。
 
 guest → host：
 
@@ -43,6 +45,7 @@ guest → host：
 - `message.upsert`
 - `message.deleted`
 - `message.id-remapped`
+- `message.reaction`（M5；`emoji=null` 表示删除回应的墓碑）
 
 host → guest：
 
@@ -98,7 +101,7 @@ M3-2 已删除 Telegram fork 的 `window.__IM_HUB__` 和 `executeJavaScript` JWT
 ## 4. 服务端入口与存储
 
 - `POST /api/native/context`：把平台会话解析/upsert 成内部会话 UUID
-- `POST /api/native/events`：接收消息 upsert、删除和 id remap
+- `POST /api/native/events`：接收消息 upsert、删除、id remap 和回应状态
 
 服务端从已校验账号行取得真实 platform，不接受客户端自报 platform。新增 migration
 `0004_native_bridge_message_events`：
@@ -118,6 +121,12 @@ transaction advisory lock 覆盖多实例；发布前在行锁内重读规范消
 v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只接受更大的版本；旧适配器
 仍可传 null 并回退到 `editedAt`。M3-4 已把 Telegram edit update 的 MTProto `pts` 写入
 telegram-tt outbox；真实快速连续编辑仍要在 M3-4 故障矩阵和 M3-5 对账后才能宣称闭环。
+
+M5 migration `0009_message_reactions` 以
+`(account_id, platform_message_id, reactor_external_id)` 保存回应当前态；`emoji=null` 是删除
+回应的墓碑。该表只外键到账号，不外键到 `messages`，因此回应先于目标消息抵达时也不会丢失。
+同一唯一键只接受更晚的 `reacted_at`，相同或更旧的 outbox 重放是幂等 no-op，不能在删除后
+把迟到旧回应复活。当前只开放 Signal 入站回应，Telegram v3 回应事件继续永久拒绝。
 
 ## 5. 输入坞状态与隔离
 
@@ -168,8 +177,11 @@ Signal Desktop 不能复用 `<webview>` attach 流程；补丁版 Signal 主进�
 仍不自报 im-hub `accountId`，只上报实际 Signal ACI；服务端 owner-only grant 首次绑定
 `native_desktop` 账号的实际 ACI，registry 必须同时匹配注册的 WebContents、账号和 ACI 才转发。
 
-第一阶段从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站文字、图片和贴纸
-`message.upsert`。图片读取 `attachments[]`，贴纸读取独立 `sticker` 字段；桥内只保留类型、
+普通消息从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站文字、图片和贴纸
+`message.upsert`。编辑在 `saveEditedMessage` 后以上一次发送者与原 `sent_at` 复用相同消息键，
+并用 `editMessageTimestamp` 推进 `editedAt`；删除在 Signal 自身删除持久化后产生
+`message.deleted`；回应数据库和消息缓存保存后产生 `message.reaction`。图片读取
+`attachments[]`，贴纸读取独立 `sticker` 字段；桥内只保留类型、
 文件名、MIME、大小和由本地消息 id + 槽位生成的稳定 `remoteId`，不读取或导出本机路径、附件
 密钥、pack key 或二进制。视频、音频和文件尚未接入，包含这些附件的消息整条拒绝，不能只落
 caption。单条消息归一化错误只产生可见的非致命提示，下一条成功事件继续正常处理。
@@ -179,5 +191,6 @@ Signal Desktop 与 signal-cli 共用 `u:` / `g:` 会话键和
 稳定 `eventId` 先写入专用 IndexedDB，再严格顺序重试到 `event.ack`；接受后删除，永久拒绝进入
 有界 dead-letter，存储和容量故障经非敏感 UI 提示。自动化已覆盖 outbox 对象重建后的同键重放，
 真实 Signal 进程重启后的未 ACK 恢复也已通过隔离 503 故障取证。图片/贴纸结构化元数据代码、
-自动化和真实唯一落库均已完成；附件二进制、其他媒体、编辑/删除/回应、
+自动化和真实唯一落库均已完成。编辑/删除/回应的补丁锚点、归一化、持久 outbox、服务端校验、
+回应墓碑表及乱序自动化已经完成，真实客户端矩阵仍待续验；附件二进制、其他媒体、
 context/composer 和翻译仍未接线。

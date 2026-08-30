@@ -140,6 +140,13 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
         || !nonEmptyString(value.oldPlatformMessageId, 512)
         || !nonEmptyString(value.newPlatformMessageId, 512)) return null
       return value as unknown as NativeGuestEvent
+    case 'message.reaction':
+      if (!nonEmptyString(value.eventId, 128)
+        || !nonEmptyString(value.targetPlatformMessageId, 512)
+        || !nonEmptyString(value.reactorExternalId, 512)
+        || (value.emoji !== null && !nonEmptyString(value.emoji, 64))
+        || !string(value.reactedAt, 64)) return null
+      return value as unknown as NativeGuestEvent
   }
   return null
 }

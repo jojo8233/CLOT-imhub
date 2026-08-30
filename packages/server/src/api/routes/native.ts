@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type {
   NativeMessageDeletedEvent,
   NativeMessageIdRemappedEvent,
+  NativeMessageReactionEvent,
   NativeMessageUpsertEvent,
   NormalizedMessage,
   Platform,
@@ -11,6 +12,7 @@ import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   NATIVE_EDIT_VERSION_MAX,
   isSignalConversationId,
+  normalizeSignalPersonId,
   normalizeTelegramChatId,
   parseSignalMessageKey,
   parseTelegramMessageKey,
@@ -19,7 +21,11 @@ import {
 } from '@im-hub/shared'
 import { z } from 'zod'
 import type { MessageIngestor, UpsertConversationInput } from '../../ingest/ingestor.js'
-import type { MessageIdRemapResult, MessagePublicationSnapshot } from '../../ingest/repo.js'
+import type {
+  MessageIdRemapResult,
+  MessagePublicationSnapshot,
+  MessageReactionUpsertResult,
+} from '../../ingest/repo.js'
 import {
   buildTelegramDeleteObservation,
   buildTelegramRemapObservation,
@@ -83,6 +89,15 @@ const eventSchema = z.discriminatedUnion('type', [
     oldPlatformMessageId: id,
     newPlatformMessageId: id,
   }),
+  z.object({
+    protocolVersion: z.literal(NATIVE_BRIDGE_PROTOCOL_VERSION),
+    type: z.literal('message.reaction'),
+    eventId: z.string().min(1).max(128),
+    targetPlatformMessageId: id,
+    reactorExternalId: id,
+    emoji: z.string().min(1).max(64).nullable(),
+    reactedAt: timestamp,
+  }),
 ])
 
 const contextBody = z.object({ accountId: z.string().uuid(), context: contextSchema })
@@ -106,6 +121,13 @@ interface NativeEventRepo {
     newPlatformMessageId: string,
     shadowObservation?: TelegramShadowObservation,
   ): Promise<MessageIdRemapResult | null>
+  upsertMessageReaction(
+    accountId: string,
+    platformMessageId: string,
+    reactorExternalId: string,
+    emoji: string | null,
+    reactedAt: Date,
+  ): Promise<MessageReactionUpsertResult>
 }
 
 export interface NativeRouteDeps {
@@ -149,6 +171,12 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     } else if (account.platform === 'signal') {
       const canonicalError = validateCanonicalSignalEvent(event)
       if (canonicalError) return reply.code(422).send({ error: canonicalError })
+      if (event.type === 'message.reaction'
+        && event.reactorExternalId === account.expectedPlatformAccountExternalId) {
+        return reply.code(422).send({ error: 'Signal native bridge only accepts inbound reactions' })
+      }
+    } else if (event.type === 'message.reaction') {
+      return reply.code(422).send({ error: 'native message reactions are not supported for this platform' })
     }
     if (event.type === 'message.upsert') {
       const result = await ingestNativeMessage(
@@ -207,6 +235,17 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
           deletedAt: event.deletedAt,
         })
       }
+      return { accepted: true, duplicate: !result.changed }
+    }
+
+    if (event.type === 'message.reaction') {
+      const result = await deps.repo.upsertMessageReaction(
+        account.id,
+        event.targetPlatformMessageId,
+        event.reactorExternalId,
+        event.emoji,
+        new Date(event.reactedAt),
+      )
       return { accepted: true, duplicate: !result.changed }
     }
 
@@ -314,8 +353,12 @@ function isCanonicalTelegramChatId(chatId: string): boolean {
 }
 
 function validateCanonicalTelegramEvent(
-  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent | NativeMessageIdRemappedEvent,
+  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent
+    | NativeMessageIdRemappedEvent | NativeMessageReactionEvent,
 ): string | null {
+  if (event.type === 'message.reaction') {
+    return 'Telegram native reactions are not supported'
+  }
   if (event.type === 'message.upsert') {
     if (!isCanonicalTelegramChatId(event.message.platformConversationId)) {
       return 'invalid canonical Telegram chat id'
@@ -361,7 +404,8 @@ function sameEditRevision(
 }
 
 function validateCanonicalSignalEvent(
-  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent | NativeMessageIdRemappedEvent,
+  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent
+    | NativeMessageIdRemappedEvent | NativeMessageReactionEvent,
 ): string | null {
   if (event.type === 'message.id-remapped') {
     return 'Signal message ids cannot be remapped'
@@ -370,6 +414,18 @@ function validateCanonicalSignalEvent(
     return parseSignalMessageKey(event.platformMessageId)
       ? null
       : 'invalid canonical Signal message id'
+  }
+  if (event.type === 'message.reaction') {
+    if (!parseSignalMessageKey(event.targetPlatformMessageId)) {
+      return 'invalid canonical Signal reaction target id'
+    }
+    try {
+      return normalizeSignalPersonId(event.reactorExternalId) === event.reactorExternalId
+        ? null
+        : 'invalid canonical Signal reactor id'
+    } catch {
+      return 'invalid canonical Signal reactor id'
+    }
   }
 
   const { message } = event

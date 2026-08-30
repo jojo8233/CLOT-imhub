@@ -1,6 +1,7 @@
 import type {
   NativeMessageDeletedEvent,
   NativeMessageIdRemappedEvent,
+  NativeMessageReactionEvent,
   NativeMessageUpsertEvent,
   NativeOutboxStatusEvent,
 } from '@im-hub/shared'
@@ -10,6 +11,7 @@ export type SignalOutboxEvent =
   | NativeMessageUpsertEvent
   | NativeMessageDeletedEvent
   | NativeMessageIdRemappedEvent
+  | NativeMessageReactionEvent
 
 export interface SignalOutboxRecord {
   storageKey: string

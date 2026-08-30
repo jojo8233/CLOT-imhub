@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { parseNativeGuestEvent } from './native-bridge-runtime.js'
 import {
+  normalizeSignalDesktopDelete,
+  normalizeSignalDesktopEdit,
   normalizeSignalDesktopInbound,
+  normalizeSignalDesktopReaction,
   readSignalDesktopAci,
   SignalDesktopInboundError,
   type SignalDesktopModelLike,
@@ -200,5 +203,89 @@ describe('normalizeSignalDesktopInbound', () => {
     expect(event?.message.raw).toEqual({
       source: 'signal-desktop', signalMessageId: 'local-id', receivedAtMs: 11,
     })
+  })
+
+  it('编辑沿用原消息规范键，以编辑时间推进版本并允许清空正文', () => {
+    const event = normalizeSignalDesktopEdit(
+      model({ type: 'private' }, 'Alice'),
+      model({
+        id: 'local-edited-id', type: 'incoming',
+        sourceServiceId: '11111111-2222-3333-AAAA-555555555555',
+        sent_at: 1_700_000_000_000,
+        editMessageTimestamp: 1_700_000_001_000,
+        body: '',
+      }),
+      model({}, 'Alice'),
+    )
+
+    expect(event).toMatchObject({
+      type: 'message.upsert',
+      eventId: 'signal-edit:11111111-2222-3333-aaaa-555555555555:1700000000000:1700000001000',
+      message: {
+        platformMessageId: '11111111-2222-3333-aaaa-555555555555:1700000000000',
+        body: '', editVersion: null,
+        editedAt: '2023-11-14T22:13:21.000Z',
+      },
+    })
+    expect(parseNativeGuestEvent(event)).toEqual(event)
+  })
+
+  it('为所有人删除只接受入站目标和匹配的原时间戳', () => {
+    const message = model({
+      type: 'incoming', sourceServiceId: 'sender', sent_at: 1_700_000_000_000,
+    })
+    const event = normalizeSignalDesktopDelete(message, {
+      targetSentTimestamp: 1_700_000_000_000,
+      deleteServerTimestamp: 1_700_000_002_000,
+      deleteSentByAci: 'not-exported',
+    })
+    expect(event).toEqual({
+      protocolVersion: 3,
+      type: 'message.deleted',
+      eventId: 'signal-delete:sender:1700000000000:1700000002000',
+      platformMessageId: 'sender:1700000000000',
+      deletedAt: '2023-11-14T22:13:22.000Z',
+    })
+    expect(JSON.stringify(event)).not.toContain('not-exported')
+    expect(normalizeSignalDesktopDelete(model({ type: 'outgoing' }), {})).toBeNull()
+    expect(() => normalizeSignalDesktopDelete(message, {
+      targetSentTimestamp: 1_700_000_000_001,
+      deleteServerTimestamp: 1_700_000_002_000,
+    })).toThrowError(expect.objectContaining<Partial<SignalDesktopInboundError>>({
+      code: 'invalid_signal_delete',
+    }))
+  })
+
+  it('回应使用目标规范键和回应者平台身份，删除回应生成墓碑', () => {
+    const target = model({ type: 'outgoing' })
+    const reactor = model({ serviceId: '99999999-2222-3333-AAAA-555555555555' })
+    const reaction = {
+      targetAuthorAci: '11111111-2222-3333-AAAA-555555555555',
+      targetTimestamp: 1_700_000_000_000,
+      timestamp: 1_700_000_003_000,
+      emoji: '👍', remove: true,
+      fromId: 'local-conversation-id-must-not-cross',
+    }
+    const event = normalizeSignalDesktopReaction(
+      target, reaction, reactor, '11111111-2222-3333-aaaa-555555555555',
+    )
+    expect(event).toEqual({
+      protocolVersion: 3,
+      type: 'message.reaction',
+      eventId: 'signal-reaction:99999999-2222-3333-aaaa-555555555555:11111111-2222-3333-aaaa-555555555555:1700000000000:1700000003000',
+      targetPlatformMessageId: '11111111-2222-3333-aaaa-555555555555:1700000000000',
+      reactorExternalId: '99999999-2222-3333-aaaa-555555555555',
+      emoji: null,
+      reactedAt: '2023-11-14T22:13:23.000Z',
+    })
+    expect(parseNativeGuestEvent(event)).toEqual(event)
+    expect(JSON.stringify(event)).not.toContain('local-conversation-id-must-not-cross')
+
+    expect(normalizeSignalDesktopReaction(
+      target,
+      { ...reaction, remove: false },
+      model({ serviceId: '11111111-2222-3333-AAAA-555555555555' }),
+      '11111111-2222-3333-aaaa-555555555555',
+    )).toBeNull()
   })
 })

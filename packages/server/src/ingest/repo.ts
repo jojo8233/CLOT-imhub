@@ -44,6 +44,10 @@ export interface MessagePublicationSnapshot {
   deletedAt: Date | null
 }
 
+export interface MessageReactionUpsertResult {
+  changed: boolean
+}
+
 interface StoredMessageIdentity {
   id: string
   conversation_id: string
@@ -250,6 +254,28 @@ export class KyselyMessageRepo implements MessageRepo {
       }
       return true
     })
+  }
+
+  async upsertMessageReaction(
+    accountId: string,
+    platformMessageId: string,
+    reactorExternalId: string,
+    emoji: string | null,
+    reactedAt: Date,
+  ): Promise<MessageReactionUpsertResult> {
+    const row = await this.db.insertInto('message_reactions').values({
+      account_id: accountId,
+      platform_message_id: platformMessageId,
+      reactor_external_id: reactorExternalId,
+      emoji,
+      reacted_at: reactedAt,
+    }).onConflict(oc => oc
+      .columns(['account_id', 'platform_message_id', 'reactor_external_id'])
+      .doUpdateSet({ emoji, reacted_at: reactedAt })
+      .where('message_reactions.reacted_at', '<', reactedAt))
+      .returning('reacted_at')
+      .executeTakeFirst()
+    return { changed: row !== undefined }
   }
 
   async withMessageForPublish(

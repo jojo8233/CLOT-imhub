@@ -188,6 +188,18 @@ export interface NativeMessageIdRemappedEvent extends NativeMessageEventFrame {
   newPlatformMessageId: string
 }
 
+/**
+ * 平台侧某个参与者对消息的当前回应状态。emoji=null 是删除回应的墓碑；服务端按
+ * (account, target, reactor) 唯一保存，并只接受更晚的 reactedAt。
+ */
+export interface NativeMessageReactionEvent extends NativeMessageEventFrame {
+  type: 'message.reaction'
+  targetPlatformMessageId: string
+  reactorExternalId: string
+  emoji: string | null
+  reactedAt: string
+}
+
 export type NativeGuestEvent =
   | NativeBridgeReadyEvent
   | NativeAccountIdentityEvent
@@ -200,3 +212,4 @@ export type NativeGuestEvent =
   | NativeMessageUpsertEvent
   | NativeMessageDeletedEvent
   | NativeMessageIdRemappedEvent
+  | NativeMessageReactionEvent

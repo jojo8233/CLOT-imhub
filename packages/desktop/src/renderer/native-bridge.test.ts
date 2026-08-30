@@ -134,6 +134,18 @@ describe('parseNativeGuestEvent', () => {
     })).toBeNull()
   })
 
+  it('只接受有界且结构完整的回应状态事件', () => {
+    const reaction = {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.reaction', eventId: 'reaction-1',
+      targetPlatformMessageId: 'sender:1', reactorExternalId: 'reactor',
+      emoji: '👍', reactedAt: '2026-08-30T00:00:00.000Z',
+    }
+    expect(parseNativeGuestEvent(reaction)).toEqual(reaction)
+    expect(parseNativeGuestEvent({ ...reaction, emoji: '' })).toBeNull()
+    expect(parseNativeGuestEvent({ ...reaction, emoji: 'x'.repeat(65) })).toBeNull()
+  })
+
   it('拒绝用未知字段绕过 raw 限制的超大桥接帧', () => {
     expect(parseNativeGuestEvent({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,

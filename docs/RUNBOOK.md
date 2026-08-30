@@ -195,7 +195,7 @@ pnpm --filter @im-hub/desktop prepare:signal -- \
 证据，不要重复三平台切换、原生发送矩阵或未 ACK 故障矩阵。图片/贴纸续验只需由另一个 Signal
 联系人向当前已登录账号各发送一条新的图片和贴纸。当前 bridge 处理 Signal 自身已持久化的
 入站文字、图片和贴纸；图片/贴纸只回传结构化元数据和稳定引用，不复制本机文件、路径、密钥或
-二进制。视频、音频、文件、回应、编辑和删除尚未接入；含不支持附件的消息会整条拒绝并显示
+二进制。视频、音频和文件尚未接入；含不支持附件的消息会整条拒绝并显示
 非致命提示，不会落成只有 caption 的半条消息，也不会阻断下一条支持的消息。事件先按实际 Signal ACI
 写入专用 IndexedDB，再以同一 `eventId` 严格顺序重试到服务端 ACK；pending 和 dead-letter
 分别最多 1000 项，永久拒绝必须经明确的重试或清理操作处理。核验数据库时只查询新增行数和
@@ -209,6 +209,12 @@ pending=0 替代回归证据。
 贴纸 0，补发后为 5 行、图片 1、贴纸 1；超过 10 秒 ACK 窗口后计数不变，非规范键、重复键组、
 不稳定媒体引用及禁止媒体字段均为 0。核验只读聚合，未读取正文、联系人、ACI、具体消息键或
 媒体引用。除非修改图片/贴纸归一化、outbox 或 ACK 链路，不要重复该真实矩阵。
+
+Signal 入站编辑、为所有人删除和普通回应现已接入同一持久 outbox，但仍需真实续验。只使用另一个
+Signal 联系人：新发一条纯文字后编辑；对当前账号发出的一条消息添加再移除回应；另发一条纯文字
+后“为所有人删除”。续验前后只按账号聚合 `messages.edited_at`、`messages.deleted_at` 与
+`message_reactions` 的行数、墓碑数和重复组数，不读取正文、ACI、具体消息键、回应内容或 profile。
+story 回应不在本轮范围。不要为此重做平台切换、原生发送、图片/贴纸或 503 重启矩阵。
 
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
@@ -357,7 +363,7 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
   dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入官方 Web
   的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
-  入站媒体、编辑/删除/回应或翻译尚未接入；WhatsApp 尚无统一 bridge；
+  入站媒体或翻译尚未接入；Signal 编辑/删除/回应已实现但真实客户端续验尚未完成；WhatsApp 尚无统一 bridge；
   两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，

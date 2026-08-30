@@ -124,8 +124,10 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
   和删除都不能把原生账号转交给 signal-cli。
 - Signal 添加与重关联 UI 不再触发 `signal-cli` 二维码。CLI 代码尚未删除，以便原生链路
   完成消息回传和回滚验收前保留后台回退。
-- Signal 原生 preload 只在 Signal 自身完成 `ConversationModel.onNewMessage` 持久化后上报
-  入站文字、图片与贴纸。guest 不自报 im-hub 账号；主进程把实际 `WebContentsView` 绑定到账号，服务端
+- Signal 原生 preload 只在 Signal 自身完成对应数据库写入后上报：普通文字、图片与贴纸来自
+  `ConversationModel.onNewMessage`，编辑来自 `saveEditedMessage` 之后，删除来自删除持久化之后，
+  回应来自回应数据库与消息缓存保存之后。guest 不自报 im-hub 账号；主进程把实际
+  `WebContentsView` 绑定到账号，服务端
   owner-only grant 首次绑定实际 ACI，后续每次代理都复核账号撤销版本与实际 ACI。
 - 图片只读取 `attachments[]`，贴纸只读取独立 `sticker` 字段；桥接事件不携带本机路径、附件
   密钥、pack key 或二进制，只用 Signal 本地消息 id + 消息内槽位生成稳定媒体引用。视频、音频、
@@ -143,5 +145,6 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 标签切换，以及 Signal 文字、图片和贴纸发送已经通过；入站文字 bridge 的代码、自动化验证
 和一条真实消息的唯一落库证据也已完成。持久 outbox 代码、自动化、打包与空队列运行态初始化
 以及真实未 ACK 进程重放均已通过。入站图片/贴纸结构化元数据的真实唯一落库也已通过；附件
-二进制、其他入站媒体、编辑/删除/回应、翻译、正式多开、正式安装包、
+二进制和其他入站媒体仍未接入。编辑/删除/回应已经完成代码、数据库迁移和自动化，真实客户端
+矩阵仍待续验；翻译、正式多开、正式安装包、
 上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成可发布实现。
