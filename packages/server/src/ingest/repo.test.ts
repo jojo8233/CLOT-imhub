@@ -114,6 +114,12 @@ describe('KyselyMessageRepo.upsertMessageReaction', () => {
       accountId, target, reactor, '❤️', firstAt,
     )).resolves.toEqual({ changed: false })
     await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, null, firstAt,
+    )).resolves.toEqual({ changed: true })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '👍', firstAt,
+    )).resolves.toEqual({ changed: false })
+    await expect(repo.upsertMessageReaction(
       accountId, target, reactor, null, removedAt,
     )).resolves.toEqual({ changed: true })
     await expect(repo.upsertMessageReaction(

@@ -127,6 +127,14 @@ class IntegratedSignalViewHost {
         console.info('[signal-bridge] preload import installed')
         return
       }
+      if (state === 'reaction-add-persisted') {
+        console.info('[signal-bridge] inbound reaction add persisted')
+        return
+      }
+      if (state === 'reaction-remove-persisted') {
+        console.info('[signal-bridge] inbound reaction removal persisted')
+        return
+      }
       if (state === 'failed') {
         console.error('[signal-bridge] preload import failed')
         this.failedMessage = 'Signal 入站 bridge 安装失败；请重新生成并打开测试包'

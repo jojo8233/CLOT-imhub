@@ -263,6 +263,11 @@ export class KyselyMessageRepo implements MessageRepo {
     emoji: string | null,
     reactedAt: Date,
   ): Promise<MessageReactionUpsertResult> {
+    const isNewer = emoji === null
+      ? sql<boolean>`message_reactions.reacted_at < ${reactedAt}
+          or (message_reactions.reacted_at = ${reactedAt}
+            and message_reactions.emoji is not null)`
+      : sql<boolean>`message_reactions.reacted_at < ${reactedAt}`
     const row = await this.db.insertInto('message_reactions').values({
       account_id: accountId,
       platform_message_id: platformMessageId,
@@ -272,7 +277,7 @@ export class KyselyMessageRepo implements MessageRepo {
     }).onConflict(oc => oc
       .columns(['account_id', 'platform_message_id', 'reactor_external_id'])
       .doUpdateSet({ emoji, reacted_at: reactedAt })
-      .where('message_reactions.reacted_at', '<', reactedAt))
+      .where(isNewer))
       .returning('reacted_at')
       .executeTakeFirst()
     return { changed: row !== undefined }

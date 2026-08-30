@@ -22,6 +22,7 @@ import {
 } from '../signal-desktop-outbox.js'
 
 const COMMAND_CHANNEL = 'imhub:native-command'
+const BOOTSTRAP_CHANNEL = 'imhub:signal-bridge-bootstrap'
 const IDENTITY_INTERVAL_MS = 2_000
 const IDENTITY_GRACE_MS = 15_000
 
@@ -72,10 +73,11 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     return accountExternalId
   }
 
-  const enqueue = async (event: SignalOutboxEvent | null): Promise<void> => {
-    if (!event) return
+  const enqueue = async (event: SignalOutboxEvent | null): Promise<boolean> => {
+    if (!event) return false
     const queued = await outbox.enqueue(accountIdentity(), event)
     if (queued) console.info('[signal-bridge] inbound event persisted')
+    return queued
   }
 
   const reportInboundError = (error: unknown): void => {
@@ -130,9 +132,16 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     async onReaction(targetMessage, reaction, reactorConversation): Promise<void> {
       try {
         const identity = accountIdentity()
-        await enqueue(normalizeSignalDesktopReaction(
+        const event = normalizeSignalDesktopReaction(
           targetMessage, reaction, reactorConversation, identity,
-        ))
+        )
+        if (!event) return
+        if (await enqueue(event)) {
+          ipcRenderer.send(
+            BOOTSTRAP_CHANNEL,
+            event.emoji === null ? 'reaction-remove-persisted' : 'reaction-add-persisted',
+          )
+        }
       } catch (error) {
         reportInboundError(error)
       }
