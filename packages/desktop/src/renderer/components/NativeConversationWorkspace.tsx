@@ -71,14 +71,16 @@ export function NativeConversationWorkspace() {
     <div ref={rowRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <NativeClient />
-        {activePlatform === 'whatsapp'
+        {activePlatform === 'whatsapp' || activePlatform === 'signal'
           ? (
             <div style={{
               flexShrink: 0, padding: '10px 16px', background: theme.color.surface,
               borderTop: `1px solid ${theme.color.border}`, color: theme.color.textMuted,
               fontSize: theme.font.size.sm,
             }}>
-              WhatsApp Web 测试模式：当前验证独立登录、多开和原生文字收发；翻译与消息回传尚未开启。
+              {activePlatform === 'signal'
+                ? 'Signal Desktop 首检模式：同窗口登录、切换及原生文字、图片、贴纸发送已验证；翻译与消息回传尚未开启。'
+                : 'WhatsApp Web 测试模式：当前验证独立登录、多开和原生文字收发；翻译与消息回传尚未开启。'}
             </div>
           )
           : <TranslationDock />}

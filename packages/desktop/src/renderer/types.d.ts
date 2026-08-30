@@ -8,6 +8,10 @@ import type {
   NativeTranslationBatchInput,
   NativeTranslationBatchResult,
 } from '@im-hub/shared'
+import type {
+  SignalDesktopRect,
+  SignalDesktopStateUpdate,
+} from '../signal-desktop-ipc.js'
 
 interface NativeControlTarget {
   accountId: string
@@ -26,6 +30,13 @@ interface NativeControlBridge {
   onState(listener: (value: NativeControlStateUpdate) => void): () => void
 }
 
+interface SignalDesktopBridge {
+  sync(accountId: string, rect: SignalDesktopRect, visible: boolean): Promise<SignalDesktopStateUpdate>
+  release(accountId: string): Promise<void>
+  releaseAll(): Promise<void>
+  onState(listener: (value: SignalDesktopStateUpdate) => void): () => void
+}
+
 /**
  * Electron 的 <webview> 不在 React 的 JSX 类型里，用到的属性在这里补齐。
  *
@@ -39,6 +50,7 @@ declare global {
       serverUrl?: string
       nativeBridgePreload?: string
       nativeControl?: NativeControlBridge
+      signalDesktop?: SignalDesktopBridge
     }
     imHubNativeBridge?: {
       protocolVersion: number

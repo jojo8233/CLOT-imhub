@@ -6,6 +6,7 @@ import {
   nativeAccountIdsToMount,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
+  signalDesktopAccountIdsToMount,
 } from './NativeClient.js'
 
 describe('native account ownership gate', () => {
@@ -33,6 +34,24 @@ describe('native account ownership gate', () => {
       .toEqual([])
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, false))
       .toEqual([])
+  })
+
+  it('Signal Desktop 只挂载显式登记的原生桌面账号', () => {
+    const accounts = [
+      { id: 'native', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop' as const },
+      { id: 'fallback', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
+      { id: 'other', platform: 'signal', owner_user_id: 'user-2', connection_mode: 'native_desktop' as const },
+    ]
+    expect(signalDesktopAccountIdsToMount(
+      accounts,
+      { id: 'user-1', role: 'agent' },
+      true,
+    )).toEqual(['native'])
+    expect(signalDesktopAccountIdsToMount(
+      accounts,
+      { id: 'user-1', role: 'agent' },
+      false,
+    )).toEqual([])
   })
 })
 

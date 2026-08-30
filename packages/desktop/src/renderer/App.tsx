@@ -14,7 +14,6 @@ import { AccountTabs } from './components/AccountTabs.js'
 import { AccountsView } from './components/AccountsView.js'
 import { AddAccountDialog, RelinkAccountDialog } from './components/AddAccountDialog.js'
 import { NativeConversationWorkspace } from './components/NativeConversationWorkspace.js'
-import { ChatWorkspace } from './components/ChatWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import type { ChatPlatform } from './navigation.js'
@@ -102,6 +101,9 @@ export function App() {
     wsRef.current = null
     void window.imHub?.nativeControl?.releaseAll().catch(() => {
       console.error('[native-control] 登出时撤销账号控制授权失败；本地能力已随页面卸载')
+    })
+    void window.imHub?.signalDesktop?.releaseAll().catch(() => {
+      console.error('[signal-desktop] 登出时关闭 Signal Desktop 宿主失败')
     })
     resetStore()
     setUser(null)
@@ -314,26 +316,15 @@ export function App() {
             compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
           />
 
-          {/* 原生 webview 已建立后保持常驻。Signal 的首个真实测试 checkpoint 暂时
-              复用 signal-cli + 三栏会话 UI；Telegram/WhatsApp 宿主仍只隐藏不卸载。 */}
+          {/* 三个平台统一进入原生工作区：Telegram/WhatsApp 使用常驻 webview，
+              Signal 使用同一物理窗口内的受控 WebContentsView。 */}
           <div style={{
             display: view === 'chat' ? 'flex' : 'none',
             flex: 1,
             minWidth: 0,
             minHeight: 0,
           }}>
-            <div style={{
-              display: activePlatform === 'signal' ? 'flex' : 'none',
-              flex: 1, minWidth: 0, minHeight: 0,
-            }}>
-              <ChatWorkspace />
-            </div>
-            <div style={{
-              display: activePlatform === 'signal' ? 'none' : 'flex',
-              flex: 1, minWidth: 0, minHeight: 0,
-            }}>
-              <NativeConversationWorkspace />
-            </div>
+            <NativeConversationWorkspace />
           </div>
           {view !== 'chat' && (
             <AccountsView

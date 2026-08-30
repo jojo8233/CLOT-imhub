@@ -1,5 +1,11 @@
 import type { ColumnType, Generated, JSONColumnType } from 'kysely'
-import type { AccountStatus, Direction, Platform, Role } from '@im-hub/shared'
+import type {
+  AccountConnectionMode,
+  AccountStatus,
+  Direction,
+  Platform,
+  Role,
+} from '@im-hub/shared'
 import type { TelegramShadowEventType, TelegramShadowSource } from '../shadow/telegram.js'
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
@@ -36,6 +42,8 @@ export interface AccountsTable {
   team_id: string | null
   display_name: string
   status: AccountStatus
+  /** 服务端适配器或桌面原生客户端；有默认值以兼容既有账号和 seed。 */
+  connection_mode: Generated<AccountConnectionMode>
   credentials_ref: string | null
   /** 由平台适配器确认的实际登录身份；Telegram 使用 self user id。 */
   platform_account_external_id: NullableText

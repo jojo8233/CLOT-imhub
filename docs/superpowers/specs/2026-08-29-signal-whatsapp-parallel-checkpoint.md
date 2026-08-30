@@ -1,7 +1,11 @@
 # M5/M6 Signal 与 WhatsApp 并行首检点
 
 日期：2026-08-29
-状态：执行中，尚未完成真实账号验收
+状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送首检
+
+> 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
+> 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
+> 与安全边界以 `2026-08-25-native-client-pivot.md` 的最新段落为准。
 
 ## 1. 决策
 
@@ -11,20 +15,20 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
 
 本 checkpoint 只回答两个最小问题：
 
-1. Signal 能否用当前官方兼容的 `signal-cli` JSON-RPC 完成次要设备关联，并通过现有
-   归一化管线完成真实文字收发和中央落库。
+1. Signal 的后台 signal-cli 基线能否完成文字归档，以及用户可见 Signal Desktop 能否保持
+   原生文字、图片和贴纸能力；两条账号模式必须显式隔离。
 2. WhatsApp 官方 Web 能否在 Electron 中按 im-hub 账号使用独立持久 partition 完成扫码、
    保持登录、多账号切换和页面内真实文字收发。
 
 ## 2. Signal 首检点边界
 
-- 继续使用 `packages/server/src/adapters/signal/`，不删除或伪装成 Signal Desktop。
-- 用户可见的唯一“会话”入口在 Signal 激活时临时显示现有三栏 `ChatWorkspace`，从而测试
-  服务端会话、归一化消息、发送和归档；这不是最终原生 Signal UI。
-- 关联流程使用 `startLink` 与 `finishLink`，二维码 URI 只经现有鉴权事件发给当前发起人，
-  不写日志、不落库；关联成功后只保存 signal-cli 的账号寻址值作为 `credentials_ref`。
-- 本 checkpoint 只承诺文字。媒体、编辑、删除、回应、完整回复语义、Signal Desktop 多开、
-  固定翻译坞和安装包均属于后续 M5。
+- 继续保留 `packages/server/src/adapters/signal/`，不删除或伪装成 Signal Desktop；它只接管
+  `connection_mode=adapter` 的账号。
+- 用户可见会话入口使用补丁版 Signal Desktop。`connection_mode=native_desktop` 的账号只在
+  服务端登记归属与 UUID，profile 和同窗口 `WebContentsView` 由 Signal Desktop 基座进程托管，
+  不触发 signal-cli 鉴权。
+- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；编辑、删除、回应、翻译、中央
+  回传、正式多开与安装包仍属于后续 M5。
 - 启动真实测试前必须明确验证本机 `signal-cli` 与所需 Java 运行时。不得因为命令缺失让账号
   无限停在“待登录”而没有诊断。
 
@@ -52,7 +56,22 @@ im-hub 发出文字且手机端收到、服务重启后继续收信。WhatsApp �
 二维码登录、冷启动保持、账号切换不串会话、双向文字收发，以及删除其中一个账号后仅清理
 对应 partition。
 
-完成上述证据后再分别设计桥接：Signal 回到最新 Signal Desktop 上游验证独立 profile 和
-窗口承载；WhatsApp 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或其他受控
-方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram 的通用
-preload，也禁止用 DOM scraping 冒充稳定消息协议。
+Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下一 checkpoint 从入站文字唯一
+落库和桥接边界继续；WhatsApp 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
+其他受控方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram
+的通用 preload，也禁止用 DOM scraping 冒充稳定消息协议。
+
+## 5. 最新续验 checkpoint（2026-08-30）
+
+- 外部无边框窗口覆盖方案已由用户明确判定“不算内嵌”，运行时代码已移除。
+- Signal Desktop 8.25.0 现在用自身 Electron 43.4.1 进程承载 im-hub 主窗口；Signal renderer
+  是同一窗口内容区内的 `WebContentsView`，不是 `<webview>`，也不是第二个 OS 窗口。
+- 已复用一个隔离真实账号完成：钥匙串授权、冷启动恢复、Telegram → WhatsApp → Signal 往返
+  切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
+  在同一 im-hub 窗口。
+- 当前只支持一个 Signal Desktop 原生账号；本 checkpoint 尚未取得 Signal 入站唯一落库、
+  编辑/删除/回应、翻译或中央回传证据，不能越级标记 M5 完成。
+- WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
+
+续接时先验证最新同窗口开发包仍能恢复，再从“Signal 入站文字唯一落库/桥接设计”继续；不要
+重做上述窗口切换和原生文字/图片/贴纸发送矩阵。

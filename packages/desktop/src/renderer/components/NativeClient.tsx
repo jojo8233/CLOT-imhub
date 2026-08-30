@@ -6,6 +6,7 @@ import type {
   NativeHostCommand,
 } from '@im-hub/shared'
 import { NATIVE_BRIDGE_PROTOCOL_VERSION } from '@im-hub/shared'
+import type { SignalDesktopState } from '../../signal-desktop-ipc.js'
 import {
   api,
   getCurrentUser,
@@ -103,6 +104,20 @@ export function nativeAccountIdsToMount(
     .map(account => account.id)
 }
 
+export function signalDesktopAccountIdsToMount(
+  accounts: ReadonlyArray<Pick<AccountRow,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
+  user: Pick<SessionUser, 'id' | 'role'> | null,
+  supportsSignalDesktop: boolean,
+): string[] {
+  if (!supportsSignalDesktop) return []
+  return accounts
+    .filter(account => account.platform === 'signal'
+      && account.connection_mode === 'native_desktop'
+      && nativeAccountControllable(account, user))
+    .map(account => account.id)
+}
+
 interface NativeWebviewLoadProbe {
   getURL(): string
   getWebContentsId(): number
@@ -177,9 +192,15 @@ export function NativeClient() {
   const currentUser = getCurrentUser()
   const activeOwnedByCurrentUser = nativeAccountControllable(active, currentUser)
   const supportsWebview = webviewSupported()
+  const supportsSignalDesktop = window.imHub?.signalDesktop !== undefined
   // 不只挂载 active 账号：否则宿主刷新后从未点开的账号会错过
   // Telegram delete/edit update，之后打开只能看到最终状态，无法补出已丢的事件。
   const mounted = nativeAccountIdsToMount(accounts, currentUser, supportsWebview)
+  const mountedSignalDesktop = signalDesktopAccountIdsToMount(
+    accounts,
+    currentUser,
+    supportsSignalDesktop,
+  )
 
   // 每个常驻 webview 都记住自己的当前会话。切回某账号时恢复它的服务端会话，
   // 不能继续显示上一个账号的客户资料，也不该要求平台再次发 context.changed。
@@ -190,7 +211,20 @@ export function NativeClient() {
   let overlay: ReactNode = null
   if (!active) {
     overlay = <EmptyHint>从顶栏选一个账号<br />这里会打开它的原生界面</EmptyHint>
-  } else if (!nativeClientSupported(active.platform)) {
+  } else if (active.platform === 'signal' && active.connection_mode !== 'native_desktop') {
+    overlay = (
+      <EmptyHint>
+        这是服务端后台适配器账号，不会打开 Signal Desktop。<br />
+        请从顶栏“+”添加一个 Signal 原生桌面账号。
+      </EmptyHint>
+    )
+  } else if (active.platform === 'signal' && !supportsSignalDesktop) {
+    overlay = (
+      <EmptyHint>
+        Signal Desktop 宿主桥接不可用。<br />请重新启动 im-hub 桌面开发进程。
+      </EmptyHint>
+    )
+  } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform)) {
     overlay = (
       <EmptyHint>
         {PLATFORM_LABEL[active.platform] ?? active.platform} 原生客户端尚未接入。
@@ -204,7 +238,7 @@ export function NativeClient() {
         <br />管理与审计角色只能读取已回传的存档，不能操控账号或发送消息。
       </EmptyHint>
     )
-  } else if (!supportsWebview) {
+  } else if (active.platform !== 'signal' && !supportsWebview) {
     overlay = (
       <EmptyHint>
         原生界面只能在桌面客户端里打开。<br />
@@ -218,6 +252,13 @@ export function NativeClient() {
 
   return (
     <div style={{ flex: 1, minWidth: 0, position: 'relative', background: theme.color.chat }}>
+      {mountedSignalDesktop.map(accountId => (
+        <SignalDesktopPane
+          key={accountId}
+          accountId={accountId}
+          visible={accountId === active?.id && active.platform === 'signal'}
+        />
+      ))}
       {mounted.map(id => {
         const acc = accounts.find(a => a.id === id)
         // mounted 每次都从当前账号和授权事实派生。owner/角色变化后会立即
@@ -246,6 +287,134 @@ export function NativeClient() {
           background: theme.color.chat,
         }}>
           {overlay}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SignalDesktopPane({ accountId, visible }: { accountId: string; visible: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [state, setState] = useState<SignalDesktopState>('idle')
+  const [message, setMessage] = useState<string | null>(null)
+  const bridge = window.imHub?.signalDesktop
+
+  useEffect(() => {
+    if (!bridge) return
+    return bridge.onState(update => {
+      if (update.accountId !== accountId) return
+      setState(update.state)
+      setMessage(update.message)
+    })
+  }, [accountId, bridge])
+
+  useEffect(() => {
+    if (!bridge) return
+    let disposed = false
+    let animationFrame: number | null = null
+    const element = ref.current
+    if (!element) return
+
+    const sync = (): void => {
+      if (disposed) return
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = null
+        if (disposed) return
+        const rect = element.getBoundingClientRect()
+        const actuallyVisible = visible && rect.width >= 1 && rect.height >= 1
+        void bridge.sync(accountId, {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        }, actuallyVisible).then(update => {
+          if (disposed || update.accountId !== accountId) return
+          setState(update.state)
+          setMessage(update.message)
+        }).catch(() => {
+          if (disposed) return
+          setState('failed')
+          setMessage('Signal Desktop 宿主同步失败')
+        })
+      })
+    }
+
+    const observer = new ResizeObserver(sync)
+    observer.observe(element)
+    window.addEventListener('resize', sync)
+    window.addEventListener('scroll', sync, true)
+    sync()
+    return () => {
+      disposed = true
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      observer.disconnect()
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('scroll', sync, true)
+      const rect = element.getBoundingClientRect()
+      void bridge.sync(accountId, {
+        x: rect.x,
+        y: rect.y,
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
+      }, false).catch(() => {})
+    }
+  }, [accountId, bridge, visible])
+
+  useEffect(() => {
+    if (!bridge) return
+    return () => { void bridge.release(accountId).catch(() => {}) }
+  }, [accountId, bridge])
+
+  const retry = (): void => {
+    const element = ref.current
+    if (!bridge || !element) return
+    const rect = element.getBoundingClientRect()
+    setState('starting')
+    setMessage('正在重新启动 Signal Desktop')
+    void bridge.release(accountId).then(() => bridge.sync(accountId, {
+      x: rect.x,
+      y: rect.y,
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+    }, visible && rect.width >= 1 && rect.height >= 1)).catch(() => {
+      setState('failed')
+      setMessage('Signal Desktop 重新启动失败')
+    })
+  }
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute', inset: 0,
+        display: visible ? 'block' : 'none',
+        background: theme.color.chat,
+      }}
+    >
+      {state !== 'ready' && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: theme.space.md,
+          color: state === 'failed' ? theme.color.danger : theme.color.textFaint,
+          fontSize: theme.font.size.sm,
+        }}>
+          <span className={state === 'failed' ? undefined : 'ih-pulse'}>
+            {message ?? '正在打开 Signal Desktop…'}
+          </span>
+          {state === 'failed' && (
+            <button
+              className="ih-btn"
+              onClick={retry}
+              style={{
+                padding: '8px 16px', borderRadius: theme.radius.pill,
+                border: `1px solid ${theme.color.borderStrong}`,
+                background: theme.color.white, color: theme.color.text,
+              }}
+            >
+              重试
+            </button>
+          )}
         </div>
       )}
     </div>

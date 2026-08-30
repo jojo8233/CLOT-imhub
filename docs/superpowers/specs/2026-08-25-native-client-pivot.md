@@ -4,9 +4,11 @@
 
 > 2026-08-26 范围校正：Telegram、Signal、WhatsApp 都保留，Zoom 延后；
 > 统一界面只保留一个“会话”入口，中间区域使用平台原生客户端。完整产品基线见
-> `2026-08-26-m0-product-scope.md`。Signal Desktop 曾做过窗口覆盖原型，但该原型
-> 不在当前仓库中，不能写成已交付能力；现有 `signal-cli` 适配器继续保留作为可用
-> 基线和回退路径。
+> `2026-08-26-m0-product-scope.md`。Signal Desktop 的跨进程窗口覆盖原型已于
+> 2026-08-30 被真实验收否决；当前基于 Signal Desktop 8.25.0 改成同一物理窗口内的
+> `WebContentsView`；现有
+> `signal-cli` 适配器继续保留为后台基线和回退路径，但不再作为用户可见的扫码、
+> 会话或媒体发送入口。
 
 ## 为什么转
 
@@ -81,28 +83,48 @@
    已建立 TDLib/telegram-tt 来源观测账本和离线报告；仍须完成真实 shadow fixture、历史缺口
    修复、长期观察和切换/回滚门槛，不能把观测接线写成已验收闭环。
 4. **M5/M6 并行推进 Signal 与 WhatsApp（执行中）**：按 2026-08-29 的产品优先级调整，
-   不再等待 M3 生产观察全部结束才启动。Signal 首检点复用现有 `signal-cli` 适配器和统一
-   会话数据层，先验证真实关联、文字收发与归档；WhatsApp 首检点只在 owner 的隔离
+   不再等待 M3 生产观察全部结束才启动。Signal 已改用补丁版 Signal Desktop 作为用户可见
+   入口，同窗口、真实关联、冷启动恢复、账号切换以及文字、图片和贴纸发送已通过；
+   `signal-cli` 只保留后台回退，不再由
+   添加/重关联弹窗触发。WhatsApp 首检点只在 owner 的隔离
    partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发。WhatsApp
    尚未注入 im-hub preload、桥接或翻译能力，不能写成统一消息闭环。两条路线后续再分别补齐
    原生桥接、身份绑定、消息回传和安装包；Zoom 延后。
 
-## Signal 窗口覆盖原型的历史与边界
+## Signal 同窗口宿主的历史与边界
 
-Signal Desktop 的主体依赖原生模块，不能作为普通网页塞进 `<webview>`。此前原型尝试
-由 im-hub 渲染层提供空占位区，主进程把补丁版 Signal 的无边框窗口实时贴到该区域：
+Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进程 IPC，不能作为普通网页
+塞进 im-hub Electron 33 的 `<webview>`；Signal Desktop 8.25.0 又使用 Electron 43.4.1，直接
+跨版本加载其打包页面会产生原生模块 ABI 风险。此前用第二个无边框进程覆盖 im-hub 占位区的
+方案虽然能对齐坐标，但用户真实验收确认它仍是独立窗口，因此已经退出运行时。历史补丁只保留
+在 `docs/attic/signal-desktop-patches/`。
 
-- 渲染层只能经最小 preload 桥接上报 `{ accountId, rect }`，不能控制进程或访问文件。
-- 主进程会验证 IPC 发送者、账号 UUID 与有限坐标，并把最终范围限制在宿主内容区。
-- 每个账号使用独立进程、控制 socket 和 profile；切换账号只隐藏窗口，不销毁登录态。
-- 控制 socket 权限为当前用户可读写，并要求随机 token 首帧握手；异常输入有长度上限。
-- Signal 子进程只继承桌面运行所需的系统环境，不继承 im-hub 的数据库、JWT 或翻译
-  引擎密钥；其原始 stdout/stderr 也不转发到 im-hub 日志。
-- 找不到仓库、依赖缺失、控制通道失败或子进程退出都会回传明确 UI 状态，并可按账号
-  重试，不再让占位区无限转圈。
+2026-08-30 第一阶段改为反向宿主：让补丁版 Signal Desktop 进程创建唯一物理
+`BrowserWindow`，该窗口的主 webContents 加载 im-hub 外壳，Signal 原始 renderer 则放进
+同进程 `WebContentsView`。Signal 主进程通过一个最小 BrowserWindow facade 继续把
+`.webContents` 和 `.loadURL()` 指向自己的 view，其余显示、尺寸和焦点操作仍作用于同一物理
+窗口：
 
-该原型代码当前不在 im-hub 仓库中，只保留了
-`docs/attic/signal-desktop-patches/` 下的实验补丁，不能作为运行时依赖。M5 重启
-Signal 原生路线时需要重新基于当时的最新上游验证，并补齐：独立 profile、多开切换、
-翻译、图片/贴纸、消息回传、安装包、自动更新以及 AGPL 源码交付。旧补丁只能作为
-技术参考，不能直接视为可发布实现。
+- `packages/desktop/scripts/prepare-signal-desktop.mjs` 从一份官方 `.app` 生成新的开发包，
+  不原地修改官方客户端；补丁锚点与版本不符时立即失败。
+- 准备过程重新生成 `app.asar`、同步 `ElectronAsarIntegrity` header hash 并重新签名，
+  原生 `.node` 模块保持在 `app.asar.unpacked`；可用 `--profile-source` 将上一开发包的本机配置
+  作为不透明字节复制，脚本不解析或打印其中的隔离资料位置。
+- im-hub 主页面使用独立、非持久 Electron session；Signal 原始 renderer 保持 Signal 自己的
+  session、preload、数据库和 IPC。这样不会关闭 `webSecurity`，也不会让 Signal 的默认 session
+  导航过滤器阻断 im-hub。
+- im-hub 静态页面由只监听 `127.0.0.1` 随机端口的临时服务提供，并设置 CSP；API/WS 默认只
+  允许 `127.0.0.1:4000`，若设置 `IM_HUB_SERVER_URL`，则只允许其精确 HTTP/WS origin。
+  Telegram/WhatsApp guest 继续经过精确来源、partition、权限和 preload 校验。
+- 渲染层只上报账号 UUID、内容区相对矩形和可见性；主进程裁剪到同一窗口内容区后才调整
+  Signal `WebContentsView`，不再存在控制 socket 或第二个平台窗口。
+- 账号表使用显式 `connection_mode` 区分 `native_desktop` 与 `adapter`。添加 Signal 原生账号
+  只登记 UUID 并交给桌面主进程，不写伪造的 `credentials_ref`；服务启动、重关联、鉴权输入
+  和删除都不能把原生账号转交给 signal-cli。
+- Signal 添加与重关联 UI 不再触发 `signal-cli` 二维码。CLI 代码尚未删除，以便原生链路
+  完成消息回传和回滚验收前保留后台回退。
+
+当前只允许一个 Signal Desktop 原生账号。真实关联、冷启动恢复、Telegram/WhatsApp/Signal
+标签切换，以及 Signal 文字、图片和贴纸发送已经通过；入站媒体、编辑/删除/回应、翻译、消息
+回传、正式多开、正式安装包、上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成
+可发布实现。

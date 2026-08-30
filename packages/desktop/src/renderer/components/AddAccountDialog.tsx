@@ -9,7 +9,7 @@ import { Chip, PlatformIcon } from './ui.js'
 /** 各平台目前的接入程度。写在这里而不是散在文案里，将来接完一个改一行。 */
 const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
-  { key: 'signal', blurb: '关联为次要设备，手机仍是主设备', ready: true },
+  { key: 'signal', blurb: '使用 Signal Desktop 关联，图片和贴纸保持原生能力', ready: true },
   { key: 'whatsapp', blurb: '官方 Web 独立登录，首阶段测试原生收发', ready: true },
 ]
 
@@ -60,16 +60,21 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
     setBusy(true)
     setError(null)
     try {
-      const account = await api.createAccount({ platform, displayName: name.trim() })
+      const account = await api.createAccount({
+        platform,
+        displayName: name.trim(),
+        connectionMode: platform === 'signal' ? 'native_desktop' : 'adapter',
+      })
       setAccountId(account.id)
       setLinkingPlatform(platform)
       setStep('linking')
       // 新账号此刻还不在列表里，补一次
       setAccounts((await api.listAccounts()).accounts)
-      if (platform === 'whatsapp') {
-        setActivePlatform('whatsapp')
+      if (platform === 'signal' || platform === 'whatsapp') {
+        setActivePlatform(platform)
         setActiveAccount(account.id)
       }
+      if (platform === 'signal') onClose()
     } catch (e) {
       setError(e instanceof NetworkError ? '连不上服务端' : (e instanceof Error ? e.message : '创建失败'))
     } finally {
@@ -106,7 +111,11 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
               添加账号
             </div>
             <div style={{ fontSize: theme.font.size.sm, color: theme.color.textMuted, marginTop: 2 }}>
-              {step === 'pick' ? '选择平台，创建一个独立登录的账号' : '用手机扫码完成关联'}
+              {step === 'pick'
+                ? '选择平台，创建一个独立登录的账号'
+                : linkingPlatform === 'signal'
+                  ? '打开 Signal Desktop 完成关联'
+                  : '用手机扫码完成关联'}
             </div>
           </div>
           <button
@@ -183,13 +192,14 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                 只用于在这里区分多个账号，跟平台上的昵称无关
               </div>
 
-              {!PLATFORMS.find(p => p.key === platform)?.ready && (
+              {platform === 'signal' && (
                 <div style={{
                   marginTop: theme.space.md, padding: theme.space.md,
                   background: theme.color.surface, borderRadius: theme.radius.lg,
                   fontSize: theme.font.size.sm, color: theme.color.textMuted, lineHeight: 1.8,
                 }}>
-                  {PLATFORM_LABEL[platform] ?? platform} 的适配器还没接入，现在建了也连不上。
+                  这里只登记由 Signal Desktop 托管的原生账号，不会启动 signal-cli，
+                  也不会生成 signal-cli 二维码。
                 </div>
               )}
               {error && (
@@ -210,7 +220,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                 kind="primary"
                 disabled={!canCreate || busy}
               >
-                {busy ? '创建中…' : '创建并扫码'}
+                {busy ? '创建中…' : platform === 'signal' ? '创建并打开' : '创建并扫码'}
               </FooterButton>
             </DialogFooter>
           </>
@@ -245,6 +255,12 @@ export function RelinkAccountDialog({ account, onClose }: {
   useEffect(() => {
     let active = true
     clearAuth()
+    if (account.platform === 'signal') {
+      return () => {
+        active = false
+        clearAuth()
+      }
+    }
     if (relinkRequest.current?.accountId !== account.id) {
       relinkRequest.current = { accountId: account.id, promise: api.relinkAccount(account.id) }
     }
@@ -257,7 +273,7 @@ export function RelinkAccountDialog({ account, onClose }: {
       active = false
       clearAuth()
     }
-  }, [account.id, clearAuth])
+  }, [account.id, account.platform, clearAuth])
 
   return (
     <div
@@ -301,7 +317,9 @@ export function RelinkAccountDialog({ account, onClose }: {
           </button>
         </div>
 
-        {error ? (
+        {account.platform === 'signal' ? (
+          <SignalDesktopStep onClose={onClose} />
+        ) : error ? (
           <>
             <div style={{
               margin: theme.space.xl, padding: theme.space.md,
@@ -338,6 +356,9 @@ function LinkingStep({ accountId, platform, challenge, done, onClose }: {
   if (platform === 'whatsapp') {
     return <WhatsAppWebStep onClose={onClose} />
   }
+  if (platform === 'signal') {
+    return <SignalDesktopStep onClose={onClose} />
+  }
 
   if (done) {
     return (
@@ -372,13 +393,36 @@ function LinkingStep({ accountId, platform, challenge, done, onClose }: {
   )
 }
 
+function SignalDesktopStep({ onClose }: { onClose(): void }) {
+  return (
+    <>
+      <div style={{ padding: `${theme.space.xxl}px ${theme.space.xl}px`, textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: theme.space.md }}>S</div>
+        <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+          请在 Signal Desktop 中关联
+        </div>
+        <div style={{
+          maxWidth: 440, margin: '8px auto 0', fontSize: theme.font.size.sm,
+          color: theme.color.textMuted, lineHeight: 1.8,
+        }}>
+          返回“会话”后会在 im-hub 同一窗口中打开 Signal Desktop。二维码、文字、图片和
+          贴纸都由 Signal 原生客户端处理；这里不再生成 signal-cli 二维码。
+        </div>
+      </div>
+      <DialogFooter>
+        <FooterButton onClick={onClose} kind="primary">返回会话</FooterButton>
+      </DialogFooter>
+    </>
+  )
+}
+
 function WhatsAppWebStep({ onClose }: { onClose(): void }) {
   return (
     <>
       <div style={{ padding: `${theme.space.xxl}px ${theme.space.xl}px`, textAlign: 'center' }}>
         <div style={{ fontSize: 40, marginBottom: theme.space.md }}>✓</div>
         <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
-          WhatsApp 独立窗口已创建
+          WhatsApp 会话已创建
         </div>
         <div style={{
           maxWidth: 440, margin: '8px auto 0', fontSize: theme.font.size.sm,

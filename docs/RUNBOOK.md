@@ -10,9 +10,9 @@
 - **pnpm**（本机验证用的是 10.x；没有的话 `corepack enable` 或 `npm i -g pnpm`）
 - **PostgreSQL 16**
 - **Redis**（BullMQ 翻译队列、翻译结果缓存都依赖它）
-- **signal-cli 0.14.7 + Java 25**（M5 Signal 首检点需要；命令位置可用
-  `SIGNAL_CLI_BINARY` 配置，数据目录用 `SIGNAL_DATA_DIR` 配置）。版本要求应以准备测试时的
-  signal-cli 官方发布说明为准，不要默认系统旧 Java 可以运行。
+- **Signal Desktop 8.25.0**（M5 当前用户可见入口；必须从官方 `.app` 生成独立的 im-hub
+  开发包，不能原地修改日常使用的 Signal）。`signal-cli 0.14.7 + Java 25` 只在验证后台
+  回退适配器时需要，不再负责桌面扫码、会话、图片或贴纸。
 
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
@@ -153,15 +153,46 @@ pnpm dev:desktop
 
 客户端有登录页（`components/LoginPage.tsx`），用第 4 节的任一演示账号登录即可；登录态经 Electron `safeStorage` 加密存盘，下次启动自动恢复。以 `agent@example.com` 登录看到的是 seed 建的那 1 个"TG 组内号"账号。桌面端连的服务端地址默认是 `http://localhost:4000`（见 `packages/desktop/src/preload/index.ts`，可用环境变量 `IM_HUB_SERVER_URL` 覆盖）。
 
-Signal 首检点还需要先确认：
+Signal Desktop 首检点先准备独立开发包：
 
 ```bash
-java -version
-signal-cli --version
+pnpm --filter @im-hub/desktop prepare:signal -- \
+  --source /Applications/Signal.app \
+  --output /private/tmp/Signal-imhub.app
+
+open -na /private/tmp/Signal-imhub.app
 ```
 
-若 `signal-cli` 不在 `PATH`，把绝对路径写进 `SIGNAL_CLI_BINARY` 后重新加载 `.env` 并重启
-服务端。不要把 Signal 数据目录、二维码链接或账号凭据提交到 Git。
+准备脚本当前只接受 Signal Desktop 8.25.0；上游版本变化导致补丁锚点不匹配时会明确失败，
+必须重新审阅补丁，不能跳过版本检查。脚本生成新的 `.app`，重新打包 `app.asar`、同步
+完整性 hash 并做本机开发签名，不覆盖 source。该包以 Signal Desktop 的 Electron 43
+作为基座，在同一物理窗口中加载 im-hub 外壳与 Signal `WebContentsView`。Signal 验收不要
+使用 `pnpm dev:desktop`；该命令仍是 Electron 33 的 Telegram/WhatsApp 普通开发壳。进入
+会话后在手机 Signal 的
+“设置 → 已关联设备 → 关联新设备”扫描原生窗口二维码。当前原型只允许一个 Signal Desktop
+原生账号；不要读取、复制、提交或在日志中打印 profile 内容、二维码链接、
+验证码与账号凭据。
+
+以账号 owner 登录 im-hub 后，在顶栏切到 Signal，点“+”并选择“创建并打开”。该请求会把
+账号登记为 `connection_mode=native_desktop`，由 Signal 基座进程托管同窗口 view；服务端不会
+调用 signal-cli，也不会把原生 profile 伪装成 `credentials_ref`。后台 signal-cli 账号继续
+保留 `connection_mode=adapter`，两条路线重启、重关联和删除时均按该字段隔离。
+
+仅在续接已经关联且 profile 已由隔离开发包自身固定的本机 checkpoint 时，可把旧开发包作为
+不透明 profile 配置来源；脚本不会解析或打印资料位置：
+
+```bash
+pnpm --filter @im-hub/desktop prepare:signal -- \
+  --source /Applications/Signal.app \
+  --output /private/tmp/Signal-imhub-next.app \
+  --profile-source /private/tmp/Signal-imhub-previous.app
+```
+
+首次运行新签名测试包时，macOS 可能询问读取 `Signal Safe Storage`；仅在确认路径是本次生成的
+本机测试包后授权。该模式仍只允许一个 Signal 账号，不能作为多账号发布配置。
+若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
+`.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
+再生成 CLI 二维码。
 
 WhatsApp 首检点不需要服务端凭据：owner 创建 WhatsApp 账号后，会话区域直接加载官方
 `web.whatsapp.com`，二维码在官方页面内扫描。每个账号使用独立 Electron partition。当前只
@@ -301,9 +332,11 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
 
 - **多条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
-  已进入开发态。M5/M6 现按优先级并行：Signal 暂用 signal-cli + 三栏 UI 做真实收发首检，
-  WhatsApp 只接入官方 Web 的 owner-only 隔离壳；后者尚无 bridge、翻译或中央回传，不能
-  当成完整接入。Signal Desktop 原生交付和 WhatsApp 完整桥接仍待后续，Zoom 延后到 M8。
+  已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
+  同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送，正验证入站与
+  中央回传；WhatsApp 只接入官方 Web 的 owner-only
+  隔离壳。两者都尚无完整 bridge、翻译或中央回传，不能当成完整接入；Signal 正式安装包、
+  上游更新和 WhatsApp 完整桥接仍待后续，Zoom 延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
   约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。
 - **Composer 与消息回传已完成约定范围真实验收，生产闭环仍有后续门槛**：telegram-tt 已发

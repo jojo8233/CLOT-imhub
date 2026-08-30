@@ -343,8 +343,13 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     void (async () => {
       console.log(`[server] 收到 ${signal}，正在断开所有账号…`)
-      const connected = await db.selectFrom('accounts').select('id').where('status', '=', 'connected').execute()
-      await Promise.allSettled(connected.map(a => adapters.disconnect(a.id)))
+      const connected = await db.selectFrom('accounts')
+        .select(['id', 'connection_mode'])
+        .where('status', '=', 'connected')
+        .execute()
+      await Promise.allSettled(connected
+        .filter(a => a.connection_mode === 'adapter')
+        .map(a => adapters.disconnect(a.id)))
       await app.close()
       await redis.quit()
       await db.destroy()
@@ -369,7 +374,7 @@ async function connectRegisteredAccounts(): Promise<void> {
 
   const all = (await db
     .selectFrom('accounts')
-    .select(['id', 'platform', 'display_name', 'credentials_ref', 'status'])
+    .select(['id', 'platform', 'display_name', 'credentials_ref', 'status', 'connection_mode'])
     .execute()
   ).filter((a) => a.platform !== 'telegram' || telegramReady)
 
@@ -378,7 +383,14 @@ async function connectRegisteredAccounts(): Promise<void> {
     return
   }
 
-  // 只自动连接「本机确实有可用 session」的账号，判据是 credentials_ref。
+  const adapterAccounts = all.filter(a => a.connection_mode === 'adapter')
+  const nativeDesktopAccounts = all.filter(a => a.connection_mode === 'native_desktop')
+  if (nativeDesktopAccounts.length > 0) {
+    console.log(`[server] ${nativeDesktopAccounts.length} 个原生桌面账号交由 im-hub 桌面主进程托管`)
+  }
+
+  // 只自动连接「服务端适配器模式且本机确实有可用 session」的账号，
+  // session 判据是 credentials_ref。
   //
   // 这一栏由适配器在 authorizationStateReady 时写入，所以它精确表示
   // 「这个账号在这台机器上鉴权成功过」。
@@ -387,9 +399,9 @@ async function connectRegisteredAccounts(): Promise<void> {
   // 建好，没登录过的账号一样有这个目录（实测 348K vs 已登录的 7.2M）。
   // 也不该只看 status：员工在手机上解除了这台设备的授权后 status 仍是
   // connected，而那时 session 早就失效了。
-  const accounts = all.filter((a) => a.credentials_ref !== null)
+  const accounts = adapterAccounts.filter((a) => a.credentials_ref !== null)
 
-  const skipped = all.filter((a) => a.credentials_ref === null)
+  const skipped = adapterAccounts.filter((a) => a.credentials_ref === null)
   if (skipped.length > 0) {
     console.log(
       `[server] 跳过 ${skipped.length} 个尚未关联的账号：${skipped.map((a) => a.display_name).join('、')}\n` +

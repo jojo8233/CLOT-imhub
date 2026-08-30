@@ -1,4 +1,8 @@
-import type { NativeControlGrantResponse, WsServerEvent } from '@im-hub/shared'
+import type {
+  AccountConnectionMode,
+  NativeControlGrantResponse,
+  WsServerEvent,
+} from '@im-hub/shared'
 
 interface SessionBridge {
   save(payload: { token: string; user: SessionUser }): Promise<boolean>
@@ -156,11 +160,13 @@ export interface AccountRow {
   display_name: string
   status: string
   history_available_from: string | null
+  connection_mode: AccountConnectionMode
 }
 
 export interface CreateAccountInput {
   platform: string
   displayName: string
+  connectionMode?: AccountConnectionMode
 }
 
 export interface ConversationRow {

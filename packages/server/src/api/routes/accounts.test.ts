@@ -115,6 +115,13 @@ function auth(token: string) {
   return { authorization: `Bearer ${token}` }
 }
 
+async function createNativeSignal(displayName = 'Signal Desktop'): Promise<string> {
+  return (await db.insertInto('accounts').values({
+    platform: 'signal', owner_user_id: AGENT_ID, team_id: TEAM_ID,
+    display_name: displayName, status: 'pending_auth', connection_mode: 'native_desktop',
+  }).returning('id').executeTakeFirstOrThrow()).id
+}
+
 describe('POST /api/accounts', () => {
   it('建成的账号归创建者所有，并落进他所在的组', async () => {
     const res = await app.inject({
@@ -139,6 +146,37 @@ describe('POST /api/accounts', () => {
       payload: { platform: 'telegram', displayName: '我的新号' },
     })
     expect(adapters.connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('Signal 原生桌面账号只登记，不启动 signal-cli 适配器', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(agentToken),
+      payload: {
+        platform: 'signal', displayName: 'Signal Desktop', connectionMode: 'native_desktop',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().account).toMatchObject({
+      platform: 'signal', connection_mode: 'native_desktop', status: 'pending_auth',
+    })
+    expect(adapters.connect).not.toHaveBeenCalled()
+
+    const row = await db.selectFrom('accounts')
+      .select(['connection_mode', 'credentials_ref'])
+      .where('display_name', '=', 'Signal Desktop')
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ connection_mode: 'native_desktop', credentials_ref: null })
+  })
+
+  it('非 Signal 平台不能冒充原生桌面账号绕过适配器', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(agentToken),
+      payload: {
+        platform: 'telegram', displayName: '错误模式', connectionMode: 'native_desktop',
+      },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(adapters.connect).not.toHaveBeenCalled()
   })
 
   it('请求体里指定 owner_user_id 无效，归属只认 token', async () => {
@@ -228,6 +266,16 @@ describe('POST /api/accounts/:id/auth-answer', () => {
     expect(res.statusCode).toBe(400)
     expect(res.body).not.toContain('aaaa')
   })
+
+  it('原生 Signal 账号拒绝走服务端鉴权输入', async () => {
+    const id = await createNativeSignal()
+    const res = await app.inject({
+      method: 'POST', url: `/api/accounts/${id}/auth-answer`,
+      headers: auth(agentToken), payload: { value: 'never-forward' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(adapters.submitAuthAnswer).not.toHaveBeenCalled()
+  })
 })
 
 describe('POST /api/accounts/:id/relink', () => {
@@ -255,6 +303,16 @@ describe('POST /api/accounts/:id/relink', () => {
       method: 'POST', url: `/api/accounts/${agentAccountId}/relink`, headers: auth(managerToken),
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  it('原生 Signal 账号拒绝启动服务端重关联', async () => {
+    const id = await createNativeSignal()
+    const res = await app.inject({
+      method: 'POST', url: `/api/accounts/${id}/relink`, headers: auth(agentToken),
+    })
+    expect(res.statusCode).toBe(409)
+    expect(adapters.disconnect).not.toHaveBeenCalled()
+    expect(adapters.connect).not.toHaveBeenCalled()
   })
 })
 
@@ -376,6 +434,18 @@ describe('DELETE /api/accounts/:id', () => {
     })
     // 只清本地数据、不动服务端注册，所以手机上那个条目要用户自己删
     expect(res.json().manualCleanup).toContain('已关联设备')
+  })
+
+  it('删除原生 Signal 登记不会误清 signal-cli 数据', async () => {
+    const id = await createNativeSignal('原生 SG')
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/accounts/${id}`,
+      headers: auth(agentToken), payload: { confirmName: '原生 SG' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(adapters.purge).not.toHaveBeenCalled()
+    expect(await db.selectFrom('accounts').select('id').where('id', '=', id).executeTakeFirst())
+      .toBeUndefined()
   })
 
   it('WhatsApp 账号提示用户从手机移除浏览器会话', async () => {

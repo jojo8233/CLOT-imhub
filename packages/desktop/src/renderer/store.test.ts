@@ -10,6 +10,7 @@ function account(id: string, platform: string): AccountRow {
     display_name: id,
     status: 'connected',
     history_available_from: null,
+    connection_mode: platform === 'signal' ? 'native_desktop' : 'adapter',
   }
 }
 
