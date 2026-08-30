@@ -205,6 +205,11 @@ pnpm --filter @im-hub/desktop prepare:signal -- \
 跨 Signal 进程退出/重开的续收证据。后续除非改动这条链路，不要重复该故障矩阵，也不能用启动时
 pending=0 替代回归证据。
 
+2026-08-30 a18 已完成一次入站图片与贴纸真实续验：补发前原生 Signal 聚合为 3 行、图片 0、
+贴纸 0，补发后为 5 行、图片 1、贴纸 1；超过 10 秒 ACK 窗口后计数不变，非规范键、重复键组、
+不稳定媒体引用及禁止媒体字段均为 0。核验只读聚合，未读取正文、联系人、ACI、具体消息键或
+媒体引用。除非修改图片/贴纸归一化、outbox 或 ACK 链路，不要重复该真实矩阵。
+
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
 再生成 CLI 二维码。
@@ -351,8 +356,8 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站文字 bridge
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
   dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入官方 Web
-  的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据桥接代码已接入但真实续验待办，附件二进制、
-  其他入站媒体、编辑/删除/回应或翻译尚未接入；WhatsApp 尚无统一 bridge；
+  的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
+  入站媒体、编辑/删除/回应或翻译尚未接入；WhatsApp 尚无统一 bridge；
   两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
