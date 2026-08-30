@@ -2,7 +2,7 @@
 
 日期：2026-08-29
 状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库、持久 outbox
-真实重放及图片/贴纸结构化元数据真实唯一落库；编辑/删除/回应已完成实现，待真实续验
+真实重放、图片/贴纸结构化元数据及编辑/删除/回应真实续验；当前会话与草稿读写已实现，待真实续验
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -28,9 +28,9 @@ Signal 与 WhatsApp 的使用优先级高于继续等待 Telegram 的生产观�
 - 用户可见会话入口使用补丁版 Signal Desktop。`connection_mode=native_desktop` 的账号只在
   服务端登记归属与 UUID，profile 和同窗口 `WebContentsView` 由 Signal Desktop 基座进程托管，
   不触发 signal-cli 鉴权。
-- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；当前已实现入站文字中央回传，
-  图片/贴纸结构化元数据桥接及真实唯一落库已通过。编辑、删除、回应已完成代码和自动化，
-  尚未取得真实客户端证据；附件二进制、其他入站媒体、翻译、正式多开与安装包仍属于后续 M5。
+- 原生窗口第一阶段保持 Signal 自身的文字、图片与贴纸能力；入站文字、图片/贴纸结构化元数据、
+  编辑、删除和回应桥接及真实唯一落库均已通过。当前会话与原生草稿读写已接入既有 control
+  grant；自动发送、附件二进制、其他入站媒体、正式多开与安装包仍属于后续 M5。
 - 启动真实测试前必须明确验证本机 `signal-cli` 与所需 Java 运行时。不得因为命令缺失让账号
   无限停在“待登录”而没有诊断。
 
@@ -58,9 +58,9 @@ im-hub 发出文字且手机端收到、服务重启后继续收信。WhatsApp �
 二维码登录、冷启动保持、账号切换不串会话、双向文字收发，以及删除其中一个账号后仅清理
 对应 partition。
 
-Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字唯一落库和真实未 ACK 跨进程重放
-均已完成；入站图片/贴纸的结构化事件边界、自动化与真实唯一落库也已完成。下一 Signal checkpoint
-是入站编辑/删除/回应真实续验。WhatsApp
+Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字唯一落库、真实未 ACK 跨进程重放、
+入站图片/贴纸结构化元数据和编辑/删除/回应真实续验均已完成。下一 Signal checkpoint 是当前会话
+同步与翻译写入原生草稿。WhatsApp
 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
 其他受控方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram
 的通用 preload，也禁止用 DOM scraping 冒充稳定消息协议。
@@ -73,14 +73,15 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
 - 已复用一个隔离真实账号完成：钥匙串授权、冷启动恢复、Telegram → WhatsApp → Signal 往返
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
-- 当前只支持一个 Signal Desktop 原生账号；入站文字及图片/贴纸结构化元数据唯一落库均已取得
-  真实证据；编辑/删除/回应已完成实现但尚待真实续验；翻译、附件二进制与其他入站媒体仍未完成。
+- 当前只支持一个 Signal Desktop 原生账号；入站文字、图片/贴纸结构化元数据及编辑/删除/回应
+  均已取得真实证据；当前会话与原生草稿读写已实现、待真实续验；自动发送、附件二进制与其他
+  入站媒体仍未完成。
   持久 outbox 实现、空队列初始化与
   真实未 ACK 消息跨进程重放均已通过，但仍不能越级标记 M5 完成。
 - WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
 
-续接时只做 Signal 入站编辑/删除/回应真实续验；不要重做上述窗口切换、原生文字/图片/贴纸
-发送矩阵、入站图片/贴纸唯一落库或未 ACK 跨进程重放矩阵。
+续接时只做 Signal 当前会话同步与翻译写入原生草稿真实续验；不要重做上述窗口切换、原生文字/
+图片/贴纸发送矩阵、任何已通过的入站生命周期或未 ACK 跨进程重放矩阵。
 
 ## 6. Signal 入站文字桥接实现 checkpoint（2026-08-30）
 
@@ -100,7 +101,8 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
   remap，数据库仍按 `(account_id, platform_message_id)` 幂等落库。
 - 本 checkpoint 当时只桥接 `type=incoming` 且正文非空的纯文字 `message.upsert`；第 8 节已在
   同一事件边界上增加图片/贴纸结构化元数据，第 9 节又从 Signal 自身持久化函数接入编辑、删除
-  和普通回应。composer/context 命令仍未开放；这些事实不能从 Signal DOM 推断或伪造。
+  和普通回应，第 10 节接入当前会话与原生草稿读写。所有边界均来自 Signal 自身状态或 action，
+  不能从 Signal DOM 推断或伪造。
 - 事件使用稳定 `eventId`，先按实际 Signal ACI 写入专用 IndexedDB，再严格顺序重试到
   `event.ack`。接受后删除，永久拒绝进入最多 1000 项的 dead-letter；pending 也最多 1000 项。
   存储、容量和永久失败只显示非敏感状态，不把正文或 ACI 暴露给外壳。
@@ -194,3 +196,25 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   9、删除标记从 0 增为 1、重复键与非规范键均为 0；ACK 窗口后消息 9（编辑 1、删除 1）、
   回应 5（活跃 4、墓碑 1）且两类重复均为 0。续验期间未重启 Telegram 或服务端，也未重复已通过
   的平台切换及 Signal 文字、图片、贴纸发送矩阵。
+
+## 10. Signal 当前会话与原生草稿桥接 checkpoint（2026-08-30）
+
+- 当前会话只读取 Signal Desktop 8.25.0 的 Redux `nav.selectedLocation`；仅 `Chats` 页接受
+  `details.conversationId`，再由 `ConversationController` 取得会话模型。外壳只收到规范化后的
+  `u:<peer>` / `g:<group>` 平台身份与展示名，本地 ConversationModel id 不跨出 guest。
+- guest 订阅 Signal 自身 Redux store，并以 250ms 轮询作为恢复兜底。只有平台会话实际变化时才
+  增加 `contextRevision`；外壳拒绝倒退 revision 和同 revision 复用，服务端又对 Signal 私聊/
+  群聊会话键与联系人身份做规范匹配后才 upsert 会话。异步同步结果仍按 revision 收敛，不能覆盖
+  已切换的新会话。
+- `composer.get-draft` / `composer.set-draft` 已开放。写入使用 Signal 自身的
+  `reduxActions.composer.setComposerFocus` 与 `onEditorStateChange`，不操作 contenteditable DOM；
+  写入前、聚焦后和确认期间都会重验会话，切换会话时旧命令明确失败。草稿最多 1,000,000 字符，
+  Signal 模型未在 500ms 内确认相同草稿时也按失败处理。
+- `composer.send` 继续返回 `signal_send_not_enabled`，`composer.state.canSend` 始终为 false；本轮只
+  把翻译结果写入原生输入框，由客服核对后在 Signal 中手动发送，不引入未具备 attempt 幂等的
+  自动发送。
+- 打包脚本要求 Signal 8.25.0 的原生草稿 action 与 Composer 聚焦 action 各唯一命中，否则拒绝
+  生成测试包。自动化已通过 `pnpm typecheck`、49 个测试文件（441 passed、1 todo）、desktop
+  build；a21 已生成并通过 `codesign --verify --deep --strict`。真实客户端只待一次“打开当前会话 →
+  翻译一条无敏感内容的临时文本 → 同一 Signal 原生输入框出现草稿”的续验，不重启 Telegram 或
+  服务端，也不重复已通过的平台切换、发送、入站生命周期或 outbox 故障矩阵。

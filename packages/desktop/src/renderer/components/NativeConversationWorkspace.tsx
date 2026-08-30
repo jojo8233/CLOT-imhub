@@ -130,7 +130,7 @@ export function NativeConversationWorkspace() {
             }}>
               <div>
                 {activePlatform === 'signal'
-                  ? 'Signal Desktop 首检模式：入站文字已续验；图片与贴纸元数据桥接已接入、待真实入站续验，其他媒体与翻译尚未开启。'
+                  ? 'Signal Desktop 开发模式：入站文字、图片/贴纸元数据及编辑/删除/回应已续验；翻译可写入当前原生草稿，自动发送尚未开启，请在 Signal 输入框确认后手动发送。'
                   : 'WhatsApp Web 测试模式：当前验证独立登录、多开和原生文字收发；翻译与消息回传尚未开启。'}
               </div>
               {activePlatform === 'signal'

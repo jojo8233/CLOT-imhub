@@ -147,6 +147,10 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       && !isCanonicalTelegramChatId(parsed.data.context.platformConversationId)) {
       return reply.code(422).send({ error: 'invalid canonical Telegram chat id' })
     }
+    if (account.platform === 'signal') {
+      const canonicalError = validateCanonicalSignalContext(parsed.data.context)
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
+    }
 
     const conversation = await deps.repo.upsertConversation({
       accountId: account.id,
@@ -349,6 +353,24 @@ function isCanonicalTelegramChatId(chatId: string): boolean {
     return normalizeTelegramChatId(chatId) === chatId
   } catch {
     return false
+  }
+}
+
+function validateCanonicalSignalContext(context: z.infer<typeof contextSchema>): string | null {
+  if (!isSignalConversationId(context.platformConversationId)) {
+    return 'invalid canonical Signal conversation id'
+  }
+  if (context.platformConversationId.startsWith('g:')) {
+    return context.contactExternalId === context.platformConversationId
+      ? null
+      : 'Signal group context contact does not match conversation id'
+  }
+  try {
+    return signalDirectConversationId(context.contactExternalId) === context.platformConversationId
+      ? null
+      : 'Signal direct context contact does not match conversation id'
+  } catch {
+    return 'invalid canonical Signal context contact id'
   }
 }
 

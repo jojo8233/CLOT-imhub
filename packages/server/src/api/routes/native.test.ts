@@ -366,6 +366,68 @@ describe('native bridge routes', () => {
     expect(upsertConversation).not.toHaveBeenCalled()
   })
 
+  it('Signal 当前会话只接受规范会话键和匹配的平台联系人身份', async () => {
+    const signalAci = '11111111-2222-3333-aaaa-555555555555'
+    const signalAccount = await db.updateTable('accounts')
+      .set({
+        platform: 'signal', connection_mode: 'native_desktop',
+        platform_account_external_id: signalAci,
+      })
+      .where('id', '=', accountId)
+      .returning('native_control_version')
+      .executeTakeFirstOrThrow()
+    const { grant } = await signNativeControlGrant({
+      userId: agentId,
+      accountId,
+      platform: 'signal',
+      expectedPlatformAccountExternalId: signalAci,
+      controlVersion: signalAccount.native_control_version,
+    }, TEST_JWT_SECRET)
+    const peer = '99999999-2222-3333-aaaa-555555555555'
+    const directContext = {
+      platformConversationId: `u:${peer}`,
+      contactExternalId: peer,
+      contactDisplayName: 'Alice',
+    }
+    const direct = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(grant),
+      payload: { accountId, context: directContext },
+    })
+    expect(direct.statusCode).toBe(200)
+    expect(upsertConversation).toHaveBeenCalledWith({ accountId, ...directContext })
+
+    upsertConversation.mockClear()
+    const mismatched = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(grant),
+      payload: {
+        accountId,
+        context: { ...directContext, contactExternalId: signalAci },
+      },
+    })
+    expect(mismatched.statusCode).toBe(422)
+    const noncanonical = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(grant),
+      payload: {
+        accountId,
+        context: { ...directContext, platformConversationId: 'local-conversation-id' },
+      },
+    })
+    expect(noncanonical.statusCode).toBe(422)
+    expect(upsertConversation).not.toHaveBeenCalled()
+
+    const groupContext = {
+      platformConversationId: 'g:Z3JvdXA=',
+      contactExternalId: 'g:Z3JvdXA=',
+      contactDisplayName: '客服群',
+    }
+    const group = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(grant),
+      payload: { accountId, context: groupContext },
+    })
+    expect(group.statusCode).toBe(200)
+    expect(upsertConversation).toHaveBeenCalledWith({ accountId, ...groupContext })
+  })
+
   it('manager 虽然能看见组员账号，也不能签发原生控制 grant', async () => {
     const response = await app.inject({
       method: 'POST', url: `/api/accounts/${accountId}/native-control-grant`, headers: auth(managerToken),

@@ -36,6 +36,11 @@ function replaceEvery(source, before, after, expected, label) {
   return source.split(before).join(after)
 }
 
+function assertOccurrence(source, needle, expected, label) {
+  const count = source.split(needle).length - 1
+  if (count !== expected) throw new Error(`${label} 源码边界数量异常：${count}`)
+}
+
 function setPlist(plist, key, value) {
   const set = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist], { stdio: 'ignore' })
   if (set.status === 0) return
@@ -119,6 +124,18 @@ try {
 
   const signalPreloadMainPath = join(extracted, 'bundles', 'preload', 'main.js')
   let signalPreloadMain = readFileSync(signalPreloadMainPath, 'utf8')
+  assertOccurrence(
+    signalPreloadMain,
+    'onEditorStateChange:tZt',
+    1,
+    'Signal 原生草稿 action',
+  )
+  assertOccurrence(
+    signalPreloadMain,
+    'window.reduxActions.composer.setComposerFocus',
+    1,
+    'Signal 原生 Composer 聚焦 action',
+  )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,
     'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes))}async addSingleMessage',

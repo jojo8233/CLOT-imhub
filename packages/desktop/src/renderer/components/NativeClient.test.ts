@@ -142,6 +142,8 @@ describe('Signal inbound message errors', () => {
     expect(signalInboundErrorIsNonfatal('invalid_signal_edit')).toBe(true)
     expect(signalInboundErrorIsNonfatal('invalid_signal_delete')).toBe(true)
     expect(signalInboundErrorIsNonfatal('invalid_signal_reaction')).toBe(true)
+    expect(signalInboundErrorIsNonfatal('signal_composer_state_unavailable')).toBe(true)
+    expect(signalInboundErrorIsNonfatal('signal_draft_too_large')).toBe(true)
     expect(signalInboundErrorIsNonfatal('signal_identity_unavailable')).toBe(false)
   })
 })

@@ -135,6 +135,10 @@ class IntegratedSignalViewHost {
         console.info('[signal-bridge] inbound reaction removal persisted')
         return
       }
+      if (state === 'composer-draft-written') {
+        console.info('[signal-bridge] native draft written')
+        return
+      }
       if (state === 'failed') {
         console.error('[signal-bridge] preload import failed')
         this.failedMessage = 'Signal 入站 bridge 安装失败；请重新生成并打开测试包'

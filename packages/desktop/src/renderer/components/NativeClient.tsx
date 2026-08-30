@@ -139,6 +139,8 @@ export function signalInboundErrorIsNonfatal(code: string): boolean {
     || code === 'invalid_signal_edit'
     || code === 'invalid_signal_delete'
     || code === 'invalid_signal_reaction'
+    || code === 'signal_composer_state_unavailable'
+    || code === 'signal_draft_too_large'
 }
 
 interface NativeWebviewLoadProbe {
@@ -318,6 +320,7 @@ export function NativeClient() {
 
 function SignalDesktopPane({ accountId, visible }: { accountId: string; visible: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
+  const lastContextRevisionRef = useRef(-1)
   const [state, setState] = useState<SignalDesktopState>('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [guestWebContentsId, setGuestWebContentsId] = useState<number | null>(null)
@@ -397,6 +400,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
     const nativeControl = window.imHub?.nativeControl
     if (!nativeControl || guestWebContentsId === null) return
     const target = { accountId, guestWebContentsId }
+    lastContextRevisionRef.current = -1
     let disposed = false
     let grantRefreshTimer: ReturnType<typeof setTimeout> | null = null
     let provisionGeneration = 0
@@ -494,6 +498,10 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Signal 账号已退出')
         return
       }
+      if (event.type === 'command.result') {
+        handleNativeCommandResult(accountId, event as NativeCommandResultEvent)
+        return
+      }
       if (event.type === 'bridge.error') {
         if (signalInboundErrorIsNonfatal(event.code)) {
           useStore.getState().setNativeBridgeNotice(accountId, event.message)
@@ -512,6 +520,66 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
           isSending: event.isSending,
           lastErrorCode: event.lastErrorCode,
         })
+        return
+      }
+      if (event.type === 'context.changed') {
+        const currentContext = useStore.getState().nativeBridgeByAccount[accountId]?.context
+        if (event.contextRevision < lastContextRevisionRef.current) return
+        if (event.contextRevision === lastContextRevisionRef.current) {
+          const incomingConversationId = event.context?.platformConversationId ?? null
+          const currentConversationId = currentContext?.platformConversationId ?? null
+          if (incomingConversationId !== currentConversationId) {
+            setControlError('Signal 原生客户端复用了当前会话 revision')
+            useStore.getState().setNativeBridgeConnection(
+              accountId,
+              'failed',
+              'Signal 原生客户端复用了当前会话 revision',
+            )
+          }
+          return
+        }
+        lastContextRevisionRef.current = event.contextRevision
+        if (!event.context) {
+          useStore.getState().setNativeContext(accountId, null)
+          return
+        }
+        const context = event.context
+        useStore.getState().setNativeContext(accountId, {
+          ...context,
+          contextRevision: event.contextRevision,
+          conversationId: null,
+        })
+        void nativeControl.syncContext(target, context).then(({ conversationId }) => {
+          if (disposed) return
+          useStore.getState().resolveNativeConversation(
+            accountId,
+            event.contextRevision,
+            context.platformConversationId,
+            conversationId,
+          )
+          void api.listConversations().then(({ conversations }) => {
+            if (!disposed) useStore.getState().setConversations(conversations)
+          }).catch(() => {})
+        }).catch(() => {
+          if (disposed) return
+          setControlError('Signal 当前会话同步到服务端失败')
+          useStore.getState().setNativeBridgeConnection(
+            accountId,
+            'failed',
+            'Signal 当前会话同步到服务端失败',
+          )
+        })
+        return
+      }
+      if (event.type === 'composer.state') {
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        useStore.getState().applyNativeComposerState(
+          accountId,
+          event.contextRevision,
+          event.platformConversationId,
+          event.draft,
+          event.canSend,
+        )
         return
       }
       if (event.type !== 'message.upsert'
@@ -560,6 +628,8 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
       removeEventListener()
       removeStateListener()
       unregisterTarget()
+      lastContextRevisionRef.current = -1
+      useStore.getState().setNativeContext(accountId, null)
       void nativeControl.release(target).catch(() => {})
     }
   }, [accountId, guestWebContentsId])

@@ -1,5 +1,6 @@
 import type {
   MediaRef,
+  NativeConversationContext,
   NativeMessageDeletedEvent,
   NativeMessageReactionEvent,
   NativeMessageUpsertEvent,
@@ -22,6 +23,7 @@ export interface SignalDesktopModelLike {
 
 export interface SignalDesktopWindowLike {
   ConversationController?: {
+    get?(id: string): SignalDesktopModelLike | undefined
     getOurConversationOrThrow?(): SignalDesktopModelLike & { getAci?(): unknown }
   }
   /** 旧版兼容回退；8.25.0 的事实来源是 ConversationController 中的 self conversation。 */
@@ -114,6 +116,39 @@ function displayName(model: SignalDesktopModelLike | null): string | null {
     if (value) return value
   }
   return null
+}
+
+/** 当前 Signal 会话的规范平台身份；不把本地 ConversationModel id 带出 guest。 */
+export function normalizeSignalDesktopConversationContext(
+  conversation: SignalDesktopModelLike | null,
+): NativeConversationContext | null {
+  if (!conversation) return null
+  const groupId = nonEmptyString(attribute(conversation, 'groupId'))
+  if (groupId) {
+    const platformConversationId = signalGroupConversationId(groupId)
+    return {
+      platformConversationId,
+      contactExternalId: platformConversationId,
+      contactDisplayName: displayName(conversation),
+    }
+  }
+
+  let aci: unknown
+  try {
+    aci = conversation.getAci?.()
+  } catch {
+    aci = undefined
+  }
+  const personId = nonEmptyString(aci)
+    ?? nonEmptyString(attribute(conversation, 'serviceId'))
+    ?? nonEmptyString(attribute(conversation, 'e164'))
+  if (!personId) return null
+  const contactExternalId = normalizeSignalPersonId(personId)
+  return {
+    platformConversationId: signalDirectConversationId(contactExternalId),
+    contactExternalId,
+    contactDisplayName: displayName(conversation),
+  }
 }
 
 /** 当前只桥接图片与贴纸元数据，不读取文件、不导出本机路径或任何附件密钥。 */
