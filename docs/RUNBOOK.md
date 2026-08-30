@@ -213,9 +213,11 @@ pending=0 替代回归证据。
 Signal 入站编辑、为所有人删除和普通回应已经通过真实续验；除非修改对应归一化、outbox 或 ACK
 链路，不要重复。当前翻译 checkpoint 只开放当前会话同步与 `composer.get-draft` /
 `composer.set-draft`：在 Signal 原生页面打开一个会话后，固定输入坞应从“等待原生输入桥接”变为
-可翻译；翻译结果必须写入同一 Signal 原生输入框。`composer.send` 仍明确拒绝，底栏要求客服在
-Signal 输入框确认后手动发送。验证时只用一条无敏感内容的临时草稿，不读取或打印联系人 ACI、
-本地 ConversationModel id、草稿正文、profile 或 token；切换会话后的旧 revision 必须被拒绝。
+可翻译；翻译结果必须写入同一 Signal 原生输入框。成功判定必须同时确认可见 CompositionInput
+正文和 ConversationModel 持久草稿，不能只看模型或脱敏日志。`composer.send` 仍明确拒绝，底栏
+要求客服在 Signal 输入框确认后手动发送。验证时只用一条无敏感内容的临时草稿，不读取或打印
+联系人 ACI、本地 ConversationModel id、草稿正文、profile 或 token；切换会话后的旧 revision
+必须被拒绝。a23 已完成该真实续验，除非修改会话、可见编辑器或草稿持久化边界，不要重复。
 
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
@@ -364,8 +366,8 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
   dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入官方 Web
   的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
-  入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与草稿翻译写入已实现、待真实
-  客户端续验，自动发送尚未开放；WhatsApp 尚无统一 bridge；
+  入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
+  通过真实客户端续验，自动发送尚未开放；WhatsApp 尚无统一 bridge；
   两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，

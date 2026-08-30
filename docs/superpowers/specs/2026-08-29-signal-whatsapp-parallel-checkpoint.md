@@ -2,7 +2,7 @@
 
 日期：2026-08-29
 状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库、持久 outbox
-真实重放、图片/贴纸结构化元数据及编辑/删除/回应真实续验；当前会话与草稿读写已实现，待真实续验
+真实重放、图片/贴纸结构化元数据、编辑/删除/回应，以及当前会话与可见原生草稿写入真实续验
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -74,7 +74,7 @@ Signal 的独立 profile、同窗口承载、原生发信矩阵、入站文字�
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
 - 当前只支持一个 Signal Desktop 原生账号；入站文字、图片/贴纸结构化元数据及编辑/删除/回应
-  均已取得真实证据；当前会话与原生草稿读写已实现、待真实续验；自动发送、附件二进制与其他
+  均已取得真实证据；当前会话与可见原生草稿写入也已真实续验；自动发送、附件二进制与其他
   入站媒体仍未完成。
   持久 outbox 实现、空队列初始化与
   真实未 ACK 消息跨进程重放均已通过，但仍不能越级标记 M5 完成。
@@ -206,15 +206,26 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   增加 `contextRevision`；外壳拒绝倒退 revision 和同 revision 复用，服务端又对 Signal 私聊/
   群聊会话键与联系人身份做规范匹配后才 upsert 会话。异步同步结果仍按 revision 收敛，不能覆盖
   已切换的新会话。
-- `composer.get-draft` / `composer.set-draft` 已开放。写入使用 Signal 自身的
-  `reduxActions.composer.setComposerFocus` 与 `onEditorStateChange`，不操作 contenteditable DOM；
-  写入前、聚焦后和确认期间都会重验会话，切换会话时旧命令明确失败。草稿最多 1,000,000 字符，
-  Signal 模型未在 500ms 内确认相同草稿时也按失败处理。
+- `composer.get-draft` / `composer.set-draft` 已开放。写入先用 Signal 自身的
+  `reduxActions.composer.setComposerFocus`，再调用 Signal 8.25.0 `CompositionInput` 已有的
+  `inputApi.setContents`；其原生 `onEditorStateChange` 路径继续负责持久化，不查询或直接操作
+  contenteditable DOM。写入前、聚焦后和确认期间都会重验会话，切换会话时旧命令明确失败。
+  草稿最多 1,000,000 字符；可见编辑器正文与 ConversationModel 持久草稿必须在 500ms 内同时
+  确认相同文本，否则按失败处理，不能再把“只改模型、可见输入框仍为空”报告成成功。
 - `composer.send` 继续返回 `signal_send_not_enabled`，`composer.state.canSend` 始终为 false；本轮只
   把翻译结果写入原生输入框，由客服核对后在 Signal 中手动发送，不引入未具备 attempt 幂等的
   自动发送。
-- 打包脚本要求 Signal 8.25.0 的原生草稿 action 与 Composer 聚焦 action 各唯一命中，否则拒绝
-  生成测试包。自动化已通过 `pnpm typecheck`、49 个测试文件（441 passed、1 todo）、desktop
-  build；a21 已生成并通过 `codesign --verify --deep --strict`。真实客户端只待一次“打开当前会话 →
-  翻译一条无敏感内容的临时文本 → 同一 Signal 原生输入框出现草稿”的续验，不重启 Telegram 或
-  服务端，也不重复已通过的平台切换、发送、入站生命周期或 outbox 故障矩阵。
+- 打包脚本要求 Signal 8.25.0 的原生草稿 action、Composer 聚焦 action 和可见
+  `CompositionInput.inputApi` 锚点各唯一命中，否则拒绝生成测试包。初版自动化通过
+  `pnpm typecheck`、49 个测试文件（441 passed、1 todo）和 desktop build；可见编辑器修正又通过
+  32 项定向测试、typecheck 与 desktop build，新增“模型变化但可见编辑器不变必须失败”回归。
+- a21 首次真实打开暴露 Signal 分支只渲染开发说明条、漏挂翻译坞；a22 修复布局后又暴露旧实现
+  只更新 ConversationModel、可见编辑器仍为空，虽然脱敏日志错误报告写入成功。两处都没有当成
+  验收证据。a23 改用可见 `CompositionInput.inputApi` 并执行双重确认，生成后通过
+  `codesign --verify --deep --strict`。
+- a23 真实续验完整出现 `startApp called → preload import installed → integrated guest registered`；
+  用户在已同步的当前 Signal 会话输入一条无敏感中文临时文本并点击翻译，目视确认译文出现在同一
+  Signal 原生消息输入框，随后出现一次脱敏 `native draft written` 标记。续验没有自动发送消息，
+  没有读取或记录译文、ACI、本地会话 id、profile 或 token，也没有重启 Telegram 或服务端、重复
+  已通过的平台切换、发送、入站生命周期或 outbox 故障矩阵。因此当前会话同步与可见原生草稿写入
+  门槛已经完成；`composer.send` 仍未开放。
