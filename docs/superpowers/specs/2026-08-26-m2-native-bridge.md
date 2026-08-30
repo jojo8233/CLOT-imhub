@@ -171,5 +171,7 @@ Signal Desktop 不能复用 `<webview>` attach 流程；补丁版 Signal 主进�
 第一阶段只从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站纯文字
 `message.upsert`。Signal Desktop 与 signal-cli 共用 `u:` / `g:` 会话键和
 `<normalized-sender>:<sent-at-ms>` 消息键，服务端拒绝非规范键并沿用数据库唯一约束。事件用
-稳定 `eventId` 重试到 `event.ack`，但当前 Signal 队列只在进程内有界保存；服务端重启可重试，
-Signal 进程重启后的未 ACK 恢复、媒体、编辑/删除/回应、context/composer 和翻译仍未接线。
+稳定 `eventId` 先写入专用 IndexedDB，再严格顺序重试到 `event.ack`；接受后删除，永久拒绝进入
+有界 dead-letter，存储和容量故障经非敏感 UI 提示。自动化已覆盖 outbox 对象重建后的同键重放，
+真实 Signal 进程重启后的未 ACK 恢复仍待取证；媒体、编辑/删除/回应、context/composer 和翻译
+仍未接线。

@@ -122,7 +122,7 @@ try {
   signalPreloadMain = replaceOnce(
     signalPreloadMain,
     'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes))}async addSingleMessage',
-    'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes),window.__imHubSignalBridge?.onNewMessage(this,e,o))}async addSingleMessage',
+    'await U.updateConversation(this.attributes)),this.addSingleMessage(e.attributes),await window.__imHubSignalBridge?.onNewMessage(this,e,o))}async addSingleMessage',
     'Signal 入站消息桥接',
   )
   signalPreloadMain = replaceOnce(

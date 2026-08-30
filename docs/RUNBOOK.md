@@ -193,10 +193,12 @@ pnpm --filter @im-hub/desktop prepare:signal -- \
 
 验证 Signal 入站 bridge 时，先启动服务端，再打开同窗口开发包；只需从另一台已关联设备发送
 一条新的纯文字消息，不要重复三平台切换或文字/图片/贴纸发送矩阵。当前 bridge 只处理 Signal
-自身已持久化的入站非空文字，媒体、贴纸、回应、编辑和删除尚未接入。事件在 Signal 进程内以
-同一 `eventId` 重试到服务端 ACK，因此核验数据库时只查询新增行数和
-`platform_message_id` 重复数，不要读取正文、`raw`、账号 ACI 或 profile。队列当前不跨 Signal
-进程重启持久化；不要把服务端重启可重试写成客户端进程重启可恢复。
+自身已持久化的入站非空文字，媒体、贴纸、回应、编辑和删除尚未接入。事件先按实际 Signal ACI
+写入专用 IndexedDB，再以同一 `eventId` 严格顺序重试到服务端 ACK；pending 和 dead-letter
+分别最多 1000 项，永久拒绝必须经明确的重试或清理操作处理。核验数据库时只查询新增行数和
+`platform_message_id` 重复数，不要读取正文、`raw`、账号 ACI 或 profile。自动化已覆盖 outbox
+对象重建后的同键重放；真实未 ACK 消息跨 Signal 进程退出/重开的续收仍要在隔离服务地址上取证，
+不能只用启动时 pending=0 代替。
 
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
@@ -342,10 +344,11 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
   已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站纯文字 bridge
-  已完成代码、自动化验证和一条真实消息的唯一落库证据。WhatsApp 只接入官方 Web 的
-  owner-only 隔离壳。Signal 尚无入站媒体、编辑/删除/回应、翻译或持久 outbox，WhatsApp 尚无
-  统一 bridge；两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待
-  后续，Zoom 延后到 M8。
+  已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
+  dead-letter 运维与故障提示也已实现，真实跨进程续收证据仍待完成。WhatsApp 只接入官方 Web
+  的 owner-only 隔离壳。Signal 尚无入站媒体、编辑/删除/回应或翻译，WhatsApp 尚无统一 bridge；
+  两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp 完整桥接仍待后续，Zoom
+  延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
   约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。
 - **Composer 与消息回传已完成约定范围真实验收，生产闭环仍有后续门槛**：telegram-tt 已发

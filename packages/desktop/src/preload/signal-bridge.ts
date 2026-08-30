@@ -3,7 +3,6 @@ import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   type NativeGuestEvent,
   type NativeHostCommand,
-  type NativeMessageUpsertEvent,
 } from '@im-hub/shared'
 import { NATIVE_GUEST_EVENT_CHANNEL } from '../native-control-ipc.js'
 import {
@@ -12,12 +11,14 @@ import {
   type SignalDesktopModelLike,
   type SignalDesktopWindowLike,
 } from '../signal-desktop-message.js'
+import {
+  createIndexedDbSignalOutboxStorage,
+  createSignalDesktopOutbox,
+} from '../signal-desktop-outbox.js'
 
 const COMMAND_CHANNEL = 'imhub:native-command'
-const RETRY_INTERVAL_MS = 2_000
 const IDENTITY_INTERVAL_MS = 2_000
 const IDENTITY_GRACE_MS = 15_000
-const MAX_PENDING_EVENTS = 1_000
 
 interface SignalBridgeWindow extends SignalDesktopWindowLike {
   __imHubSignalBridge?: {
@@ -25,7 +26,7 @@ interface SignalBridgeWindow extends SignalDesktopWindowLike {
       conversation: SignalDesktopModelLike,
       message: SignalDesktopModelLike,
       senderConversation: SignalDesktopModelLike | null,
-    ): void
+    ): Promise<void>
   }
 }
 
@@ -40,37 +41,20 @@ function emit(event: NativeGuestEvent): void {
 export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): void {
   if (signalWindow.__imHubSignalBridge) return
   console.info('[signal-bridge] preload installed')
-  const pending = new Map<string, NativeMessageUpsertEvent>()
-  let isSending = false
-  let lastErrorCode: string | null = null
+  const outbox = createSignalDesktopOutbox(
+    createIndexedDbSignalOutboxStorage(globalThis.indexedDB),
+  )
   let lastIdentity: string | null = null
-
-  const status = (): void => {
-    emit({
-      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
-      type: 'outbox.status',
-      pendingCount: pending.size,
-      deadLetterCount: 0,
-      isSending,
-      lastErrorCode,
-    })
-  }
-
-  const sendPending = (): void => {
-    if (pending.size === 0) return
-    isSending = true
-    for (const event of pending.values()) emit(event)
-    isSending = false
-    status()
-  }
 
   const reportIdentity = (): boolean => {
     const normalized = readSignalDesktopAci(signalWindow)
     if (!normalized) return false
     const identityChanged = lastIdentity !== normalized
     lastIdentity = normalized
-    if (identityChanged) console.info('[signal-bridge] identity ready')
-    if (lastErrorCode === 'signal_identity_unavailable') lastErrorCode = null
+    if (identityChanged) {
+      console.info('[signal-bridge] identity ready')
+      outbox.activate(normalized, emit)
+    }
     emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'account.identity',
@@ -80,35 +64,25 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   }
 
   signalWindow.__imHubSignalBridge = {
-    onNewMessage(conversation, message, senderConversation): void {
+    async onNewMessage(conversation, message, senderConversation): Promise<void> {
       try {
         const event = normalizeSignalDesktopInbound(conversation, message, senderConversation)
         if (!event) return
-        if (!pending.has(event.eventId) && pending.size >= MAX_PENDING_EVENTS) {
-          lastErrorCode = 'signal_outbox_full'
-          emit({
-            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
-            type: 'bridge.error',
-            code: lastErrorCode,
-            message: 'Signal 入站桥接队列已满，已停止接收新的回传事件',
-          })
-          status()
-          return
+        const accountExternalId = lastIdentity ?? readSignalDesktopAci(signalWindow)
+        if (!accountExternalId) throw new Error('Signal identity unavailable')
+        if (lastIdentity !== accountExternalId) {
+          lastIdentity = accountExternalId
+          outbox.activate(accountExternalId, emit)
         }
-        pending.set(event.eventId, event)
-        console.info('[signal-bridge] inbound text queued')
-        lastErrorCode = null
-        emit(event)
-        status()
+        const queued = await outbox.enqueue(accountExternalId, event)
+        if (queued) console.info('[signal-bridge] inbound text persisted')
       } catch {
-        lastErrorCode = 'invalid_signal_inbound'
         emit({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'bridge.error',
-          code: lastErrorCode,
+          code: 'invalid_signal_inbound',
           message: 'Signal 入站文字缺少稳定身份，已拒绝回传',
         })
-        status()
       }
     },
   }
@@ -118,30 +92,31 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       emit({ protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION, type: 'bridge.ready' })
       lastIdentity = null
       reportIdentity()
-      sendPending()
+      outbox.replay()
       return
     }
-    if (command.type !== 'event.ack') return
-    if (command.accepted || !command.retryable) pending.delete(command.eventId)
-    if (!command.accepted && !command.retryable) lastErrorCode = 'signal_event_rejected'
-    status()
+    if (command.type === 'event.ack') {
+      void outbox.acknowledge(command.eventId, command.accepted, command.retryable)
+      return
+    }
+    if (command.type === 'outbox.retry-dead-letters') {
+      void outbox.retryDeadLetters()
+      return
+    }
+    if (command.type === 'outbox.discard-dead-letters') void outbox.discardDeadLetters()
   })
 
   emit({ protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION, type: 'bridge.ready' })
   reportIdentity()
-  status()
   setInterval(reportIdentity, IDENTITY_INTERVAL_MS)
-  setInterval(sendPending, RETRY_INTERVAL_MS)
   setTimeout(() => {
     if (lastIdentity || reportIdentity()) return
-    lastErrorCode = 'signal_identity_unavailable'
     console.error('[signal-bridge] identity unavailable after grace period')
     emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'bridge.error',
-      code: lastErrorCode,
+      code: 'signal_identity_unavailable',
       message: 'Signal 登录身份在等待期内仍不可用；请确认已关联账号并重新打开测试包',
     })
-    status()
   }, IDENTITY_GRACE_MS)
 }

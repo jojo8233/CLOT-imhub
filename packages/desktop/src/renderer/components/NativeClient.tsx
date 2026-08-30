@@ -4,6 +4,7 @@ import type {
   NativeControlStateUpdate,
   NativeGuestEvent,
   NativeHostCommand,
+  NativeOutboxStatusEvent,
 } from '@im-hub/shared'
 import { NATIVE_BRIDGE_PROTOCOL_VERSION } from '@im-hub/shared'
 import type { SignalDesktopState } from '../../signal-desktop-ipc.js'
@@ -116,6 +117,18 @@ export function signalDesktopAccountIdsToMount(
       && account.connection_mode === 'native_desktop'
       && nativeAccountControllable(account, user))
     .map(account => account.id)
+}
+
+export function signalOutboxStatusError(
+  status: Pick<NativeOutboxStatusEvent,
+    'pendingCount' | 'deadLetterCount' | 'lastErrorCode'>,
+): string | null {
+  if (status.lastErrorCode === 'outbox_storage_failed') return '持久消息队列不可用'
+  if (status.deadLetterCount > 0) return `${status.deadLetterCount} 条事件永久失败，等待人工处理`
+  if (status.lastErrorCode === 'outbox_capacity'
+    || status.lastErrorCode === 'dead_letter_capacity') return '持久消息队列容量已满'
+  if (status.lastErrorCode && status.pendingCount > 0) return '持久消息队列暂时失败，正在重试'
+  return null
 }
 
 interface NativeWebviewLoadProbe {
@@ -299,6 +312,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
   const [message, setMessage] = useState<string | null>(null)
   const [guestWebContentsId, setGuestWebContentsId] = useState<number | null>(null)
   const [controlError, setControlError] = useState<string | null>(null)
+  const [outboxError, setOutboxError] = useState<string | null>(null)
   const bridge = window.imHub?.signalDesktop
 
   useEffect(() => {
@@ -474,6 +488,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
         return
       }
       if (event.type === 'outbox.status') {
+        setOutboxError(signalOutboxStatusError(event))
         useStore.getState().setNativeOutboxStatus(accountId, {
           pendingCount: event.pendingCount,
           deadLetterCount: event.deadLetterCount,
@@ -510,6 +525,10 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
       if (value.accountId === accountId) onGuestEvent(value.event)
     })
     const removeStateListener = nativeControl.onState(applyControlState)
+    const unregisterTarget = registerNativeCommandTarget(accountId, {
+      send: (_channel: string, command: unknown): Promise<void> =>
+        nativeControl.sendCommand(target, command as NativeHostCommand),
+    })
     useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在等待 Signal 登录身份')
 
     return () => {
@@ -518,6 +537,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
       if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
       removeEventListener()
       removeStateListener()
+      unregisterTarget()
       void nativeControl.release(target).catch(() => {})
     }
   }, [accountId, guestWebContentsId])
@@ -538,6 +558,8 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
       setMessage('Signal Desktop 重新启动失败')
     })
   }
+
+  const bridgeError = controlError ?? outboxError
 
   return (
     <div
@@ -573,14 +595,14 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
           )}
         </div>
       )}
-      {controlError && state === 'ready' && (
+      {bridgeError && state === 'ready' && (
         <div style={{
           position: 'absolute', left: 16, right: 16, top: 12, zIndex: 3,
           padding: '9px 12px', borderRadius: theme.radius.md,
           background: theme.color.dangerSoft, color: theme.color.danger,
           fontSize: theme.font.size.sm, pointerEvents: 'none',
         }}>
-          Signal 入站桥接：{controlError}
+          Signal 入站桥接：{bridgeError}
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 # M5/M6 Signal 与 WhatsApp 并行首检点
 
 日期：2026-08-29
-状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送首检与入站文字唯一落库
+状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库及持久 outbox 初始化
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -56,8 +56,8 @@ im-hub 发出文字且手机端收到、服务重启后继续收信。WhatsApp �
 二维码登录、冷启动保持、账号切换不串会话、双向文字收发，以及删除其中一个账号后仅清理
 对应 partition。
 
-Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下一 checkpoint 从入站文字唯一
-落库和桥接边界继续；WhatsApp 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
+Signal 的独立 profile、同窗口承载、原生发信矩阵和入站文字唯一落库已完成；下一 checkpoint
+验证持久 outbox 中真实未 ACK 消息跨进程重放。WhatsApp 先确定可维护且合规的身份/消息事件边界，再决定补丁客户端或
 其他受控方案。没有这层设计与服务端 owner 复核前，禁止给官方 WhatsApp 页面注入 Telegram
 的通用 preload，也禁止用 DOM scraping 冒充稳定消息协议。
 
@@ -70,11 +70,12 @@ Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下�
   切换、原生文字发送、原生图片发送、原生贴纸发送；用户截图确认顶栏、功能区和客户栏保持
   在同一 im-hub 窗口。
 - 当前只支持一个 Signal Desktop 原生账号；入站纯文字唯一落库已在本轮取得真实证据，但
-  服务重启续收、编辑/删除/回应、翻译、入站媒体与持久 outbox 仍未完成，不能越级标记 M5 完成。
+  服务重启续收、编辑/删除/回应、翻译和入站媒体仍未完成。持久 outbox 实现与空队列初始化
+  已通过，真实未 ACK 消息跨进程重放尚未取证，不能越级标记 M5 完成。
 - WhatsApp 已完成官方页面登录与可见性首检；继续沿用已登录 partition，不重复扫码矩阵。
 
-续接时先验证最新同窗口开发包仍能恢复，再从“Signal 入站文字唯一落库/桥接设计”继续；不要
-重做上述窗口切换和原生文字/图片/贴纸发送矩阵。
+续接时先验证最新同窗口开发包仍能恢复，再从“Signal 未 ACK 入站文字跨进程重放”继续；不要
+重做上述窗口切换和原生文字/图片/贴纸发送矩阵，也不要用空队列冷启动替代真实重放证据。
 
 ## 6. Signal 入站文字桥接实现 checkpoint（2026-08-30）
 
@@ -94,11 +95,11 @@ Signal 的独立 profile、同窗口承载和原生发信矩阵已完成，下�
   remap，数据库仍按 `(account_id, platform_message_id)` 幂等落库。
 - 当前只桥接 `type=incoming` 且正文非空的纯文字 `message.upsert`。媒体、贴纸、回应、编辑、
   删除和 composer/context 命令均未开放；这些事实不能从 Signal DOM 推断或伪造。
-- 事件在 Signal 进程内使用稳定 `eventId`、两秒重试和 `event.ack`。服务停机但 Signal 进程
-  仍在时可继续重试；队列当前是最多 1000 项的内存队列，Signal 进程自身退出时尚不能恢复，
-  因而不能把它写成 Telegram IndexedDB outbox 同等级的持久可靠性。
+- 事件使用稳定 `eventId`，先按实际 Signal ACI 写入专用 IndexedDB，再严格顺序重试到
+  `event.ack`。接受后删除，永久拒绝进入最多 1000 项的 dead-letter；pending 也最多 1000 项。
+  存储、容量和永久失败只显示非敏感状态，不把正文或 ACI 暴露给外壳。
 
-自动化证据已通过：`pnpm typecheck`、46 个测试文件（414 passed、1 todo）、desktop build，
+自动化证据已通过：`pnpm typecheck`、47 个测试文件（419 项中 418 passed、1 todo）、desktop build，
 以及新生成开发包的补丁锚点计数与严格 codesign 校验。同窗口开发包已完成外壳会话冷恢复。
 
 真实续验证据也已通过：修正版开发包依次确认 `startApp called → preload import installed →
@@ -106,3 +107,20 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 补发一条纯文字，服务端只接受一次 `/api/native/events` 并回 ACK。只读数据库计数为桥接行 1、
 重复规范键 0、入站行 1、规范键格式行 1，未读取正文、ACI 值或具体消息键。因此“Signal 入站
 文字唯一落库”门槛已完成；服务重启续收和 Signal 进程重启后的未 ACK 恢复仍是下一门槛。
+
+## 7. Signal 入站持久 outbox 实现 checkpoint（2026-08-30）
+
+- `ConversationModel.onNewMessage` 的补丁 hook 等待标准事件写入 IndexedDB 后才返回，关闭了
+  fire-and-forget 写入尚未完成时进程退出的丢失窗口。存储不可用时 Signal 原生客户端仍可启动，
+  但入站 bridge 明确显示“持久消息队列不可用”。
+- outbox 每次只发送队首事件；发送前持久化 attempt 和下次重试时间，ACK 超时或可重试拒绝使用
+  有界指数退避。接受后删除 pending；永久拒绝先写 dead-letter 再删 pending，避免跨存储崩溃时
+  先删后丢。人工重试同样先恢复 pending 再删失败副本。
+- 新增自动化覆盖同一持久 storage 上销毁/重建 outbox 后沿用原 `eventId` 重放、ACK 删除、
+  permanent rejection、dead-letter 恢复和重复入队。`pnpm typecheck`、47 文件 418 passed / 1 todo、
+  desktop build、Signal 8.25.0 补丁锚点和严格 codesign 均通过。
+- a15 隔离包复用既有已关联 profile 后，外壳会话、Signal grant/verify 和空队列 IndexedDB 初始化
+  正常，未显示存储、容量或 dead-letter 故障。a16 又补齐始终可见的非敏感底栏状态、dead-letter
+  重试/清除命令目标并通过启动与 grant/verify。本轮没有发送新消息，也没有重复平台切换或原生
+  发送矩阵。真实未 ACK 消息跨 Signal 进程退出/重开的重放与唯一落库仍待一次隔离故障取证，
+  不能把空队列冷启动写成该门槛已完成。

@@ -7,6 +7,7 @@ import {
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
   signalDesktopAccountIdsToMount,
+  signalOutboxStatusError,
 } from './NativeClient.js'
 
 describe('native account ownership gate', () => {
@@ -104,6 +105,31 @@ describe('native webview load recovery', () => {
       probe({ url: 'https://web.whatsapp.com/', webContentsId: 0, loading: true }),
       'https://web.whatsapp.com/',
     )).toBe(false)
+  })
+})
+
+describe('Signal persistent outbox status', () => {
+  it('只把需要人工关注的非敏感状态转换成页面提示', () => {
+    expect(signalOutboxStatusError({
+      pendingCount: 0,
+      deadLetterCount: 0,
+      lastErrorCode: null,
+    })).toBeNull()
+    expect(signalOutboxStatusError({
+      pendingCount: 0,
+      deadLetterCount: 0,
+      lastErrorCode: 'outbox_storage_failed',
+    })).toBe('持久消息队列不可用')
+    expect(signalOutboxStatusError({
+      pendingCount: 1,
+      deadLetterCount: 0,
+      lastErrorCode: 'ack_timeout',
+    })).toBe('持久消息队列暂时失败，正在重试')
+    expect(signalOutboxStatusError({
+      pendingCount: 0,
+      deadLetterCount: 2,
+      lastErrorCode: 'permanent_rejection',
+    })).toBe('2 条事件永久失败，等待人工处理')
   })
 })
 
