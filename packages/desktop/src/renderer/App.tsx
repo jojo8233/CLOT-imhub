@@ -18,6 +18,7 @@ import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
+import { BootstrapRetryController } from './bootstrap-retry.js'
 
 type AuthState = 'checking' | 'loggedOut' | 'loggedIn'
 
@@ -67,6 +68,9 @@ export function App() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const bootstrapRef = useRef<((user: SessionUser) => Promise<void>) | null>(null)
+  const bootRetryRef = useRef<BootstrapRetryController | null>(null)
+  bootRetryRef.current ??= new BootstrapRetryController()
   const authGenerationRef = useRef(0)
   const messageMutationRevisionRef = useRef(0)
   const messageLoadGenerationRef = useRef(0)
@@ -97,6 +101,7 @@ export function App() {
   const backToLogin = useCallback(() => {
     authGenerationRef.current += 1
     messageLoadGenerationRef.current += 1
+    bootRetryRef.current?.reset()
     wsRef.current?.close()
     wsRef.current = null
     void window.imHub?.nativeControl?.releaseAll().catch(() => {
@@ -119,11 +124,11 @@ export function App() {
   }, [backToLogin])
 
   const bootstrap = useCallback(async (loggedInUser: SessionUser) => {
+    bootRetryRef.current?.cancel()
     const generation = ++authGenerationRef.current
     wsRef.current?.close()
     wsRef.current = null
     setUser(loggedInUser)
-    setBootError(null)
     try {
       const currentSessionUser = await api.refreshSessionUser()
       if (generation !== authGenerationRef.current) return
@@ -134,6 +139,8 @@ export function App() {
       const conversations = await api.listConversations()
       if (generation !== authGenerationRef.current) return
       setConversations(conversations.conversations)
+      bootRetryRef.current?.reset()
+      setBootError(null)
     } catch (e) {
       if (generation !== authGenerationRef.current) return
       if (e instanceof UnauthorizedError) {
@@ -142,7 +149,11 @@ export function App() {
         return
       }
       if (e instanceof NetworkError) {
-        setBootError('连不上服务端，检查它是否在运行')
+        setBootError('连不上服务端，正在自动重连')
+        bootRetryRef.current?.schedule(() => {
+          if (generation !== authGenerationRef.current) return
+          void bootstrapRef.current?.(loggedInUser)
+        })
       } else {
         console.error('[bootstrap] 拉取账号/会话列表失败', e)
       }
@@ -226,6 +237,7 @@ export function App() {
     setAccounts, setConversations, applyTranslation, setAccountStatus,
     appendMessage, updateMessage, removeMessage, refreshMessages,
   ])
+  bootstrapRef.current = bootstrap
 
   // 启动时先看磁盘上有没有加密存档的登录态：有就跳过登录页直接进主界面，
   // 没有（或 safeStorage 解不出来）就显示登录页。
@@ -241,6 +253,7 @@ export function App() {
     return () => {
       authGenerationRef.current += 1
       messageLoadGenerationRef.current += 1
+      bootRetryRef.current?.reset()
       wsRef.current?.close()
     }
     // 只在挂载时跑一次，bootstrap 走 ref 闭包即可

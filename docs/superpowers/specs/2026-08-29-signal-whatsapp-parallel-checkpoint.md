@@ -309,3 +309,19 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   不透明配置生成 `/private/tmp/Signal-imhub-integrated-a25.app` 并通过 deep/strict codesign。
   遵守单条上限，没有用第二条消息重验 a25，因此“真实送达与最终 ID 主链”已通过，“成功后 UI
   收敛”仍只有自动化证据，不能把整个纯文字自动发送标记为完整真实验收。
+
+## 13. 外壳服务端 bootstrap 自动恢复 checkpoint（2026-08-31）
+
+- a24 真实续验时先打开客户端、后发现本机 4000 没有服务进程；服务端启动后，外壳仍保留首次
+  `NetworkError` 和空账号/会话列表，只能重启测试包。根因是 `App.bootstrap` 只有一次启动调用，
+  失败后虽然进入主界面并创建 WebSocket，却没有重新执行 session、账号和会话 HTTP 快照。
+- renderer 新增单定时器 `BootstrapRetryController`：网络错误后按 1/2/4/8 秒退避，此后上限保持
+  8 秒；重复错误不会并发排多个定时器。每次重试仍沿用现有 auth generation，开始新 bootstrap
+  前关闭旧 WebSocket；成功后清除提示并把退避归零。
+- 登出、401 回登录页、用户切换和组件卸载会同步取消定时器并推进 generation，旧用户的迟到回调
+  无权重新拉数据或创建连接。非网络 HTTP 错误仍按原有路径报告，不被无限重试伪装成网络故障。
+- 新增自动化覆盖单飞、1/2/4/8 秒递增与上限、成功 reset 和取消；bootstrap/store/TranslationDock
+  相关 27 项测试、全量 51 个文件 459 passed / 1 todo 与 `pnpm typecheck` 通过。desktop build、从 a25 不透明配置生成的
+  `/private/tmp/Signal-imhub-integrated-a26.app` 及 deep/strict codesign 均通过。
+- 本修复只涉及 im-hub 外壳连接恢复，不修改 Signal/Telegram/WhatsApp guest、发送 attempt、
+  HTTP/WS 合约或服务端。没有停止服务端做真实断线探针，也没有发送第二条 Signal 消息。

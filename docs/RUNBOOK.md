@@ -153,6 +153,11 @@ pnpm dev:desktop
 
 客户端有登录页（`components/LoginPage.tsx`），用第 4 节的任一演示账号登录即可；登录态经 Electron `safeStorage` 加密存盘，下次启动自动恢复。以 `agent@example.com` 登录看到的是 seed 建的那 1 个"TG 组内号"账号。桌面端连的服务端地址默认是 `http://localhost:4000`（见 `packages/desktop/src/preload/index.ts`，可用环境变量 `IM_HUB_SERVER_URL` 覆盖）。
 
+若桌面外壳先于服务端启动，bootstrap 会显示“正在自动重连”，并按 1/2/4/8 秒退避（此后保持
+8 秒）重新拉取会话、账号和会话列表；同一时刻只有一个重试。服务端恢复后不需要退出客户端。
+登出、用户切换或页面卸载会取消旧登录态的定时器，成功后退避归零。若持续失败，再检查 4000
+监听与 CORS；不要用反复重启平台客户端代替服务端诊断。
+
 Signal Desktop 首检点先准备独立开发包：
 
 ```bash
@@ -224,8 +229,9 @@ job 持久化、并确认最终平台消息 ID 后，外壳才能显示成功并
 当前 a24 已完成唯一一条无敏感纯文字续验：接收端精确收到一条，最终 ID 主链成功，但 ACK 前的
 已确认 attempt 状态回放让翻译坞误显示“操作失败”。消息没有失败或重复。a25 已把该短暂状态显式
 标记，并在 ACK 后的无 attempt 状态到达时清理；相关自动化、构建和签名均通过。按单条上限不要
-再发消息复验；当前修正版为 `/private/tmp/Signal-imhub-integrated-a25.app`。仍不得读取或打印联系人
-ACI、本地 ConversationModel id、草稿正文、最终消息键、profile 或 token，也不要重做其他矩阵。
+再发消息复验。a26 在 a25 基础上另补外壳 bootstrap 自动重连，不修改 Signal 发送协议；当前修正版
+为 `/private/tmp/Signal-imhub-integrated-a26.app`。仍不得读取或打印联系人 ACI、本地
+ConversationModel id、草稿正文、最终消息键、profile 或 token，也不要重做其他矩阵。
 
 若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
