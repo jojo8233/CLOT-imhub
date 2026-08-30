@@ -183,6 +183,17 @@ export function parseNativeHostCommand(value: unknown): NativeHostCommand | null
   }
   if (value.type === 'outbox.retry-dead-letters'
     || value.type === 'outbox.discard-dead-letters') return value as unknown as NativeHostCommand
+  if (value.type === 'message.set-translations') {
+    if (!Array.isArray(value.translations)
+      || value.translations.length < 1
+      || value.translations.length > 500
+      || !value.translations.every(translation => record(translation)
+        && nonEmptyString(translation.platformMessageId, 512)
+        && string(translation.translatedText, 100_000)
+        && translation.translatedText.trim() !== ''
+        && nonEmptyString(translation.revision, 64))) return null
+    return value as unknown as NativeHostCommand
+  }
   if (!['composer.set-draft', 'composer.get-draft', 'composer.send'].includes(value.type)
     || !nonEmptyString(value.requestId, 128)
     || !Number.isSafeInteger(value.contextRevision)

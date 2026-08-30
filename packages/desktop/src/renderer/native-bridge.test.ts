@@ -3,6 +3,8 @@ import { NATIVE_BRIDGE_PROTOCOL_VERSION, type NativeComposerCommand } from '@im-
 import {
   handleNativeCommandResult,
   nativeComposerBridge,
+  nativeMessageTranslationBridge,
+  nativeMessageTranslationsFromRows,
   nativeOutboxBridge,
   parseNativeGuestEvent,
   registerNativeCommandTarget,
@@ -209,6 +211,18 @@ describe('nativeComposerBridge', () => {
     })).toMatchObject({ type: 'composer.ack-send', attemptId: 'attempt-1' })
     expect(parseNativeHostCommand({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.set-translations',
+      translations: [{
+        platformMessageId: 'sender:123', translatedText: '你好', revision: 'initial',
+      }],
+    })).toMatchObject({ type: 'message.set-translations' })
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.set-translations',
+      translations: [],
+    })).toBeNull()
+    expect(parseNativeHostCommand({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'composer.send',
       requestId: 'request-2',
       contextRevision: 2,
@@ -239,6 +253,34 @@ describe('nativeComposerBridge', () => {
     await expect(nativeOutboxBridge.retryDeadLetters('other-account')).rejects.toMatchObject({
       code: 'bridge_disconnected',
     })
+    unregister()
+  })
+
+  it('把当前入站译文作为一个有界批命令发送给指定账号', async () => {
+    const sent: unknown[] = []
+    const unregister = registerNativeCommandTarget(context.accountId, {
+      send: (_channel, command) => { sent.push(command) },
+    })
+    const translations = nativeMessageTranslationsFromRows([
+      {
+        platform_message_id: 'sender:123', direction: 'in', translated_text: '你好',
+        edited_at: null,
+      },
+      {
+        platform_message_id: 'self:124', direction: 'out', translated_text: '不应发送',
+        edited_at: null,
+      },
+    ])
+
+    await nativeMessageTranslationBridge.sync(context.accountId, translations)
+
+    expect(sent).toEqual([{
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.set-translations',
+      translations: [{
+        platformMessageId: 'sender:123', translatedText: '你好', revision: 'initial',
+      }],
+    }])
     unregister()
   })
 

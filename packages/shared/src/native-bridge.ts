@@ -86,12 +86,30 @@ export type NativeOutboxOperationCommand =
   | NativeOutboxRetryDeadLettersCommand
   | NativeOutboxDiscardDeadLettersCommand
 
+export interface NativeMessageTranslation {
+  /** Signal 的 sender + sent_at 规范键；不得替换成本地数据库消息 id。 */
+  platformMessageId: string
+  translatedText: string
+  /** `initial` 或 Signal editMessageTimestamp 的 ISO 字符串。 */
+  revision: string
+}
+
+/**
+ * 中央译文快照批量回填给补丁客户端。批量而非逐条命令，避免每条消息都重新
+ * 请求一次短时 control grant 校验；guest 仍须逐条复核规范消息键与 revision。
+ */
+export interface NativeSetMessageTranslationsCommand extends NativeBridgeFrame {
+  type: 'message.set-translations'
+  translations: NativeMessageTranslation[]
+}
+
 export type NativeHostCommand =
   | NativeComposerCommand
   | NativeSendAttemptAckCommand
   | NativeEventAckCommand
   | NativeRequestStateCommand
   | NativeOutboxOperationCommand
+  | NativeSetMessageTranslationsCommand
 
 export interface NativeBridgeReadyEvent extends NativeBridgeFrame {
   type: 'bridge.ready'

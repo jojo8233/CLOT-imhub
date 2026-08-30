@@ -352,6 +352,9 @@ Telegram：
 - [ ] 收到一条外语消息后，观察 BullMQ worker 日志里有没有报错
 - [ ] 确认 `message_translations` 表里出现了对应记录（`select * from message_translations order by created_at desc limit 5;`）
 - [ ] 客户端界面上"翻译中…"变成实际译文
+- [ ] Signal 收到英文文字时，同一原生气泡显示英文原文和中文译文；收到中文文字时显示中文原文和英文译文
+- [ ] 编辑入站文字后旧译文立即消失，只有新 revision 的译文可以重新出现；重开 Signal 后由中央快照恢复
+- [ ] WhatsApp 的同等双语验收只在 `cloud_api` + WABA Webhook + im-hub 自有会话视图完成后执行；不得用 `web_shell` DOM 抓取替代
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
 
 ---

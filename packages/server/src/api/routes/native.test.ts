@@ -123,6 +123,7 @@ beforeEach(async () => {
   }).returning('id').executeTakeFirstOrThrow()).id
   publicationSnapshot = {
     id: 'message-1',
+    platformMessageId: canonicalMessageId,
     conversationId: 'conversation-1',
     accountId,
     ownerUserId: agentId,
@@ -714,7 +715,7 @@ describe('native bridge routes', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ accepted: true, duplicate: true })
     expect(publish).toHaveBeenCalledWith(agentId, expect.objectContaining({
-      type: 'message', messageId: 'message-1', body: 'hello',
+      type: 'message', messageId: 'message-1', platformMessageId: canonicalMessageId, body: 'hello',
     }))
   })
 

@@ -84,6 +84,7 @@ adapters.onMessage((msg) => {
           hub.publishTo(message.ownerUserId, {
             type: 'message',
             messageId: message.id,
+            platformMessageId: message.platformMessageId,
             conversationId: message.conversationId,
             accountId: message.accountId,
             platform: message.platform,
@@ -284,7 +285,10 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
   await runTranslateJob(job.data, {
     loadMessage: async (id) => {
       const row = await db.selectFrom('messages')
-        .select(['id', 'body', 'direction', 'conversation_id', 'edited_at', 'edit_version'])
+        .select([
+          'id', 'body', 'direction', 'conversation_id', 'account_id', 'platform',
+          'platform_message_id', 'body_lang', 'edited_at', 'edit_version',
+        ])
         .where('id', '=', id)
         .executeTakeFirst()
       return row
@@ -293,6 +297,10 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
             body: row.body,
             direction: row.direction,
             conversationId: row.conversation_id,
+            accountId: row.account_id,
+            platform: row.platform,
+            platformMessageId: row.platform_message_id,
+            bodyLang: row.body_lang,
             revision: messageRevision(row.edit_version, row.edited_at),
           }
         : null

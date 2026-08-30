@@ -199,6 +199,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
               deps.publish(account.userId, {
                 type: 'message',
                 messageId: message.id,
+                platformMessageId: message.platformMessageId,
                 conversationId: message.conversationId,
                 accountId: message.accountId,
                 platform: message.platform,

@@ -143,6 +143,12 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 - Signal Desktop 与 `signal-cli` 使用同一个规范键实现：私聊 `u:<normalized-aci>`、群聊
   `g:<group-id>`、消息 `<normalized-sender>:<sent-at-ms>`。服务端只接受规范 Signal 键并继续
   依赖 `(account_id, platform_message_id)` 去重。
+- 入站文字的核心显示是原文加中英译文：翻译引擎检测源语言为中文时目标为英文，否则目标为中文；
+  不按汉字字符猜测，避免把含汉字的日文误判成中文。中央翻译事件
+  和会话快照都携带规范平台消息键；Signal guest 用自身 DataReader 按 sender + `sent_at` 精确
+  解析当前消息模型，再核对 incoming 类型和编辑 revision。译文通过 Signal 8.25.0 原生 React
+  消息组件的唯一补丁锚点显示在原文下方，不读取或查询 DOM，也不把 Signal 本地消息 id 交给
+  renderer 或服务端。编辑/删除先清旧译文；进程重启后由中央会话快照批量回填。
 - Signal 翻译坞的纯文字发送先把 `attemptId`、首次 `contextRevision`、正文 SHA-256 fingerprint
   和 Signal 自身提交时间写入 guest IndexedDB 账本，再调用 `CompositionInput.submit`。prepared
   hook 在消息与 send job 持久化前绑定 Signal 本地消息引用，persisted hook 在事务完成后使用本账号
@@ -163,3 +169,8 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 自动发送的真实单条送达与最终 ID 主链已通过；a24 暴露的成功态 UI 竞态已在 a25 修复并自动化
 验证，但按单条上限未再次真实发送。正式多开、正式安装包、
 上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成可发布实现。
+
+WhatsApp 必须达到同一“入站原文 + 中英译文”验收，但官方 `web_shell` 不允许靠 DOM 抓取或注入
+来实现。该能力只能由未来 `cloud_api` 的 WABA Webhook 入站事件驱动，并显示在 im-hub 自有的
+双语会话侧栏/记录视图中，以官方 `messages[].id` 关联；在 Cloud API、Webhook 和自有视图完成前，
+WhatsApp 双语入站仍是未完成门槛。

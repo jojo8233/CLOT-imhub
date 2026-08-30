@@ -36,6 +36,7 @@ import {
   createSignalDesktopOutbox,
   type SignalOutboxEvent,
 } from '../signal-desktop-outbox.js'
+import { SignalDesktopTranslationStore } from '../signal-desktop-translation.js'
 
 const COMMAND_CHANNEL = 'imhub:native-command'
 const BOOTSTRAP_CHANNEL = 'imhub:signal-bridge-bootstrap'
@@ -44,6 +45,10 @@ const IDENTITY_GRACE_MS = 15_000
 const COMPOSER_WATCH_INTERVAL_MS = 250
 
 interface SignalBridgeWindow extends SignalDesktopComposerWindowLike {
+  __imHubSignalResolveMessageForTranslation?(
+    senderExternalId: string,
+    sentAtMs: number,
+  ): Promise<SignalDesktopModelLike | null | undefined>
   __imHubSignalBridge?: {
     onNewMessage(
       conversation: SignalDesktopModelLike,
@@ -84,6 +89,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     createIndexedDbSignalSendAttemptStorage(globalThis.indexedDB),
     signalWindow,
   )
+  const translations = new SignalDesktopTranslationStore(signalWindow)
   let lastIdentity: string | null = null
   let composerStore: SignalDesktopReduxStoreLike | null = null
   let unsubscribeComposer: (() => void) | null = null
@@ -311,6 +317,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       }
     },
     async onMessageEdited(conversation, message, senderConversation): Promise<void> {
+      translations.clear(message)
       try {
         await enqueue(normalizeSignalDesktopEdit(conversation, message, senderConversation))
       } catch (error) {
@@ -318,6 +325,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       }
     },
     async onMessageDeleted(message, deleteDetails): Promise<void> {
+      translations.clear(message)
       try {
         await enqueue(normalizeSignalDesktopDelete(message, deleteDetails))
       } catch (error) {
@@ -368,6 +376,10 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       return
     }
     if (command.type === 'outbox.discard-dead-letters') void outbox.discardDeadLetters()
+    if (command.type === 'message.set-translations') {
+      void translations.applyBatch(command.translations)
+      return
+    }
     if (command.type === 'composer.ack-send') {
       void sendLedger.acknowledge(command.attemptId, command.platformMessageId)
         .then(() => {

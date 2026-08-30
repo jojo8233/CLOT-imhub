@@ -48,7 +48,7 @@ describe('platform-scoped Zustand navigation', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setActiveAccount('tg-2')
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'hello', sent_at: '2026-08-26T00:00:00Z',
+      id: 'm1', platform_message_id: 'platform-m1', direction: 'in', body: 'hello', sent_at: '2026-08-26T00:00:00Z',
       edited_at: null, translated_text: null,
     }])
 
@@ -267,7 +267,7 @@ describe('platform-scoped Zustand navigation', () => {
 
   it('只把译文应用到同一正文 revision', () => {
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'edited', sent_at: '2026-08-26T00:00:00Z',
+      id: 'm1', platform_message_id: 'platform-m1', direction: 'in', body: 'edited', sent_at: '2026-08-26T00:00:00Z',
       edited_at: '2026-08-26T01:00:00.000Z', translated_text: null,
     }])
     useStore.getState().applyTranslation('m1', '旧译文', 'initial')
@@ -278,7 +278,7 @@ describe('platform-scoped Zustand navigation', () => {
 
   it('编辑更新原子带入已有译文，且迟到旧 revision 不能回退正文', () => {
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'v2', sent_at: '2026-08-26T00:00:00Z',
+      id: 'm1', platform_message_id: 'platform-m1', direction: 'in', body: 'v2', sent_at: '2026-08-26T00:00:00Z',
       edited_at: '2026-08-26T02:00:00.000Z', translated_text: '译文 v2',
     }])
     useStore.getState().updateMessage(

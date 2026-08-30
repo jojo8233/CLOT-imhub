@@ -185,6 +185,7 @@ export interface ConversationRow {
 
 export interface MessageRow {
   id: string
+  platform_message_id: string
   direction: 'in' | 'out'
   body: string
   sent_at: string

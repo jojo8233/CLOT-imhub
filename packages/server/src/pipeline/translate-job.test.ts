@@ -5,7 +5,8 @@ function deps(overrides: Record<string, unknown> = {}) {
   return {
     loadMessage: vi.fn().mockResolvedValue({
       id: 'msg-1', body: 'Hello, is this in stock?', direction: 'in', conversationId: 'conv-1',
-      revision: 'initial',
+      accountId: 'account-1', platform: 'signal', platformMessageId: 'sender:1',
+      bodyLang: null, revision: 'initial',
     }),
     loadEngineConfig: vi.fn().mockResolvedValue({ global: 'deepl' }),
     hasTranslation: vi.fn().mockResolvedValue(false),
@@ -39,7 +40,10 @@ describe('runTranslateJob', () => {
       revision: 'initial', detectedLang: 'en',
     })
     expect(d.publish).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'translation', messageId: 'msg-1', conversationId: 'conv-1' }),
+      expect.objectContaining({
+        type: 'translation', messageId: 'msg-1', platformMessageId: 'sender:1',
+        conversationId: 'conv-1', accountId: 'account-1', platform: 'signal', targetLang: 'zh',
+      }),
     )
   })
 
@@ -54,6 +58,7 @@ describe('runTranslateJob', () => {
     const d = deps({
       loadMessage: vi.fn().mockResolvedValue({
         id: 'msg-1', body: '   ', direction: 'in', conversationId: 'conv-1', revision: 'initial',
+        accountId: 'account-1', platform: 'signal', platformMessageId: 'sender:1', bodyLang: null,
       }),
     })
     await runTranslateJob(job, d as never)
@@ -64,6 +69,7 @@ describe('runTranslateJob', () => {
     const d = deps({
       loadMessage: vi.fn().mockResolvedValue({
         id: 'msg-1', body: 'outbound', direction: 'out', conversationId: 'conv-1', revision: 'initial',
+        accountId: 'account-1', platform: 'signal', platformMessageId: 'sender:1', bodyLang: null,
       }),
     })
     await runTranslateJob(job, d as never)
@@ -82,6 +88,40 @@ describe('runTranslateJob', () => {
     const d = deps()
     await runTranslateJob(job, d as never)
     expect(d.saveTranslation).toHaveBeenCalledWith(expect.objectContaining({ detectedLang: 'en' }))
+  })
+
+  it('中文入站消息改译成英文并以 en 作为幂等槽位', async () => {
+    const d = deps({
+      loadMessage: vi.fn().mockResolvedValue({
+        id: 'msg-1', body: '你好，有库存吗？', direction: 'in', conversationId: 'conv-1',
+        accountId: 'account-1', platform: 'signal', platformMessageId: 'sender:1',
+        bodyLang: null, revision: 'initial',
+      }),
+      gateway: {
+        translate: vi.fn()
+          .mockResolvedValueOnce({
+            text: '你好，有库存吗？', detectedLang: 'ZH',
+            provider: 'deepl', cached: false, downgradedFrom: [],
+          })
+          .mockResolvedValueOnce({
+            text: 'Hello, is this in stock?', detectedLang: 'ZH',
+            provider: 'deepl', cached: false, downgradedFrom: [],
+          }),
+      },
+    })
+
+    await runTranslateJob(job, d as never)
+
+    expect(d.hasTranslation).toHaveBeenNthCalledWith(1, 'msg-1', 'zh')
+    expect(d.hasTranslation).toHaveBeenNthCalledWith(2, 'msg-1', 'en')
+    expect(d.gateway.translate).toHaveBeenNthCalledWith(1, expect.objectContaining({ to: 'zh' }))
+    expect(d.gateway.translate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      from: 'ZH', to: 'en',
+    }))
+    expect(d.saveTranslation).toHaveBeenCalledWith(expect.objectContaining({
+      targetLang: 'en', detectedLang: 'ZH', translatedText: 'Hello, is this in stock?',
+    }))
+    expect(d.publish).toHaveBeenCalledWith(expect.objectContaining({ targetLang: 'en' }))
   })
 
   it("检测语言是 'und' 时不写 body_lang——那是占位值不是语言", async () => {

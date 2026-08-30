@@ -99,6 +99,45 @@ function auth(token_: string) {
   return { authorization: `Bearer ${token_}` }
 }
 
+describe('GET /api/conversations/:id/messages', () => {
+  it('返回平台规范消息键，并按原文方向选择中英译文', async () => {
+    const rows = await db.insertInto('messages').values([
+      {
+        conversation_id: conversationId, account_id: accountId, platform: 'telegram',
+        platform_message_id: 'english-message', direction: 'in', sender_external_id: 'c1',
+        body: 'Hello', body_lang: 'en', sent_at: new Date('2026-08-31T00:00:00Z'),
+        media_refs: JSON.stringify([]) as never, raw: JSON.stringify({}) as never,
+      },
+      {
+        conversation_id: conversationId, account_id: accountId, platform: 'telegram',
+        platform_message_id: 'chinese-message', direction: 'in', sender_external_id: 'c1',
+        body: '你好', body_lang: 'zh', sent_at: new Date('2026-08-31T00:01:00Z'),
+        media_refs: JSON.stringify([]) as never, raw: JSON.stringify({}) as never,
+      },
+    ]).returning(['id', 'platform_message_id']).execute()
+    const english = rows.find(row => row.platform_message_id === 'english-message')!
+    const chinese = rows.find(row => row.platform_message_id === 'chinese-message')!
+    await db.insertInto('message_translations').values([
+      { message_id: english.id, target_lang: 'zh', provider: 'deepl', translated_text: '你好' },
+      { message_id: chinese.id, target_lang: 'en', provider: 'deepl', translated_text: 'Hello' },
+    ]).execute()
+
+    const response = await app.inject({
+      method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: auth(token),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().messages).toEqual([
+      expect.objectContaining({
+        platform_message_id: 'english-message', body: 'Hello', translated_text: '你好',
+      }),
+      expect.objectContaining({
+        platform_message_id: 'chinese-message', body: '你好', translated_text: 'Hello',
+      }),
+    ])
+  })
+})
+
 describe('POST /api/messages/translate-preview', () => {
   it('看不到的会话返回 404，且不调用翻译网关', async () => {
     const res = await app.inject({

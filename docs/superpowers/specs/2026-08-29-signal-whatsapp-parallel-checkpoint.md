@@ -359,3 +359,33 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   从 a26 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a27.app` 并通过 deep/strict codesign。
   本轮没有重启 Telegram、没有打开第二个服务端实例、没有发送 WhatsApp 或 Signal 消息；a27
   仅生成未启动。
+
+## 15. Signal / WhatsApp 入站双语显示 checkpoint（2026-08-31）
+
+- 产品核心验收明确为对方入站消息同时显示原文与中英译文：翻译引擎检测源语言为中文时译成
+  英文，否则译成中文；不按汉字字符猜测，避免把含汉字的日文误判成中文。新消息尚无源语言时
+  先译中文取得 provider 检测结果，确认中文后再译英文；已保存的 `body_lang` 可直接选择目标。
+  该目标选择进入中央翻译 worker、幂等查询和 REST 会话快照，不再把所有入站正文固定译成中文。
+  出向翻译、Signal 发送 attempt、Telegram/Signal/WhatsApp 既有入站生命周期和 outbox 边界没有
+  改动，因此不重复真实矩阵。
+- 中央 `message` / `translation` WebSocket 事件新增账号、平台和规范 `platformMessageId` 关联；
+  会话消息快照也返回同一规范键。Signal renderer 只把当前译文作为最多 500 项的单批命令交给
+  已授权 guest，避免逐条触发 control grant 实时校验。bridge protocol 仍是 version 3：这是只有
+  Signal 接收的可选新增 host command，不改变旧 Telegram guest 的事件协议。
+- Signal guest 不接收本地消息 id。Signal Desktop 8.25.0 的精确唯一 action 锚点使用自身
+  `DataReader.getMessagesBySentAt` 和 sender 解析规范消息键，随后重新核对 incoming 类型、sender、
+  `sent_at` 与 `editMessageTimestamp` revision；任何不匹配都拒绝显示。译文只保存在 guest 内存，
+  编辑/删除 hook 先清旧值；进程重启或结果丢失后由中央 REST 快照再次批量回填。
+- 显示层是在 Signal 8.25.0 原生 React 消息正文组件的唯一锚点中订阅上述内存快照，并在原文下方
+  渲染分隔线和译文；没有 DOM 查询、选择器、MutationObserver 或正文抓取。官方 8.25.0 程序中
+  消息解析、React 组件和正文插入三个锚点已分别确认唯一。
+- WhatsApp 必须满足同一验收，但 `web_shell` 继续严格保持官方网页壳，不注入 preload、不抓 DOM、
+  不读取官方页面消息。未来 `cloud_api` 收到 WABA Webhook 后，必须以官方 `messages[].id` 关联
+  im-hub 自有的双语会话侧栏/记录视图；在 Cloud API、Webhook 和自有视图完成前，不能声称
+  WhatsApp 入站双语显示已完成。
+- 自动化已通过 `pnpm typecheck`、相关 9 个文件 134 项定向测试（其中数据库边界 71 项）、全量
+  53 个测试文件 474 passed / 1 todo 与 desktop build。准备脚本从官方 Signal Desktop 8.25.0
+  和 a27 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a28.app`，消息解析、React 组件和正文
+  插入三个新增锚点各唯一命中，deep/strict codesign 通过。a28 仅生成未启动，没有发送额外真实
+  消息，也没有读取或输出 profile/session、ACI、正文或具体消息键；因此代码与打包证据已完成，
+  Signal 原生双语气泡仍等待下一次允许的单条无敏感入站真实续验。

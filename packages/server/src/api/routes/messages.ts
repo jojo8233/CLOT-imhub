@@ -5,6 +5,7 @@ import type { ScopedDb } from '../../rbac/scoped-db.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
 import { resolveTargetLang } from '../../translation/target-lang.js'
+import { incomingTranslationTarget } from '../../translation/incoming-target.js'
 
 const sendBody = z.object({
   conversationId: z.string().uuid(),
@@ -75,20 +76,38 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
     // 也不需要额外一次往返——上面的 findVisibleConversation 只用来产出 404。
     const messages = await req.scoped.accountsJoinedWithConversations()
       .innerJoin('messages', 'messages.conversation_id', 'conversations.id')
-      .leftJoin('message_translations', j => j
-        .onRef('message_translations.message_id', '=', 'messages.id')
-        .on('message_translations.target_lang', '=', 'zh'))
+      .leftJoin('message_translations as translation_en', join => join
+        .onRef('translation_en.message_id', '=', 'messages.id')
+        .on('translation_en.target_lang', '=', 'en'))
+      .leftJoin('message_translations as translation_zh', join => join
+        .onRef('translation_zh.message_id', '=', 'messages.id')
+        .on('translation_zh.target_lang', '=', 'zh'))
       .select([
-        'messages.id as id', 'messages.direction as direction', 'messages.body as body',
+        'messages.id as id', 'messages.platform_message_id as platform_message_id',
+        'messages.direction as direction', 'messages.body as body',
+        'messages.body_lang as body_lang',
         'messages.sent_at as sent_at', 'messages.edited_at as edited_at',
-        'message_translations.translated_text as translated_text',
+        'translation_en.translated_text as translated_text_en',
+        'translation_zh.translated_text as translated_text_zh',
       ])
       .where('conversations.id', '=', id)
       .where('messages.deleted_at', 'is', null)
       .orderBy('messages.sent_at', 'asc')
       .limit(500)
       .execute()
-    return { messages }
+    return {
+      messages: messages.map(({
+        translated_text_en: translatedTextEn,
+        translated_text_zh: translatedTextZh,
+        body_lang: bodyLang,
+        ...message
+      }) => ({
+        ...message,
+        translated_text: incomingTranslationTarget(bodyLang) === 'en'
+          ? translatedTextEn
+          : translatedTextZh,
+      })),
+    }
   })
 
   /**

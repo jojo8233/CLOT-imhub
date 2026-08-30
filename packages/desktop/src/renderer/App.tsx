@@ -19,6 +19,10 @@ import { LoginPage } from './components/LoginPage.js'
 import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
 import { BootstrapRetryController } from './bootstrap-retry.js'
+import {
+  nativeMessageTranslationBridge,
+  nativeMessageTranslationsFromRows,
+} from './native-bridge.js'
 
 type AuthState = 'checking' | 'loggedOut' | 'loggedIn'
 
@@ -92,6 +96,15 @@ export function App() {
         || useStore.getState().activeConversationId !== conversationId) return
       if (before !== messageMutationRevisionRef.current) continue
       setMessages(result.messages)
+      const state = useStore.getState()
+      const conversation = state.conversations.find(item => item.id === conversationId)
+      const account = state.accounts.find(item => item.id === conversation?.account_id)
+      if (conversation && account?.platform === 'signal') {
+        void nativeMessageTranslationBridge.sync(
+          account.id,
+          nativeMessageTranslationsFromRows(result.messages),
+        ).catch(() => {})
+      }
       return
     }
   }, [setMessages])
@@ -167,6 +180,13 @@ export function App() {
           messageMutationRevisionRef.current += 1
           applyTranslation(event.messageId, event.translatedText, event.revision)
         }
+        if (event.platform === 'signal') {
+          void nativeMessageTranslationBridge.sync(event.accountId, [{
+            platformMessageId: event.platformMessageId,
+            translatedText: event.translatedText,
+            revision: event.revision,
+          }]).catch(() => {})
+        }
         return
       }
       if (event.type === 'account_status') {
@@ -200,12 +220,20 @@ export function App() {
           messageMutationRevisionRef.current += 1
           appendMessage({
             id: event.messageId,
+            platform_message_id: event.platformMessageId,
             direction: event.direction,
             body: event.body,
             sent_at: event.sentAt,
             edited_at: event.editedAt,
             translated_text: event.translatedBody,
           })
+        }
+        if (event.platform === 'signal' && event.direction === 'in' && event.translatedBody) {
+          void nativeMessageTranslationBridge.sync(event.accountId, [{
+            platformMessageId: event.platformMessageId,
+            translatedText: event.translatedBody,
+            revision: event.editedAt ?? 'initial',
+          }]).catch(() => {})
         }
         return
       }

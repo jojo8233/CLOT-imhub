@@ -116,6 +116,7 @@ function signalWindow() {
         setDraft: setVisibleDraft,
         submit: vi.fn(() => true),
       },
+      __imHubSignalResolveMessageForTranslation: vi.fn().mockResolvedValue(undefined),
     },
     attributes,
     setVisibleDraft,
@@ -253,5 +254,32 @@ describe('Signal preload composer bridge', () => {
         error: expect.objectContaining({ code: 'stale_signal_context' }),
       }),
     ]))
+  })
+
+  it('批量译文命令按规范消息键写入 Signal React 快照', async () => {
+    const current = signalWindow()
+    const sender = '33333333-2222-3333-aaaa-555555555555'
+    const sentAtMs = 1_700_000_000_000
+    current.value.__imHubSignalResolveMessageForTranslation.mockResolvedValue({
+      attributes: {
+        id: 'local-inbound-id', type: 'incoming', sourceServiceId: sender, sent_at: sentAtMs,
+      },
+    })
+    installSignalPreloadBridge(current.value)
+
+    command({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.set-translations',
+      translations: [{
+        platformMessageId: `${sender}:${sentAtMs}`,
+        translatedText: 'Hello',
+        revision: 'initial',
+      }],
+    })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect((current.value as typeof current.value & {
+      __imHubSignalTranslations?: { get(localMessageId: string): string | null }
+    }).__imHubSignalTranslations?.get('local-inbound-id')).toBe('Hello')
   })
 })

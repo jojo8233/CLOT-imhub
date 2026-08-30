@@ -11,6 +11,8 @@ export type AuthChallengeKind = 'qr' | 'code' | 'password'
 export interface WsMessageEvent {
   type: 'message'
   messageId: string
+  /** 平台账号范围内的规范消息键，用于原生客户端精确关联同一条消息。 */
+  platformMessageId: string
   conversationId: string
   accountId: string
   platform: Platform
@@ -55,7 +57,10 @@ export interface WsAccountStatusEvent {
 export interface WsTranslationEvent {
   type: 'translation'
   messageId: string
+  platformMessageId: string
   conversationId: string
+  accountId: string
+  platform: Platform
   targetLang: string
   translatedText: string
   provider: string

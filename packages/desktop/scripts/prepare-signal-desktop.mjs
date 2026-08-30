@@ -151,8 +151,20 @@ try {
   signalPreloadMain = replaceOnce(
     signalPreloadMain,
     'if(r)return window.MessageCache.register(new Hp(r))}var lle,Gp=',
-    'if(r)return window.MessageCache.register(new Hp(r))}window.__imHubSignalResolveOutgoingMessage=e=>Aa.getMessageById(e);var lle,Gp=',
-    'Signal 最终出向消息恢复 action',
+    'if(r)return window.MessageCache.register(new Hp(r))}window.__imHubSignalResolveOutgoingMessage=e=>Aa.getMessageById(e),window.__imHubSignalResolveMessageForTranslation=async(e,t)=>{let n=(await Aa.getMessagesBySentAt(t)).find(t=>ii(t)===e);return n?window.MessageCache.register(new Hp(n)):null};var lle,Gp=',
+    'Signal 最终出向消息与入站译文解析 action',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    '}),EA=class extends bA.PureComponent{',
+    '}),imHubSignalTranslationSubscribe=()=>()=>{},imHubSignalTranslationView=({messageId:e})=>{let t=window.__imHubSignalTranslations,n=(0,bA.useSyncExternalStore)(t?t.subscribe:imHubSignalTranslationSubscribe,()=>t?.get(e)??null,()=>null);return n?(0,SA.jsx)(`div`,{style:{marginTop:`6px`,paddingTop:`6px`,borderTop:`1px solid currentColor`,fontSize:`0.92em`,lineHeight:1.35,opacity:.82,whiteSpace:`pre-wrap`,overflowWrap:`anywhere`},children:n}):null},EA=class extends bA.PureComponent{',
+    'Signal 消息气泡译文 React 组件',
+  )
+  signalPreloadMain = replaceOnce(
+    signalPreloadMain,
+    'text:e,textAttachment:g}),this.#r()===CA.InlineWithText',
+    'text:e,textAttachment:g}),v==null&&(0,SA.jsx)(imHubSignalTranslationView,{messageId:c}),this.#r()===CA.InlineWithText',
+    'Signal 消息气泡原文后插入译文',
   )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,

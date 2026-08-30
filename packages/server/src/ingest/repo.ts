@@ -2,6 +2,7 @@ import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../db/types.js'
 import { recordTelegramShadowObservation } from '../shadow/telegram-repo.js'
 import type { TelegramShadowObservation } from '../shadow/telegram.js'
+import { incomingTranslationTarget } from '../translation/incoming-target.js'
 import {
   messageRevision,
   type InsertMessageInput,
@@ -31,6 +32,7 @@ export interface MessageIdRemapResult {
 
 export interface MessagePublicationSnapshot {
   id: string
+  platformMessageId: string
   conversationId: string
   accountId: string
   ownerUserId: string
@@ -292,7 +294,8 @@ export class KyselyMessageRepo implements MessageRepo {
       // upsert 即使在 touch 等待期间被新编辑超越，也只会发布数据库里的最新版本。
       const row = await trx.selectFrom('messages')
         .select([
-          'id', 'conversation_id', 'account_id', 'platform', 'direction', 'body',
+          'id', 'platform_message_id', 'conversation_id', 'account_id', 'platform', 'direction',
+          'body', 'body_lang',
           'sent_at', 'edited_at', 'edit_version', 'deleted_at',
         ])
         .where('id', '=', messageId)
@@ -310,10 +313,11 @@ export class KyselyMessageRepo implements MessageRepo {
       const translation = await trx.selectFrom('message_translations')
         .select('translated_text')
         .where('message_id', '=', row.id)
-        .where('target_lang', '=', 'zh')
+        .where('target_lang', '=', incomingTranslationTarget(row.body_lang))
         .executeTakeFirst()
       action({
         id: row.id,
+        platformMessageId: row.platform_message_id,
         conversationId: row.conversation_id,
         accountId: row.account_id,
         ownerUserId: account.owner_user_id,

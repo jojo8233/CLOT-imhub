@@ -16,6 +16,8 @@ import {
 } from '../api/client.js'
 import {
   handleNativeCommandResult,
+  nativeMessageTranslationBridge,
+  nativeMessageTranslationsFromRows,
   registerNativeCommandTarget,
 } from '../native-bridge.js'
 import { useStore } from '../store.js'
@@ -423,12 +425,26 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
     let observedIdentity: string | null = null
     let activeProvision: Promise<void> | null = null
 
+    const syncVisibleTranslations = (): void => {
+      const current = useStore.getState()
+      if (current.activeAccountId !== accountId || !current.activeConversationId) return
+      const conversation = current.conversations.find(
+        item => item.id === current.activeConversationId && item.account_id === accountId,
+      )
+      if (!conversation) return
+      void nativeMessageTranslationBridge.sync(
+        accountId,
+        nativeMessageTranslationsFromRows(current.messages),
+      ).catch(() => {})
+    }
+
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
       hasUsableGrant = control.expiresAt !== null && control.state !== 'blocked'
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        syncVisibleTranslations()
         return
       }
       const detail = control.message ?? 'Signal 入站桥接尚未就绪'
