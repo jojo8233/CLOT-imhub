@@ -6,6 +6,7 @@ import {
   nativeAccountIdsToMount,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
+  nativeWebviewNeedsComposerFocus,
   recoveredNativeBridgeConnection,
   signalDesktopAccountIdsToMount,
   signalInboundErrorIsNonfatal,
@@ -116,6 +117,16 @@ describe('native webview load recovery', () => {
     expect(recoveredNativeBridgeConnection('whatsapp', true, null)).toBe('waiting')
     expect(recoveredNativeBridgeConnection('whatsapp', false, '555000111@c.us')).toBe('waiting')
     expect(recoveredNativeBridgeConnection('telegram', true, null)).toBe('ready')
+  })
+})
+
+describe('native webview composer focus', () => {
+  it('只在 WhatsApp 写入或发送前由当前宿主 renderer 聚焦 webview', () => {
+    expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.set-draft' })).toBe(true)
+    expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.send' })).toBe(true)
+    expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.get-draft' })).toBe(false)
+    expect(nativeWebviewNeedsComposerFocus('telegram', { type: 'composer.set-draft' })).toBe(false)
+    expect(nativeWebviewNeedsComposerFocus('signal', { type: 'composer.send' })).toBe(false)
   })
 })
 

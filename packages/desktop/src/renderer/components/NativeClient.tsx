@@ -73,6 +73,14 @@ export function nativeClientSupported(platform: string): boolean {
   return platform in WEB_CLIENT
 }
 
+export function nativeWebviewNeedsComposerFocus(
+  platform: string,
+  command: Pick<NativeHostCommand, 'type'>,
+): boolean {
+  return platform === 'whatsapp'
+    && (command.type === 'composer.set-draft' || command.type === 'composer.send')
+}
+
 export function browserCompatibleUserAgent(userAgent: string): string {
   const platform = /\(([^)]+)\)/.exec(userAgent)?.[1]
   const chrome = /Chrome\/[\d.]+/.exec(userAgent)?.[0]
@@ -1134,7 +1142,12 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
       send: (_channel: string, command: unknown): Promise<void> => {
         const target = currentTarget()
         if (!target) return Promise.reject(new Error('原生客户端尚未登记'))
-        return nativeControl.sendCommand(target, command as NativeHostCommand)
+        const hostCommand = command as NativeHostCommand
+        // TranslationDock 位于宿主 renderer；用户点击按钮后原生焦点也停在宿主。
+        // 先聚焦当前 WhatsApp webview，再跨 IPC 交给主进程做第二次 focus 与授权校验。
+        // 这段 IPC 往返给 Chromium 留出提交 guest 原生焦点事件的时间。
+        if (nativeWebviewNeedsComposerFocus(platform, hostCommand)) el.focus()
+        return nativeControl.sendCommand(target, hostCommand)
       },
     }
     const unregisterTarget = registerNativeCommandTarget(accountId, commandTarget)

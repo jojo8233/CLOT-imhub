@@ -660,3 +660,18 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   与 desktop production build。从官方 Signal Desktop 8.25.0 与 a42 不透明配置生成
   `/private/tmp/Signal-imhub-integrated-a43.app`，deep/strict codesign 通过且尚未启动；真实消息发送数
   仍为 0，PR #19 与 Issue #12 状态未变。
+- a43 在正确 WhatsApp 网页壳中点击翻译后明确报告“无法写入”，原占位草稿保持不变。该结果证明
+  guest 的 `document.hasFocus()` 门禁阻止了任何全选/插入，但主进程 `webContents.focus()` 与命令在
+  同一轮 IPC 发送仍早于 guest 焦点状态传播；没有创建发送 attempt，也没有进入 `composer.send`。
+- 续验期间原服务端进程退出，第一次从落后的主 checkout 启动后缺少本分支较新的账号模式兼容，UI
+  因而把历史 WhatsApp Web 账号显示成非网页壳。该进程已停止，并从规定的隔离 worktree、仅由用户
+  自己加载既有环境后恢复；4000 监听和无凭据 401 均确认正常。过程没有读取或输出 `.env`、平台正文、
+  账号标识或密钥，也没有触发 WhatsApp 发送。
+- 焦点交接现增加宿主 renderer 前置步骤：只对 WhatsApp 的 set-draft/send 先聚焦当前 `<webview>`，
+  再跨 IPC；主进程随后再次 focus，并在最多 200ms 内轮询 `webContents.isFocused()`，确认后再留一个
+  事件周期才发送 guest 命令。只读 get-draft、Telegram 与 Signal 均不改变焦点路径；guest 端仍要求
+  `document.hasFocus()`、activeElement 与完整选区三重事实。
+- 合成测试新增 renderer 平台/命令矩阵、原生焦点延迟确认、超时不派发，以及焦点确认后的命令顺序。
+  验证通过 `pnpm typecheck`、67 个测试文件 546 passed / 1 todo 与 desktop production build。从
+  官方 Signal Desktop 8.25.0 与 a43 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a44.app`，
+  deep/strict codesign 通过且尚未启动；真实消息发送数仍为 0。

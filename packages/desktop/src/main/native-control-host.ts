@@ -170,7 +170,7 @@ export class NativeControlHost {
     if (!command) throw new NativeControlRegistryError('原生命令格式无效')
     const guest = this.requireGuest(payload.accountId, payload.guestWebContentsId, event.sender.id)
     await this.requireLiveGrant(guest)
-    deliverNativeHostCommand(
+    await deliverNativeHostCommand(
       guest.contents,
       COMMAND_CHANNEL,
       command,
