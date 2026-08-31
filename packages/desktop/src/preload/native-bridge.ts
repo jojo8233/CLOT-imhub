@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   type NativeGuestEvent,
@@ -74,7 +74,13 @@ const bridgeApi = {
 }
 
 if (location.origin === 'https://web.whatsapp.com') {
-  startWhatsAppWebBridge(bridgeApi)
+  startWhatsAppWebBridge({
+    ...bridgeApi,
+    // 只留在隔离 preload 内部，不向第三方页面暴露 Electron 编辑能力。
+    insertText(text: string): void {
+      webFrame.insertText(text)
+    },
+  })
 } else {
   contextBridge.exposeInMainWorld('imHubNativeBridge', bridgeApi)
 }

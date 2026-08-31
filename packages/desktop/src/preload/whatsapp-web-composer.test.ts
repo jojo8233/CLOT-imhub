@@ -43,11 +43,10 @@ describe('WhatsApp Web composer writer', () => {
     expect(pause).toHaveBeenCalledTimes(2)
   })
 
-  it('只执行一次正文插入，让浏览器产生唯一一组原生编辑事件', () => {
+  it('只执行一次 Electron 原生正文插入，让编辑器产生唯一一组编辑事件', () => {
     let visibleDraft = '旧草稿'
     const insertText = vi.fn((text: string) => {
       visibleDraft = text
-      return true
     })
 
     expect(replaceWhatsAppComposerText({
@@ -57,7 +56,6 @@ describe('WhatsApp Web composer writer', () => {
         return true
       }),
       insertText,
-      readText: () => visibleDraft,
     }, 'translated text')).toBe(true)
 
     expect(insertText).toHaveBeenCalledTimes(1)
@@ -65,17 +63,11 @@ describe('WhatsApp Web composer writer', () => {
     expect(visibleDraft).toBe('translated text')
   })
 
-  it('在浏览器没有返回 inserted 标记时按实际可见草稿确认', () => {
-    let visibleDraft = ''
-
+  it('把异步 DOM 确认留给命令层的有界等待', () => {
     expect(replaceWhatsAppComposerText({
       focus: vi.fn(() => true),
       selectContents: vi.fn(() => true),
-      insertText: vi.fn((text: string) => {
-        visibleDraft = `  ${text}\u00a0 `
-        return false
-      }),
-      readText: () => visibleDraft.replace(/\u00a0/g, ' ').trim(),
+      insertText: vi.fn(),
     }, 'translated text')).toBe(true)
   })
 
@@ -86,7 +78,6 @@ describe('WhatsApp Web composer writer', () => {
       focus: vi.fn(() => true),
       selectContents: vi.fn(() => false),
       insertText,
-      readText: () => 'existing draft',
     }, 'translated text')).toBe(false)
 
     expect(insertText).not.toHaveBeenCalled()
@@ -100,7 +91,6 @@ describe('WhatsApp Web composer writer', () => {
       focus: vi.fn(() => false),
       selectContents,
       insertText,
-      readText: () => 'existing draft',
     }, 'translated text')).toBe(false)
 
     expect(selectContents).not.toHaveBeenCalled()

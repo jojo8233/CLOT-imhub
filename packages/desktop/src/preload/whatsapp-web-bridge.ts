@@ -43,6 +43,7 @@ interface WhatsAppBridgeApi {
   onCommand(listener: (command: NativeHostCommand) => void): void
   translateBatch(input: NativeTranslationBatchInput): Promise<NativeTranslationBatchResult[] | undefined>
   detectLanguage(text: string): Promise<string | undefined>
+  insertText(text: string): void
 }
 
 interface CurrentContext {
@@ -463,7 +464,7 @@ class WhatsAppWebController {
         this.emitCommandFailure(command, 'stale_context', 'WhatsApp 当前会话已经变化')
         return
       }
-      if (!input || !focused || !setComposerText(input, command.text)) {
+      if (!input || !focused || !setComposerText(input, command.text, this.api.insertText)) {
         this.emitCommandFailure(command, 'whatsapp_draft_write_failed', '无法写入 WhatsApp 输入框')
         return
       }
@@ -952,7 +953,11 @@ function composerText(input: HTMLElement): string {
   return normalizeWhatsAppDomText(input.innerText || input.textContent || '')
 }
 
-function setComposerText(input: HTMLElement, text: string): boolean {
+function setComposerText(
+  input: HTMLElement,
+  text: string,
+  insertText: (text: string) => void,
+): boolean {
   try {
     return replaceWhatsAppComposerText({
       focus: () => {
@@ -972,8 +977,7 @@ function setComposerText(input: HTMLElement, text: string): boolean {
           && focusInside
           && normalizeWhatsAppDomText(selection?.toString() ?? '') === before
       },
-      insertText: value => document.execCommand('insertText', false, value),
-      readText: () => composerText(input),
+      insertText,
     }, text)
   } catch {
     return false

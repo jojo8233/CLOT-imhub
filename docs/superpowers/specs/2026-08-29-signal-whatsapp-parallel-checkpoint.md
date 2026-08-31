@@ -718,7 +718,20 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   `pnpm typecheck`、67 个测试文件 550 passed / 1 todo 与 desktop production build。准备脚本从
   官方 Signal Desktop 8.25.0 与 a46 不透明配置生成
   `/private/tmp/Signal-imhub-integrated-a47.app`，deep/strict codesign 通过且尚未启动。
-- 下一真实步骤只在 a47 重做一次无发送草稿确认：必须同时看到新译文单份、TranslationDock 就绪且
-  发送按钮可用。通过后才可进入最多一条无敏感纯文字发送；成功仍要求发送前不存在匹配容器、
-  guest 确认正文匹配且方向为出站，并返回最终 WhatsApp DOM `data-id`。PR #19 与 Issue #12 状态
-  不变。
+- a47 的无发送复验仍保留旧草稿并报告“WhatsApp 输入框未确认新草稿”。经用户明确同意后，在仅绑定
+  `127.0.0.1` 的临时调试端口安装一次只读事件监视器和一次有条件草稿替换诊断：生产 preload 与页面
+  默认 world 都准确确认 active composer 和完整旧草稿选区，也都只产生一份 trusted `input/insertText`
+  事件，但从事件即时、microtask、下一 task 到 500ms，DOM 始终与旧草稿完全相等。监视器只输出布尔量
+  和事件计数；没有输出正文、账号、会话键或消息 id，也没有查询或点击发送按钮。真实发送数仍为 0。
+- 该证据把失败边界收敛到当前 WhatsApp Lexical 对 `document.execCommand('insertText')` 的拒绝，而不是
+  world、焦点、选区或 context revision。草稿事务现保留 activeElement、完整选区和旧正文选区确认，
+  但唯一一次正文插入改用 Electron 33 的同步 `webFrame.insertText(text)`；该能力只注入精确 WhatsApp
+  origin 的隔离 preload，不进入 `contextBridge`，其他第三方页面不能调用。插入后的 1.5 秒可见正文
+  确认、stale context 拒绝和发送前 SHA-256/attempt/revision 门禁均保持不变。
+- 新增/更新合成测试覆盖原生插入只调用一次、全选失败不插入和 DOM 确认仍由命令层有界等待。验证通过
+  `pnpm typecheck`、67 个测试文件 550 passed / 1 todo 与 desktop production build。从官方 Signal
+  Desktop 8.25.0 与 a47 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a48.app`，deep/strict
+  codesign 通过且尚未启动。
+- 下一真实步骤只在 a48 重做一次无发送草稿确认：必须同时看到新译文单份、TranslationDock 就绪且
+  发送按钮可用。通过后才可进入最多一条无敏感纯文字发送；成功仍要求发送前不存在匹配容器、guest
+  确认正文匹配且方向为出站，并返回最终 WhatsApp DOM `data-id`。PR #19 与 Issue #12 状态不变。
