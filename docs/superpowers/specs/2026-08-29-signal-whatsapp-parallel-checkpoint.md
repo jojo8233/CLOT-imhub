@@ -675,3 +675,25 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   验证通过 `pnpm typecheck`、67 个测试文件 546 passed / 1 todo 与 desktop production build。从
   官方 Signal Desktop 8.25.0 与 a43 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a44.app`，
   deep/strict codesign 通过且尚未启动；真实消息发送数仍为 0。
+
+## 24. WhatsApp Web 会话 revision 稳定性 checkpoint（2026-09-01）
+
+- a44 启动后，用户只点击一次 TranslationDock“翻译”：WhatsApp 原生输入框出现单份新草稿，
+  但 TranslationDock 仍显示操作失败且发送按钮禁用。失败仍发生在 `composer.set-draft` 确认阶段，
+  没有创建发送 `attemptId`、没有进入 `composer.send`、没有点击 WhatsApp 页面发送按钮，因此真实
+  发送数仍为 0。
+- 代码复核定位到与该现象一致的 revision 边界：WhatsApp 页头显示名或在线状态属于易变元数据，
+  原实现却把同一 `platformConversationId` 下的显示名变化也视为切换会话并递增
+  `contextRevision`。写入后的 750ms 页面轮询可能因此让单份可见草稿被后置确认判成过期。
+- 现只在 `platformConversationId` 真正变化、会话消失或重新出现时递增 revision；同一平台会话的
+  显示元数据变化只刷新 guest 内上下文值，不放宽切会话、改稿、attempt 初始 revision 或正文
+  SHA-256 门禁。草稿正文确认失败与真实 stale context 也拆成不同错误，避免继续混淆诊断。
+- 新增合成测试覆盖“显示名变化保持同一会话”以及“平台会话 ID 变化仍判为切换”。验证通过
+  `pnpm typecheck`、67 个测试文件 547 passed / 1 todo 与 desktop production build。准备脚本从
+  官方 Signal Desktop 8.25.0 与 a44 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a45.app`，deep/strict codesign 通过且尚未启动；未读取或输出
+  `.env`、平台 profile/session、账号标识、正文、消息键、媒体引用或密钥。
+- 下一真实步骤只在 a45 重做一次无发送草稿确认：必须同时看到单份草稿、TranslationDock 就绪且
+  发送按钮可用。通过后才可进入最多一条无敏感纯文字发送；成功仍要求发送前不存在匹配容器、
+  guest 确认正文匹配且方向为出站，并返回最终 WhatsApp DOM `data-id`。PR #19 与 Issue #12 状态
+  不变。

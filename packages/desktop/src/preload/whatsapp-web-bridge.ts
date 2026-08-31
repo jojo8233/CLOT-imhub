@@ -19,6 +19,7 @@ import {
   isChineseLanguage,
   normalizeWhatsAppDomText,
   normalizeWhatsAppStorageIdentity,
+  sameWhatsAppConversation,
   sha256Text,
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
@@ -202,6 +203,10 @@ class WhatsAppWebController {
 
   private updateContext(value: NativeConversationContext | null): void {
     if (sameContext(this.context?.value ?? null, value)) return
+    if (sameWhatsAppConversation(this.context?.value ?? null, value)) {
+      this.context = value ? { revision: this.contextRevision, value } : null
+      return
+    }
     this.contextRevision += 1
     this.context = value ? { revision: this.contextRevision, value } : null
     this.lastComposerSignature = ''
@@ -455,7 +460,11 @@ class WhatsAppWebController {
         () => composerText(input) === normalizeWhatsAppDomText(command.text),
         1_500,
       )
-      if (!confirmed || !this.commandMatchesContext(command)) {
+      if (!this.commandMatchesContext(command)) {
+        this.emitCommandFailure(command, 'stale_context', 'WhatsApp 当前会话已经变化')
+        return
+      }
+      if (!confirmed) {
         this.emitCommandFailure(command, 'whatsapp_draft_write_failed', 'WhatsApp 输入框未确认新草稿')
         return
       }

@@ -1,4 +1,5 @@
 import { normalizeWhatsAppWebUserId } from '@im-hub/shared'
+import type { NativeConversationContext } from '@im-hub/shared'
 
 export function normalizeWhatsAppStorageIdentity(raw: string): string | null {
   const candidates: string[] = [raw]
@@ -43,6 +44,16 @@ export function whatsappMessageDirectionFromDataId(raw: string | null): 'in' | '
 
 export function normalizeWhatsAppDomText(value: string): string {
   return value.replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').trim()
+}
+
+/** 显示名会随在线状态等页面元数据变化；只有平台会话 ID 才定义发送上下文。 */
+export function sameWhatsAppConversation(
+  left: NativeConversationContext | null,
+  right: NativeConversationContext | null,
+): boolean {
+  return left !== null
+    && right !== null
+    && left.platformConversationId === right.platformConversationId
 }
 
 export function isChineseLanguage(value: string | undefined): boolean {

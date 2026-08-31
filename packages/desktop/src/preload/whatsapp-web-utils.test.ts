@@ -3,6 +3,7 @@ import {
   isChineseLanguage,
   normalizeWhatsAppDomText,
   normalizeWhatsAppStorageIdentity,
+  sameWhatsAppConversation,
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
 } from './whatsapp-web-utils.js'
@@ -34,5 +35,24 @@ describe('WhatsApp Web patch helpers', () => {
     expect(isChineseLanguage('zh')).toBe(true)
     expect(isChineseLanguage('zh-CN')).toBe(true)
     expect(isChineseLanguage('ja')).toBe(false)
+  })
+
+  it('显示名变化不等于切换 WhatsApp 会话', () => {
+    const current = {
+      platformConversationId: 'wa:123456789@c.us',
+      contactExternalId: '123456789@c.us',
+      contactDisplayName: 'Customer',
+    }
+
+    expect(sameWhatsAppConversation(current, {
+      ...current,
+      contactDisplayName: 'Customer · online',
+    })).toBe(true)
+    expect(sameWhatsAppConversation(current, {
+      ...current,
+      platformConversationId: 'wa:987654321@c.us',
+      contactExternalId: '987654321@c.us',
+    })).toBe(false)
+    expect(sameWhatsAppConversation(current, null)).toBe(false)
   })
 })
