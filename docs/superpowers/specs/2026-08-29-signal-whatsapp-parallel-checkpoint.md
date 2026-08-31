@@ -543,3 +543,30 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   中英译文，且橙色临时诊断框已经消失。该续验只复用了页面现有消息，没有新增真实消息，也没有
   重启服务端或 Telegram；由此关闭 WhatsApp Web 补丁模式“当前可见历史纯文字双向翻译显示”的
   真实门槛。页面滚动增量、发送最终 DOM id 与进程重启 attempt 恢复仍按本节既定边界继续验收。
+
+## 20. 新会话接续点：WhatsApp Web 增量与发送账本（2026-08-31）
+
+- 新会话必须继续复用 `/private/tmp/im-hub-m3-outbox` 与分支
+  `codex/m5-m6-signal-whatsapp`，不得另建 worktree 或修改主 checkout。功能基线提交为
+  `418f381`（`fix: restore WhatsApp Web bilingual bubbles`）；当前真实测试包为
+  `/private/tmp/Signal-imhub-integrated-a39.app`，它从 a38 不透明配置生成并保持既有 WhatsApp
+  登录 partition。开始工作前完整阅读该 worktree 的 `AGENTS.md`、native client pivot 规范与本文件
+  第 19/20 节。
+- 已关闭的 WhatsApp Web 真实门槛是：账号授权、当前可见既有入站/出站纯文字的中英双语显示，以及
+  页面结构失配时的安全可见诊断。不要重复 Telegram/Signal/WhatsApp 平台切换、Signal 原生文字/
+  图片/贴纸发送、Signal 入站与生命周期、503 outbox，或 WhatsApp 已登录/当前可见历史气泡矩阵，
+  除非新代码确实修改对应边界。
+- 下一流程依次验证两项尚未关闭的边界：先只用既有消息滚动加载更多历史纯文字，确认
+  MutationObserver 对新进入 DOM 的入站/出站气泡增量补译；随后从翻译坞完成一次
+  `composer.set-draft → composer.send → 最终 WhatsApp DOM data-id`。只有 guest 看见发送前不存在、
+  正文匹配且判定为出站的实际消息容器并取得最终 DOM id 后，UI 才能报告成功。
+- 发送续验必须继续绑定 `attemptId`、初始 `contextRevision` 与草稿 SHA-256。双击、切会话、用户改稿、
+  命令超时、结果丢失和进程重启的幂等矩阵优先用合成测试覆盖；真实平台最多发送一条无敏感纯文字，
+  不得为了逐项制造异常而重复发送。pending/unknown attempt 只能恢复已确认结果或阻止重发，不能把
+  Telegram 临时/最终 ID 或 Signal sender/timestamp 规则套到 WhatsApp。
+- 下一测试包若需要生成，必须从 a39 不透明配置生成 a40；不得读取或输出 `.env`、WhatsApp/Signal
+  profile/session、数据库正文、账号标识、具体消息键、媒体引用、token、二维码或密钥。服务端协议
+  当前未变且服务端已经运行，不重启服务端或 Telegram。不要合并 PR #19，也不要关闭 Issue #12。
+- 当前自动化基线为 `pnpm typecheck`、63 个测试文件 520 passed / 1 todo、desktop production build
+  与 a39 deep/strict codesign 全部通过。a39 的只读真实验收没有新增消息；新会话应从上述两个未完成
+  边界继续，不回滚或重做已通过的 Signal/WhatsApp 功能。
