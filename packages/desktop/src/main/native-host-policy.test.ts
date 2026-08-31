@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   nativeAccountIdFromPartition,
   nativeClientBridgeAllowed,
+  nativeClientComposerFocusRequired,
   nativeClientPermissionAllowed,
   nativeClientUrlAllowed,
   nativePartitionAllowed,
@@ -22,6 +23,13 @@ describe('native host policy', () => {
     expect(nativeClientBridgeAllowed('http://localhost:1234/')).toBe(true)
     expect(nativeClientBridgeAllowed('https://web.whatsapp.com/')).toBe(true)
     expect(nativeClientBridgeAllowed('https://example.com/')).toBe(false)
+  })
+
+  it('只有 WhatsApp composer 命令需要主进程交还 guest 原生焦点', () => {
+    expect(nativeClientComposerFocusRequired('https://web.whatsapp.com/')).toBe(true)
+    expect(nativeClientComposerFocusRequired('https://web.whatsapp.com/inbox')).toBe(true)
+    expect(nativeClientComposerFocusRequired('http://localhost:1234/')).toBe(false)
+    expect(nativeClientComposerFocusRequired('https://web.whatsapp.com.evil.example/')).toBe(false)
   })
 
   it('只允许 WhatsApp 主框架持久化存储，其余 guest 权限继续拒绝', () => {

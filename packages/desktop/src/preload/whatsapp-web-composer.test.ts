@@ -10,7 +10,7 @@ describe('WhatsApp Web composer writer', () => {
     })
 
     expect(replaceWhatsAppComposerText({
-      focus: vi.fn(),
+      focus: vi.fn(() => true),
       selectContents: vi.fn(() => {
         visibleDraft = ''
         return true
@@ -28,7 +28,7 @@ describe('WhatsApp Web composer writer', () => {
     let visibleDraft = ''
 
     expect(replaceWhatsAppComposerText({
-      focus: vi.fn(),
+      focus: vi.fn(() => true),
       selectContents: vi.fn(() => true),
       insertText: vi.fn((text: string) => {
         visibleDraft = `  ${text}\u00a0 `
@@ -42,12 +42,27 @@ describe('WhatsApp Web composer writer', () => {
     const insertText = vi.fn(() => true)
 
     expect(replaceWhatsAppComposerText({
-      focus: vi.fn(),
+      focus: vi.fn(() => true),
       selectContents: vi.fn(() => false),
       insertText,
       readText: () => 'existing draft',
     }, 'translated text')).toBe(false)
 
+    expect(insertText).not.toHaveBeenCalled()
+  })
+
+  it('guest 没有获得原生焦点时不全选也不插入', () => {
+    const selectContents = vi.fn(() => true)
+    const insertText = vi.fn(() => true)
+
+    expect(replaceWhatsAppComposerText({
+      focus: vi.fn(() => false),
+      selectContents,
+      insertText,
+      readText: () => 'existing draft',
+    }, 'translated text')).toBe(false)
+
+    expect(selectContents).not.toHaveBeenCalled()
     expect(insertText).not.toHaveBeenCalled()
   })
 })

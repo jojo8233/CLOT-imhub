@@ -6,6 +6,7 @@ import { BrowserWindow, app, ipcMain, safeStorage, shell, type WebContents } fro
 import {
   nativeAccountIdFromPartition,
   nativeClientBridgeAllowed,
+  nativeClientComposerFocusRequired,
   nativeClientPermissionAllowed,
   nativeClientUrlAllowed,
   nativePartitionAllowed,
@@ -15,6 +16,7 @@ import { NativeControlHost } from './native-control-host.js'
 interface PendingNativeAccount {
   accountId: string
   bridgeEnabled: boolean
+  focusComposerCommands: boolean
 }
 
 interface SessionPayload {
@@ -156,7 +158,11 @@ export function attachImHubWindowRuntime(
     }
     const pending = pendingNativeAccountsByHost.get(hostId) ?? []
     const bridgeEnabled = nativeClientBridgeAllowed(params.src)
-    pending.push({ accountId, bridgeEnabled })
+    pending.push({
+      accountId,
+      bridgeEnabled,
+      focusComposerCommands: nativeClientComposerFocusRequired(params.src),
+    })
     pendingNativeAccountsByHost.set(hostId, pending)
     if (bridgeEnabled) {
       webPreferences.preload = options.nativeBridgePreload
@@ -183,7 +189,12 @@ export function attachImHubWindowRuntime(
       return
     }
     if (target.bridgeEnabled) {
-      nativeControlHost.registerGuest(contents, target.accountId, hostId)
+      nativeControlHost.registerGuest(
+        contents,
+        target.accountId,
+        hostId,
+        target.focusComposerCommands,
+      )
     }
   })
 }

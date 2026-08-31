@@ -20,6 +20,14 @@ export function nativeClientBridgeAllowed(raw: string): boolean {
   }
 }
 
+export function nativeClientComposerFocusRequired(raw: string): boolean {
+  try {
+    return new URL(raw).origin === 'https://web.whatsapp.com'
+  } catch {
+    return false
+  }
+}
+
 /**
  * 官方 WhatsApp Web 会在登录后申请 durable storage，Electron 将该权限名映射为
  * `persistent-storage`。只给精确 WhatsApp 主框架开这一项，避免通用 guest 权限白名单

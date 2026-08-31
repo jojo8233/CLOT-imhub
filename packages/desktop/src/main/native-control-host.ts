@@ -25,6 +25,7 @@ import {
   NATIVE_TRANSLATE_DETECT_CHANNEL,
 } from '../native-control-ipc.js'
 import { NativeControlRegistry, NativeControlRegistryError } from './native-control-registry.js'
+import { deliverNativeHostCommand } from './native-command-delivery.js'
 
 const COMMAND_CHANNEL = 'imhub:native-command'
 const ACCOUNT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -37,6 +38,7 @@ interface GuestRegistration {
   accountId: string
   contents: WebContents
   hostWebContentsId: number
+  focusComposerCommands: boolean
 }
 
 interface ConfigurePayload {
@@ -89,8 +91,18 @@ export class NativeControlHost {
     contents.once('destroyed', () => { this.trustedHosts.delete(contents.id) })
   }
 
-  registerGuest(contents: WebContents, accountId: string, hostWebContentsId: number): void {
-    this.guests.set(contents.id, { accountId, contents, hostWebContentsId })
+  registerGuest(
+    contents: WebContents,
+    accountId: string,
+    hostWebContentsId: number,
+    focusComposerCommands = false,
+  ): void {
+    this.guests.set(contents.id, {
+      accountId,
+      contents,
+      hostWebContentsId,
+      focusComposerCommands,
+    })
     contents.once('destroyed', () => {
       this.guests.delete(contents.id)
       const grant = this.registry.releaseWebContents(contents.id)
@@ -158,7 +170,12 @@ export class NativeControlHost {
     if (!command) throw new NativeControlRegistryError('原生命令格式无效')
     const guest = this.requireGuest(payload.accountId, payload.guestWebContentsId, event.sender.id)
     await this.requireLiveGrant(guest)
-    guest.contents.send(COMMAND_CHANNEL, command)
+    deliverNativeHostCommand(
+      guest.contents,
+      COMMAND_CHANNEL,
+      command,
+      guest.focusComposerCommands,
+    )
   }
 
   private async proxyFromHost(

@@ -935,7 +935,10 @@ function composerText(input: HTMLElement): string {
 function setComposerText(input: HTMLElement, text: string): boolean {
   try {
     return replaceWhatsAppComposerText({
-      focus: () => { input.focus() },
+      focus: () => {
+        input.focus()
+        return document.hasFocus() && document.activeElement === input
+      },
       selectContents: () => {
         const before = composerText(input)
         const selected = document.execCommand('selectAll', false)

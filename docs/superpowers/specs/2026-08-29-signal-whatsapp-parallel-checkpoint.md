@@ -646,3 +646,17 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   0。验证通过 `pnpm typecheck`、66 个测试文件 539 passed / 1 todo 与 desktop production build。
   从官方 Signal Desktop 8.25.0 与 a41 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a42.app`，
   deep/strict codesign 通过且尚未启动；真实消息发送数仍为 0。
+- a42 从 TranslationDock 点击翻译后仍保留原占位草稿并明确报告未确认新草稿，发送按钮继续禁用；
+  包内静态核对确认 `selectAll` 新实现存在、旧 Range 与额外 InputEvent 都不存在。随后在同一 a42 的
+  `Electron Isolated Context` 与页面默认 world 中，在 webview 已聚焦时分别执行同一受保护事务，两者
+  都能把非敏感占位草稿替换为单份且精确匹配。检查只回传长度与布尔值，没有输出正文。
+- 结合实际失败只发生在员工点击外层 TranslationDock 之后，故障边界确定为原生焦点交接：宿主
+  renderer 获得焦点后，guest 内 `input.focus()` 只能更新 DOM activeElement，不能保证 webview 的
+  webContents 已获得原生编辑焦点。主进程现只对精确 WhatsApp origin 的 `composer.set-draft` 与
+  `composer.send` 在派发前调用 guest webContents `focus()`；Telegram 本地补丁与集成 Signal 保持
+  原命令路径。guest 还要求 `document.hasFocus()` 且 composer 是 activeElement，否则不全选、不插入。
+- 新增合成测试覆盖 WhatsApp 焦点先于命令派发、其他平台不抢焦点、只读 get-draft 不抢焦点，以及
+  guest 无原生焦点时全选/插入均为 0。验证通过 `pnpm typecheck`、67 个测试文件 543 passed / 1 todo
+  与 desktop production build。从官方 Signal Desktop 8.25.0 与 a42 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a43.app`，deep/strict codesign 通过且尚未启动；真实消息发送数
+  仍为 0，PR #19 与 Issue #12 状态未变。
