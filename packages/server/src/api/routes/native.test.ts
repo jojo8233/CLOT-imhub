@@ -312,6 +312,74 @@ describe('native bridge routes', () => {
     expect(invalidAci.statusCode).toBe(400)
   })
 
+  it('WhatsApp Web 只允许 owner 用页面实际身份首次绑定并签发短时 grant', async () => {
+    const whatsappAccountId = (await db.insertInto('accounts').values({
+      platform: 'whatsapp', owner_user_id: agentId, team_id: teamId,
+      display_name: 'Patched WhatsApp', status: 'pending_auth', connection_mode: 'web_shell',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${whatsappAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: '123456789:7@c.us' },
+    })
+    expect(response.statusCode).toBe(200)
+    const whatsappGrant = response.json<{ grant: string }>().grant
+    const row = await db.selectFrom('accounts')
+      .select(['platform_account_external_id', 'status', 'connection_mode', 'credentials_ref'])
+      .where('id', '=', whatsappAccountId)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({
+      platform_account_external_id: '123456789@c.us',
+      status: 'connected',
+      connection_mode: 'web_shell',
+      credentials_ref: null,
+    })
+
+    upsertConversation.mockClear()
+    const whatsappContext = {
+      platformConversationId: 'wa:555123456@c.us',
+      contactExternalId: '555123456@c.us',
+      contactDisplayName: 'Web contact',
+    }
+    const contextResponse = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(whatsappGrant),
+      payload: { accountId: whatsappAccountId, context: whatsappContext },
+    })
+    expect(contextResponse.statusCode).toBe(200)
+    expect(upsertConversation).toHaveBeenCalledWith({ accountId: whatsappAccountId, ...whatsappContext })
+
+    const invalidContext = await app.inject({
+      method: 'POST', url: '/api/native/context', headers: nativeAuth(whatsappGrant),
+      payload: {
+        accountId: whatsappAccountId,
+        context: { ...whatsappContext, contactExternalId: 'different@c.us' },
+      },
+    })
+    expect(invalidContext.statusCode).toBe(422)
+
+    const mismatch = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${whatsappAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: '987654321@c.us' },
+    })
+    expect(mismatch.statusCode).toBe(409)
+    expect(mismatch.json()).toMatchObject({ error: expect.stringContaining('身份') })
+
+    const invalidAccountId = (await db.insertInto('accounts').values({
+      platform: 'whatsapp', owner_user_id: agentId, team_id: teamId,
+      display_name: 'Invalid WhatsApp', status: 'pending_auth', connection_mode: 'web_shell',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const invalid = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${invalidAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: '123456789@g.us' },
+    })
+    expect(invalid.statusCode).toBe(400)
+  })
+
   it('owner 被改成 auditor 后既有 grant 立即失效', async () => {
     await db.updateTable('users').set({ role: 'auditor' }).where('id', '=', agentId).execute()
     const response = await app.inject({

@@ -95,7 +95,7 @@ describe('native webview load recovery', () => {
     )).toBe(false)
   })
 
-  it('shell-only 官方页面只要已附着且来源匹配就显示自身加载状态', () => {
+  it('WhatsApp 页面已附着且来源匹配时交给 preload 继续核对页面状态', () => {
     expect(nativeWebviewAtExpectedOrigin(
       probe({ url: 'https://web.whatsapp.com/', loading: true }),
       'https://web.whatsapp.com/',

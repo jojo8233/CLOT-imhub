@@ -29,9 +29,9 @@ const STORAGE_KEY = 'im-hub.layout.v1'
 /** 功能中心的两档宽度。它不参与拖拽分配，但窄屏时会被强制收成图标栏 */
 export const FUNCTION_CENTER = { open: 250, collapsed: 62 } as const
 
-/** WhatsApp 仍是官方页面隔离壳；Telegram 与 Signal 都必须显示外壳翻译坞。 */
-export function showsNativeTranslationDock(platform: string): boolean {
-  return platform !== 'whatsapp'
+/** 三个平台的补丁客户端都通过同一固定翻译坞驱动各自原生输入框。 */
+export function showsNativeTranslationDock(_platform: string): boolean {
+  return true
 }
 
 export function usesCloudConversationWorkspace(account: {

@@ -76,10 +76,10 @@ describe('visiblePanels', () => {
 })
 
 describe('showsNativeTranslationDock', () => {
-  it('Telegram 与 Signal 显示翻译坞，WhatsApp 隔离壳不显示', () => {
+  it('Telegram、Signal 与 WhatsApp Web 补丁客户端都显示翻译坞', () => {
     expect(showsNativeTranslationDock('telegram')).toBe(true)
     expect(showsNativeTranslationDock('signal')).toBe(true)
-    expect(showsNativeTranslationDock('whatsapp')).toBe(false)
+    expect(showsNativeTranslationDock('whatsapp')).toBe(true)
   })
 })
 

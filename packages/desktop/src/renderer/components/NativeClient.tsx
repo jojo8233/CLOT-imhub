@@ -43,9 +43,9 @@ import { EmptyHint, IconButton } from './ui.js'
 /**
  * 各平台加载哪份客户端。
  *
- * 指向**我们自己构建的补丁版**，不是官方地址：补丁版里翻译改走 im-hub 的
- * 网关，并且去掉了 Telegram 的 Premium 门禁。扒官方页面的 DOM 是行不通的
- * ——那份代码混淆过，选择器一改版就失效，而且失效时不报错、只是悄悄不翻译。
+ * Telegram 指向我们自己构建的补丁版；WhatsApp 则按用户确认的 TranGPT 式模式
+ * 加载官方 Web 页面，并由受控 preload 使用多锚点 DOM 兼容层。后者不是稳定协议，
+ * 页面选择器改版时必须显式报错并跟进修补。
  *
  * 开发期指向 telegram-tt 的 Vite 服务器；打包后会换成随应用分发的静态产物。
  */
@@ -58,10 +58,9 @@ const WEB_CLIENT: Record<string, WebClientDefinition> = {
   // 开发期指向 telegram-tt 的 Vite 服务器（代码/telegram-tt，npm run dev）。
   // 打包时这里要换成随应用分发的静态产物地址，见 native-client-pivot 设计文档。
   telegram: { src: 'http://localhost:1234/', bridgeEnabled: true },
-  // First M6 checkpoint: official linked-device UI in an isolated partition.
-  // No im-hub preload or control grant is injected until the WhatsApp-specific
-  // identity and event bridge has its own verified contract.
-  whatsapp: { src: 'https://web.whatsapp.com/', bridgeEnabled: false },
+  // 用户明确选择 TranGPT 式补丁模式：仍使用 owner-only 独立 partition，但给
+  // 精确 WhatsApp origin 注入窄 bridge，用于气泡双语、草稿与最终 DOM 消息 ID 确认。
+  whatsapp: { src: 'https://web.whatsapp.com/', bridgeEnabled: true },
 }
 
 const PLATFORM_PHASE: Record<string, string> = {
@@ -169,8 +168,8 @@ export function nativeWebviewAlreadyLoaded(webview: NativeWebviewLoadProbe, src:
 
 /**
  * WhatsApp Web 登录后可能让 Electron 的全局 isLoading 长时间保持 true，即使文档已经
- * complete。shell-only 页面只需要确认 guest 已附着且仍在精确白名单 origin；页面自身的
- * 加载界面比宿主的误报遮罩更准确。bridge 客户端仍使用上面的严格完成条件。
+ * complete。宿主只用这项检查恢复已经附着的精确白名单 origin；preload 内部仍独立等待
+ * 页面身份、当前会话和 composer，不能把附着本身当成桥接就绪。
  */
 export function nativeWebviewAtExpectedOrigin(webview: NativeWebviewLoadProbe, src: string): boolean {
   try {
@@ -315,6 +314,7 @@ export function NativeClient() {
           <WebviewPane
             key={id}
             accountId={id}
+            platform={acc.platform}
             src={client.src}
             bridgeEnabled={client.bridgeEnabled}
             userAgent={acc.platform === 'whatsapp'
@@ -752,8 +752,9 @@ function nativeProxyStatus(error: unknown): number | null {
   return match ? Number(match[1]) : null
 }
 
-function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
+function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visible }: {
   accountId: string
+  platform: string
   src: string
   bridgeEnabled: boolean
   userAgent?: string
@@ -838,7 +839,7 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
       el.addEventListener('did-fail-load', onFail)
       el.addEventListener('console-message', onConsole)
       // React effect 可能晚于 dom-ready，而 WhatsApp 的 isLoading 又可能长期不归零。
-      // 短轮询只验证 webContents + 精确 origin，不读取或操控官方页面 DOM。
+      // 短轮询只负责 webContents + 精确 origin；DOM 兼容逻辑全部留在窄 preload。
       originProbeTimer = setInterval(() => {
         if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
       }, 250)
@@ -864,6 +865,8 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
     let provisionGeneration = 0
     let readyHandled = false
     let hasUsableGrant = false
+    let observedIdentity: string | null = null
+    let originProbeTimer: ReturnType<typeof setInterval> | null = null
 
     const currentTarget = () => {
       const guestWebContentsId = guestWebContentsIdRef.current
@@ -898,10 +901,13 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
 
     const provisionControl = createSingleFlight(async (): Promise<void> => {
       const target = currentTarget()
-      if (!target || disposed) return
+      if (!target || disposed || (platform === 'whatsapp' && !observedIdentity)) return
       const generation = ++provisionGeneration
       try {
-        const grant = await api.createNativeControlGrant(accountId)
+        const grant = await api.createNativeControlGrant(
+          accountId,
+          platform === 'whatsapp' ? observedIdentity ?? undefined : undefined,
+        )
         if (disposed || generation !== provisionGeneration) return
         const control = await nativeControl.configure(target, grant)
         if (disposed || generation !== provisionGeneration) return
@@ -929,6 +935,7 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
       setDetail('')
       setControlError(null)
       hasUsableGrant = false
+      observedIdentity = null
       lastContextRevisionRef.current = -1
       useStore.getState().setNativeAccountIdentity(accountId, null)
       useStore.getState().setNativeContext(accountId, null)
@@ -982,17 +989,27 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
     const handleEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
-        useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在核对 Telegram 登录身份')
+        useStore.getState().setNativeBridgeConnection(
+          accountId,
+          'waiting',
+          `正在核对 ${PLATFORM_LABEL[platform] ?? platform} 登录身份`,
+        )
         return
       }
       if (event.type === 'account.identity') {
+        observedIdentity = event.platformAccountExternalId
         useStore.getState().setNativeAccountIdentity(accountId, event.platformAccountExternalId)
         if (!hasUsableGrant) void provisionControl()
         return
       }
       if (event.type === 'account.signed-out') {
+        observedIdentity = null
         useStore.getState().setNativeAccountIdentity(accountId, null)
-        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Telegram 账号已退出')
+        useStore.getState().setNativeBridgeConnection(
+          accountId,
+          'failed',
+          `${PLATFORM_LABEL[platform] ?? platform} 账号已退出`,
+        )
         return
       }
       if (event.type === 'command.result') {
@@ -1060,6 +1077,7 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
           event.platformConversationId,
           event.draft,
           event.canSend,
+          event.sendAttempt,
         )
         return
       }
@@ -1116,11 +1134,19 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
     el.addEventListener('did-stop-loading', onReady)
     el.addEventListener('did-fail-load', onFail)
     el.addEventListener('console-message', onConsole)
-    if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+    if (platform === 'whatsapp') {
+      originProbeTimer = setInterval(() => {
+        if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      }, 250)
+    }
+    if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)
+      || (platform === 'whatsapp'
+        && nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src))) onReady()
     return () => {
       disposed = true
       provisionGeneration += 1
       if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      if (originProbeTimer) clearInterval(originProbeTimer)
       const target = currentTarget()
       if (target) void nativeControl.release(target).catch(() => {})
       unregisterTarget()
@@ -1132,7 +1158,7 @@ function WebviewPane({ accountId, src, bridgeEnabled, userAgent, visible }: {
       el.removeEventListener('did-fail-load', onFail)
       el.removeEventListener('console-message', onConsole)
     }
-  }, [accountId, bridgeEnabled, src])
+  }, [accountId, bridgeEnabled, platform, src])
 
   function openDevTools(): void {
     const el = ref.current as unknown as { openDevTools?(): void } | null

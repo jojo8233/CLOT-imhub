@@ -18,9 +18,9 @@ describe('native host policy', () => {
     expect(nativeClientUrlAllowed('https://web.telegram.org/')).toBe(false)
   })
 
-  it('只给自建补丁客户端注入 bridge，官方页面保持 shell-only', () => {
+  it('只给明确登记的 Telegram 与 WhatsApp 补丁客户端注入 bridge', () => {
     expect(nativeClientBridgeAllowed('http://localhost:1234/')).toBe(true)
-    expect(nativeClientBridgeAllowed('https://web.whatsapp.com/')).toBe(false)
+    expect(nativeClientBridgeAllowed('https://web.whatsapp.com/')).toBe(true)
     expect(nativeClientBridgeAllowed('https://example.com/')).toBe(false)
   })
 

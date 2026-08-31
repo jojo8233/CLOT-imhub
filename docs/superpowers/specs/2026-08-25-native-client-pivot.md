@@ -91,15 +91,20 @@
    证明最终 ID 主链成功；成功后的 ACK 状态回放曾让翻译坞误显示失败，a25 已修复并通过自动化，
    尚未用第二条消息复验，因此仍不能标记完整 UI 已验收；
    `signal-cli` 只保留后台回退，不再由
-   添加/重关联弹窗触发。WhatsApp 首检点只在 owner 的隔离
-   partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发；该路线现明确
-   标记为 `web_shell`，不会注入 im-hub preload、抓取 DOM、桥接或翻译。需要统一回传与发送的
-   WhatsApp 账号必须走独立 `cloud_api` 路线，以 Business Platform 官方 Graph API、WABA Webhook
-   和 Embedded Signup 建立身份与事件合约。Cloud API 的服务端授权、加密 secret、Webhook、纯文字
-   入站、状态账本、最终平台消息 ID 发送门槛与 im-hub 自有双语会话视图现已完成代码和自动化；
-   只有配置公开 HTTPS origin、Meta 应用/业务授权并完成一条真实非敏感消息续验后，才可称为真实
-   闭环。不能把网页 partition 冒充 Cloud API 凭据。历史 `adapter` 路线继续保留兼容，不在本轮删除；
-   Zoom 延后。
+   添加/重关联弹窗触发。WhatsApp 继续在 owner 的隔离 partition 中承载官方
+   `web.whatsapp.com`；2026-08-31 用户在了解正文会送往现有翻译提供商、DOM 改版、平台条款与账号
+   风控风险后，明确选择复刻 TranGPT 的补丁网页模式。因此 `web_shell` 现在会给精确 WhatsApp
+   origin 注入窄 preload，以多锚点 DOM 读取当前可见纯文字、显示中英译文，并桥接当前会话、原生
+   输入框和发送按钮。网页拿不到 Node、JWT 或 control grant；页面身份先与 owner 账号绑定，翻译
+   才会开放。发送只在不含正文的 IndexedDB attempt 账本落盘后执行，只有观察到新的最终 DOM
+   message id 才报告成功，结果未知时禁止盲目重发。该兼容层不是稳定消息协议，目前也不把 DOM
+   消息冒充 Cloud Webhook 统一回传或中央归档。
+
+   独立 `cloud_api` 路线仍以 Business Platform 官方 Graph API、WABA Webhook 和 Embedded Signup
+   建立稳定身份与事件合约。其服务端授权、加密 secret、Webhook、纯文字入站、状态账本、最终平台
+   消息 ID 发送门槛与 im-hub 自有双语会话视图已完成代码和自动化；只有配置公开 HTTPS origin、
+   Meta 应用/业务授权并完成一条真实非敏感消息续验后，才可称为真实闭环。网页 partition 不能冒充
+   Cloud API 凭据。历史 `adapter` 路线继续保留兼容，不在本轮删除；Zoom 延后。
 
 ## Signal 同窗口宿主的历史与边界
 
@@ -180,7 +185,7 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 验证，但按单条上限未再次真实发送。正式多开、正式安装包、
 上游更新流程以及 AGPL 源码交付仍未完成，不能把当前开发包写成可发布实现。
 
-WhatsApp 必须达到同一“入站原文 + 中英译文”验收，但官方 `web_shell` 不允许靠 DOM 抓取或注入
-来实现。该能力只能由未来 `cloud_api` 的 WABA Webhook 入站事件驱动，并显示在 im-hub 自有的
-双语会话侧栏/记录视图中，以官方 `messages[].id` 关联；在 Cloud API、Webhook 和自有视图完成前，
-WhatsApp 双语入站仍是未完成门槛。
+WhatsApp 的 Web 补丁路线现以当前可见气泡的 DOM 文本实现原文 + 中英译文；进入视口的既有消息和
+后续新增/改稿消息都会重新扫描。它只是一层用户明确接受风险的交互兼容实现，不提供服务端统一
+归档、Webhook 真伪校验、媒体消息语义或长期稳定选择器承诺。需要这些能力时仍必须使用独立
+`cloud_api`，并以官方 `messages[].id` 关联 im-hub 自有双语会话视图。

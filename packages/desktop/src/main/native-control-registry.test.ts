@@ -7,7 +7,7 @@ const now = Date.parse('2026-08-26T12:00:00.000Z')
 function verification(
   accountId: string,
   externalId = '778899',
-  platform: 'telegram' | 'signal' = 'telegram',
+  platform: 'telegram' | 'signal' | 'whatsapp' = 'telegram',
 ) {
   return {
     accountId,
@@ -97,6 +97,24 @@ describe('NativeControlRegistry', () => {
     )
     expect(decision.state).toMatchObject({ state: 'ready', message: null })
     expect(registry.requireGrant(31, 'signal-account', now)).toBe('signal-grant')
+  })
+
+  it('WhatsApp Web partition 只在页面身份与 grant 一致后开放翻译代理', () => {
+    const registry = new NativeControlRegistry()
+    registry.observeGuestEvent(41, 'whatsapp-account', {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'account.identity',
+      platformAccountExternalId: '123456789@c.us',
+    }, now)
+    const decision = registry.configure(
+      41,
+      'whatsapp-account',
+      'whatsapp-grant',
+      verification('whatsapp-account', '123456789@c.us', 'whatsapp'),
+      now,
+    )
+    expect(decision.state).toMatchObject({ state: 'ready', message: null })
+    expect(registry.requireGrant(41, 'whatsapp-account', now)).toBe('whatsapp-grant')
   })
 
   it('guest 退出账号会立即撤销控制能力', () => {

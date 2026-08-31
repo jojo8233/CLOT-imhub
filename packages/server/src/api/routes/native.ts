@@ -151,6 +151,10 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       const canonicalError = validateCanonicalSignalContext(parsed.data.context)
       if (canonicalError) return reply.code(422).send({ error: canonicalError })
     }
+    if (account.platform === 'whatsapp') {
+      const canonicalError = validateCanonicalWhatsAppContext(parsed.data.context)
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
+    }
 
     const conversation = await deps.repo.upsertConversation({
       accountId: account.id,
@@ -376,6 +380,20 @@ function validateCanonicalSignalContext(context: z.infer<typeof contextSchema>):
   } catch {
     return 'invalid canonical Signal context contact id'
   }
+}
+
+function validateCanonicalWhatsAppContext(context: z.infer<typeof contextSchema>): string | null {
+  if (/^wa:[0-9]{5,20}@(c\.us|g\.us|lid)$/.test(context.platformConversationId)) {
+    return context.contactExternalId === context.platformConversationId.slice(3)
+      ? null
+      : 'WhatsApp contact does not match conversation id'
+  }
+  if (/^wa-title:[a-f0-9]{32}$/.test(context.platformConversationId)) {
+    return context.contactExternalId === context.platformConversationId
+      ? null
+      : 'WhatsApp fallback contact does not match conversation id'
+  }
+  return 'invalid canonical WhatsApp conversation id'
 }
 
 function validateCanonicalTelegramEvent(

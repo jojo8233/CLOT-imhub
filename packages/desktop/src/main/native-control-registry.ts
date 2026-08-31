@@ -44,7 +44,7 @@ export class NativeControlRegistry {
   ): NativeControlDecision {
     const expiresAt = Date.parse(verification.expiresAt)
     if (verification.accountId !== accountId
-      || !['telegram', 'signal'].includes(verification.platform)
+      || !['telegram', 'signal', 'whatsapp'].includes(verification.platform)
       || !Number.isFinite(expiresAt)
       || expiresAt <= now) {
       throw new NativeControlRegistryError('账号控制授权无效或已经过期')
@@ -227,6 +227,7 @@ export class NativeControlRegistry {
 function platformLabel(platform: Platform): string {
   if (platform === 'telegram') return 'Telegram'
   if (platform === 'signal') return 'Signal'
+  if (platform === 'whatsapp') return 'WhatsApp'
   return platform
 }
 

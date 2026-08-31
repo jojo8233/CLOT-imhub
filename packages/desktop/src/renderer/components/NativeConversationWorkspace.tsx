@@ -149,7 +149,7 @@ function NativeClientConversationWorkspace() {
               <div>
                 {activePlatform === 'signal'
                   ? 'Signal Desktop 开发模式：入站文字、图片/贴纸元数据及编辑/删除/回应已续验；翻译可写入当前原生草稿，自动发送尚未开启，请在 Signal 输入框确认后手动发送。'
-                  : 'WhatsApp Web 测试模式：当前验证独立登录、多开和原生文字收发；翻译与消息回传尚未开启。'}
+                  : 'WhatsApp Web 补丁模式：当前可见纯文字气泡会调用 im-hub 翻译网关显示中英译文；页面选择器变化时可能暂时失效。'}
               </div>
               {activePlatform === 'signal'
                 && (signalBridgeNotice || signalOutboxNotice || outboxActionError) ? (

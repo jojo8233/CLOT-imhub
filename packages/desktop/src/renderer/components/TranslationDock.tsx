@@ -53,7 +53,7 @@ export async function sendCurrentNativeDraft(
       && (!options.existingAttempt.draftFingerprint
         || options.existingAttempt.contextRevision === undefined)) {
       throw new NativeBridgeCommandError(
-        'Signal 待恢复发送缺少正文指纹',
+        '待恢复发送缺少正文指纹',
         'attempt_context_mismatch',
       )
     }
@@ -125,7 +125,7 @@ export function TranslationDock() {
   const canUse = unavailableReason === null && key !== null && context !== null && activeAccountId !== null
   const canResolveUnknownAttempt = draft?.status === 'failed'
     && Boolean(draft.sendAttemptId)
-    && (active?.platform !== 'signal'
+    && (active?.platform !== 'signal' && active?.platform !== 'whatsapp'
       || (Boolean(draft.sendAttemptFingerprint)
         && draft.sendAttemptContextRevision !== null))
   const canSend = canUse
@@ -240,7 +240,7 @@ export function TranslationDock() {
         nativeComposerBridge,
         {
           canContinue: () => continueOrReset(command, key),
-          bindDraftFingerprint: active?.platform === 'signal',
+          bindDraftFingerprint: active?.platform === 'signal' || active?.platform === 'whatsapp',
           resolveAttemptId: (finalDraft, draftFingerprint) => {
             const current = useStore.getState().nativeDrafts[key]
             const attemptId = current?.sendAttemptId && current.sendAttemptDraft === finalDraft
@@ -272,7 +272,7 @@ export function TranslationDock() {
       if (!continueOrReset(command, key)) return
       const confirmedAttemptId = useStore.getState().nativeDrafts[key]?.sendAttemptId ?? null
       clearDraft(key)
-      if (active?.platform === 'signal' && confirmedAttemptId) {
+      if ((active?.platform === 'signal' || active?.platform === 'whatsapp') && confirmedAttemptId) {
         try {
           await nativeComposerBridge.acknowledgeSend(
             command.accountId,
@@ -282,7 +282,7 @@ export function TranslationDock() {
         } catch {
           useStore.getState().setNativeBridgeNotice(
             command.accountId,
-            'Signal 已确认发送，但 attempt ACK 暂时未完成；下次启动会继续核对',
+            `${PLATFORM_LABEL[active.platform]} 已确认发送，但 attempt ACK 暂时未完成；下次启动会继续核对`,
           )
         }
       }
@@ -297,7 +297,10 @@ export function TranslationDock() {
           'attempt_mismatch',
           'missing_message_id',
           'bridge_disconnected',
-        ].includes(error.code) || error.code.startsWith('signal_send_'))
+          'whatsapp_send_result_unknown',
+        ].includes(error.code)
+          || error.code.startsWith('signal_send_')
+          || error.code.startsWith('whatsapp_send_'))
       updateDraft(key, {
         status: 'failed',
         error: error instanceof Error ? error.message : '原生发送失败',

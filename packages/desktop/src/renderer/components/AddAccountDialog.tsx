@@ -10,7 +10,7 @@ import { Chip, PlatformIcon } from './ui.js'
 const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
   { key: 'signal', blurb: '使用 Signal Desktop 关联，图片和贴纸保持原生能力', ready: true },
-  { key: 'whatsapp', blurb: '官方 Web 隔离壳；Cloud API 统一双语会话', ready: true },
+  { key: 'whatsapp', blurb: 'Web 补丁双语；Cloud API 统一会话', ready: true },
 ]
 
 type Step = 'pick' | 'linking' | 'cloud'
@@ -307,7 +307,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                         background: whatsAppMode === 'web_shell' ? theme.color.limeSoft : theme.color.white,
                       }}
                     >
-                      官方 Web 原生页面
+                      Web 补丁双语页面
                     </button>
                     <button
                       className="ih-btn"
@@ -329,7 +329,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                     fontSize: theme.font.size.sm, color: theme.color.textMuted, lineHeight: 1.8,
                   }}>
                     {whatsAppMode === 'web_shell'
-                      ? '隔离加载官方 WhatsApp Web，不抓取页面；只保留平台原生使用体验。'
+                      ? '隔离加载 WhatsApp Web，并注入双语气泡与翻译输入桥接。'
                       : '在外部 HTTPS 页面完成 Meta Embedded Signup。token 只回服务端加密保存；入站消息与中英译文显示在 im-hub 自有会话中。'}
                   </div>
                 </>
@@ -600,7 +600,7 @@ function WhatsAppWebStep({ onClose }: { onClose(): void }) {
           color: theme.color.textMuted, lineHeight: 1.8,
         }}>
           关闭后进入“会话”，在官方 WhatsApp Web 页面用手机扫码。
-          当前 checkpoint 先测试登录、多开和原生文字收发；翻译与消息回传将在下一阶段接入。
+          登录身份核对完成后，当前可见的历史及新文字气泡会显示中英译文；页面改版时可能需要更新兼容补丁。
         </div>
       </div>
       <DialogFooter>

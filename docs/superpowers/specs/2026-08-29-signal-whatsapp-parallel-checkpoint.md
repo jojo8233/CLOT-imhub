@@ -475,3 +475,47 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   attempt 绑定/重放、乱序状态、公开路由权限和 Cloud/Web 布局分流。该 checkpoint 是代码完成，
   不是生产验收；真实门槛仍是 Meta 应用与业务授权、公开 HTTPS 回调，以及最多一条无敏感纯文字
   的入站双语/最终 ID 续验。
+
+## 19. WhatsApp Web TranGPT 式补丁模式 checkpoint（2026-08-31）
+
+- 本节只推翻第 14/15/18 节中“`web_shell` 永不注入或读取 DOM”的产品决定，不改变那些章节已经
+  完成的 Cloud API 实现、官方消息 ID 或 Webhook 安全边界。静态解包 TranGPT 3.1.171 后确认其
+  WhatsApp 能力来自 Electron preload、DOM 选择器/MutationObserver、页面本地状态与输入事件模拟，
+  不是隐藏的官方 Web API。用户已明确选择复刻这条路线，并确认当前可见聊天正文会送往 im-hub
+  已配置的翻译提供商，同时接受 DOM 改版、平台条款和账号风控风险。
+- `web_shell` 仍只挂载 owner 的 `persist:native-<accountId>`，精确允许
+  `https://web.whatsapp.com`。主进程现在给该 origin 注入既有 typed preload；DOM 控制器只在
+  context-isolated preload 内持有事件、host command、批量翻译和语言检测四项窄能力，不把原始
+  bridge 对象暴露给 WhatsApp 页面脚本。Node、JWT、control grant、外壳 IPC 和其他账号 partition
+  仍不可见。相机、麦克风、通知、剪贴板和第三方 frame 权限继续拒绝，只有 WhatsApp 主框架的
+  `persistent-storage` 例外保持不变。
+- guest 从 WhatsApp 页面本地状态取得并规范当前登录用户标识，周期重放以覆盖 preload 早于 renderer
+  listener 的竞态。服务端只允许 owner 对 `web_shell` 首次绑定该身份，后续页面身份、数据库身份、
+  短时 grant 或 partition 任一不一致都会阻断能力。日志与 UI 不输出该标识；历史 `adapter` 和独立
+  `cloud_api` 账号不迁移、不删除。
+- 气泡兼容层只扫描当前会话最近 300 个可见纯文字节点，使用 `role=row`、`data-testid`、
+  `.message-in/.message-out` 与 selectable-text 多锚点；打开会话时覆盖已存在的可见入/出站消息，
+  滚动加载、新消息和正文变化由 MutationObserver 增量触发。语言目标仍以 provider 检测为准：
+  中文译英文，其余译中文。译文用 `textContent` 插入独立 marker，不执行平台正文 HTML；单条失败
+  显示可点击重试。消息正文只存在于页面内存和翻译请求中，不写 IndexedDB、日志或 attempt 账本。
+- 当前会话优先从 WhatsApp 消息 `data-id` 中提取私聊/群聊/LID JID，取不到时才用标题 SHA-256
+  作为显式 fallback；服务端只接受 `wa:<jid>` 或 `wa-title:<digest>` 规范键及匹配 contact。翻译坞
+  使用当前 context revision 控制 contenteditable，写入后重新读取确认；切会话和用户改稿都会让旧
+  命令失败。
+- 出站发送要求 `attemptId`、首次 context revision 与最终草稿 SHA-256。guest 在点击原生发送按钮
+  前把这些非正文事实写入本 partition 的独立 IndexedDB；随后只接受一条发送前不存在、正文匹配且
+  带实际 WhatsApp DOM `data-id` 的新出站消息作为最终确认。双击复用同 attempt；超时、结果丢失和
+  进程重启后的 pending attempt 只报告结果未知，禁止再次点击。最终 ID 确认后可以恢复同 attempt
+  结果，外壳 ACK 后才删除账本。该 DOM id 只服务于 Web 补丁发送确认，不能冒充 Cloud API `wamid`
+  或套用 Telegram/Signal 的消息 ID 算法。
+- 当前范围不把 DOM 消息上报 `/api/native/events`，因此没有中央存档、客服档案跟随、关键词告警、
+  媒体/引用/回应/删除语义或跨页面版本的稳定协议。Cloud API 继续承担需要可信 Webhook、官方状态、
+  中央归档和长期可维护性的生产路线。本 checkpoint 只完成代码与自动化；尚未启动 WhatsApp 页面、
+  读取真实账号状态或发送真实消息，真实验收继续遵守最多一条无敏感文字的上限。
+- 选择器同时保留 `data-testid`、`role=row` 与方向 class fallback；页面仍出现可见文字候选但连续
+  无法解析消息时，guest 会显式报告 `whatsapp_dom_selector_unavailable`，不会静默假装双语能力可用。
+  自动化通过 `pnpm typecheck`、63 个测试文件 519 passed / 1 todo 与 desktop production build；
+  测试只使用合成身份、JID、正文和消息键，没有读取真实 WhatsApp session、账号标识或聊天正文。
+  准备脚本从官方 Signal Desktop 8.25.0 和 a30 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a31.app`，deep/strict codesign 通过；a31 仅生成未启动，没有
+  重启 Telegram 或服务端，也没有触发真实 WhatsApp/Signal 消息。

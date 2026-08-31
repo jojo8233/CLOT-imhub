@@ -1,6 +1,6 @@
 const NATIVE_WEB_CLIENTS = new Map([
   ['http://localhost:1234', { bridgeEnabled: true }],
-  ['https://web.whatsapp.com', { bridgeEnabled: false }],
+  ['https://web.whatsapp.com', { bridgeEnabled: true }],
 ])
 const NATIVE_PARTITION = /^persist:native-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 

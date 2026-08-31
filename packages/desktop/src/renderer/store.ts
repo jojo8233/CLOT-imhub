@@ -327,8 +327,11 @@ export const useStore = create<State>((set) => ({
       || existing?.status === 'translating'
       || existing?.status === 'sending'
     const hasDraft = draft.trim() !== ''
-    const signalAccount = s.accounts.some(account => account.id === accountId
-      && account.platform === 'signal')
+    const persistentAttemptAccount = s.accounts.some(account => account.id === accountId
+      && (account.platform === 'signal' || account.platform === 'whatsapp'))
+    const platformLabel = s.accounts.find(account => account.id === accountId)?.platform === 'whatsapp'
+      ? 'WhatsApp'
+      : 'Signal'
     const nextDrafts = { ...s.nativeDrafts }
     if (sendAttempt && !busy
       && (!existing?.sendAttemptId || existing.sendAttemptId === sendAttempt.attemptId)) {
@@ -336,8 +339,8 @@ export const useStore = create<State>((set) => ({
         ...(existing ?? EMPTY_DRAFT),
         status: 'failed',
         error: sendAttempt.platformMessageId
-          ? '上次 Signal 发送已确认，点击发送完成结果恢复'
-          : '上次 Signal 发送结果待确认，点击发送继续核对',
+          ? `上次 ${platformLabel} 发送已确认，点击发送完成结果恢复`
+          : `上次 ${platformLabel} 发送结果待确认，点击发送继续核对`,
         sendAttemptId: sendAttempt.attemptId,
         sendAttemptDraft: null,
         sendAttemptFingerprint: sendAttempt.draftFingerprint,
@@ -345,7 +348,7 @@ export const useStore = create<State>((set) => ({
         sendAttemptConfirmed: sendAttempt.platformMessageId !== null,
       }
     } else if (existing && !busy) {
-      if (signalAccount && existing.sendAttemptConfirmed && !sendAttempt) {
+      if (persistentAttemptAccount && existing.sendAttemptConfirmed && !sendAttempt) {
         // 最终 ID 已确认的 attempt 可能在 renderer 清空成功态后、guest 完成 ACK 前短暂
         // 回放一次。ACK 后的无 attempt 状态必须收掉这个短暂恢复态，不能继续显示失败。
         nextDrafts[key] = {

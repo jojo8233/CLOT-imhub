@@ -237,21 +237,38 @@ ConversationModel id、草稿正文、最终消息键、profile 或 token，也�
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
 再生成 CLI 二维码。
 
-WhatsApp 首检点不需要服务端凭据：owner 创建的账号会登记为 `connection_mode=web_shell`，
-会话区域直接加载官方 `web.whatsapp.com`，二维码在官方页面内扫描。每个账号使用独立 Electron
-partition。当前只验证页面内登录、多开和原生收发；没有 im-hub 翻译、消息回传或中央归档，
-也不注入 preload 或读取 DOM。历史 `connection_mode=adapter` 账号保留兼容，不要批量改写或删除。
-若页面没有出现，
-先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
+WhatsApp Web 补丁模式不需要 Meta/Cloud 凭据：owner 创建的账号登记为
+`connection_mode=web_shell`，会话区域加载精确 `https://web.whatsapp.com`，二维码仍在页面内
+扫描，每个账号使用独立 Electron partition。页面登录后，窄 preload 从 WhatsApp 本地状态取得
+当前账号标识；服务端只允许 owner 首次绑定，后续身份不一致会撤销短时 control grant。账号标识、
+正文和 DOM message id 都不得写日志。DOM 控制器只在 context-isolated preload 内使用窄 bridge；
+原始 bridge、JWT、grant、`ipcRenderer`、Node 和外壳 API 不暴露给 WhatsApp 页面脚本。
+
+control grant 就绪后，preload 用多组 `role` / `data-testid` / `.message-in` / `.message-out` 锚点扫描
+当前最多 300 个可见纯文字气泡，通过现有 im-hub 翻译网关按“中文译英文、其他语言译中文”插入
+译文。打开会话时会处理已存在的可见消息；滚动加载、收到新消息或正文变化会由
+`MutationObserver` 继续处理。单条失败显示“翻译暂不可用 · 点击重试”，不能静默丢失。正文只在
+页面内存和翻译请求中存在，WhatsApp Web attempt 账本不保存正文。
+
+固定翻译坞会把译文写进当前 WhatsApp contenteditable；写入前后都复核当前会话。发送前先在该
+partition 的独立 IndexedDB 保存 `attemptId`、首次 context revision、正文 SHA-256 和会话键，再
+点击页面原生发送按钮。只有观察到一条正文匹配、发送前不存在且带真实 `data-id` 的新出站 DOM
+消息后才报告成功；超时、结果丢失或进程重启后的 pending attempt 都禁止自动再点一次。成功由
+外壳 ACK 后删除账本记录。当前兼容层只提供可见纯文字双语和翻译坞发送，不把 DOM 消息回传为
+中央归档，也不承诺媒体、回应、删除或 WhatsApp 页面选择器的长期稳定性。历史
+`connection_mode=adapter` 账号保留兼容，不要批量改写或删除。
+
+若页面没有出现，先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
 启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确
 WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽其他 guest 权限。若官方
-页面已经完整但 im-hub 显示自己的“等了 20 秒”遮罩，检查 shell-only 就绪判定是否错误依赖
+页面已经完整但 im-hub 显示自己的“等了 20 秒”遮罩，检查页面附着判定是否错误依赖
 `webview.isLoading()`；WhatsApp 登录后该标志可能长期为 `true`，应按已附着的精确 origin
-显示页面，同时继续用 `did-fail-load` 处理真实主框架错误。
+显示页面，同时由 preload 继续核对身份、会话与 composer，并用 `did-fail-load` 处理真实主框架错误。
 
 WhatsApp 统一消息链使用独立的 Business Platform `cloud_api` 路线。代码已接入 Meta Embedded
 Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 attempt/状态账本与 im-hub
-自有双语会话视图；默认仍关闭，`web_shell` 不会获得这些能力。启用前按以下顺序准备：
+自有双语会话视图；默认仍关闭。`web_shell` 的 DOM 双语不等于 Cloud API 的可信 Webhook、中央归档
+和官方消息状态能力。启用 Cloud API 前按以下顺序准备：
 
 1. 在 Meta Business/Developer 中准备应用、业务资质与 Embedded Signup configuration；给服务端
    准备一个公开 HTTPS origin。Webhook callback 固定为
@@ -368,7 +385,9 @@ Telegram：
 - [ ] Signal 收到英文文字时，同一原生气泡显示英文原文和中文译文；收到中文文字时显示中文原文和英文译文
 - [x] Signal 当前会话中本账号发出的纯文字也显示中英双语；重开或切入会话后最近 200 条历史纯文字出站可回填
 - [ ] 编辑入站文字后旧译文立即消失，只有新 revision 的译文可以重新出现；重开 Signal 后由中央快照恢复
-- [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验，不得用 `web_shell` DOM 抓取替代
+- [ ] WhatsApp `web_shell` 登录后，当前可见的既有及新纯文字气泡按中英文方向显示译文；滚动加载后也会补译，选择器失效必须出现可见错误
+- [ ] WhatsApp 翻译坞只在新出站 DOM `data-id` 确认后显示成功；制造结果未知时相同 attempt 不得重复点击发送
+- [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
 
 ---
@@ -409,9 +428,11 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站文字 bridge
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
-  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp `web_shell` 仍只是官方 Web
-  的 owner-only 隔离壳；独立 `cloud_api` 已完成授权、Webhook、纯文字收发账本和自有双语视图的
-  代码与自动化，但尚未配置真实 Meta 应用和公开 HTTPS 回调。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
+  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp `web_shell` 已按用户确认的
+  TranGPT 式模式加入 owner-only 身份绑定、可见纯文字 DOM 双语、当前会话/草稿桥接和发送 attempt
+  账本；它仍不是稳定消息协议，也没有中央 DOM 消息归档。独立 `cloud_api` 已完成授权、Webhook、
+  纯文字收发账本和自有双语视图的代码与自动化，但尚未配置真实 Meta 应用和公开 HTTPS 回调。
+  Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
   入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
   通过真实客户端续验。纯文字自动发送的真实单条送达与最终 ID 主链已通过；a24 的成功态 UI 竞态
   已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp Cloud API 尚无真实授权、
