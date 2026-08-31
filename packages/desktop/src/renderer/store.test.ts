@@ -249,6 +249,41 @@ describe('platform-scoped Zustand navigation', () => {
     })
   })
 
+  it('WhatsApp 页面进程重启后恢复原 attempt 绑定与最终 DOM id 状态', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('wa-1', 'ready')
+    useStore.getState().setNativeContext('wa-1', {
+      platformConversationId: 'wa:555000111@c.us',
+      contactExternalId: '555000111@c.us',
+      contactDisplayName: null,
+      contextRevision: 1,
+      conversationId: 'wa-conv-1',
+    })
+
+    useStore.getState().applyNativeComposerState(
+      'wa-1',
+      1,
+      'wa:555000111@c.us',
+      '',
+      false,
+      {
+        attemptId: 'attempt-before-restart',
+        contextRevision: 9,
+        draftFingerprint: 'b'.repeat(64),
+        platformMessageId: 'wa-dom:true_555000111@c.us_FINAL',
+      },
+    )
+
+    expect(useStore.getState().nativeDrafts['wa-1:wa-conv-1']).toMatchObject({
+      status: 'failed',
+      error: '上次 WhatsApp 发送已确认，点击发送完成结果恢复',
+      sendAttemptId: 'attempt-before-restart',
+      sendAttemptFingerprint: 'b'.repeat(64),
+      sendAttemptContextRevision: 9,
+      sendAttemptConfirmed: true,
+    })
+  })
+
   it('改变回复语言后，原生框旧译文不能自行重建 ready 状态', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('tg-1', 'ready')

@@ -39,11 +39,11 @@ export interface NativeSendCommand extends NativeCommandFrame {
   type: 'composer.send'
   /** 一次逻辑发送的稳定标识；结果未知后的重试必须沿用同一个值。 */
   attemptId: string
-  /** Signal attempt 首次建立时的 revision；重启查询时仍保持原值。 */
+  /** Signal/WhatsApp attempt 首次建立时的 revision；重启查询时仍保持原值。 */
   attemptContextRevision?: number
   /**
-   * 最终原生草稿的 SHA-256 十六进制指纹。Signal 用它把正文与 attempt 绑定；
-   * Telegram v3 guest 不依赖该可选字段。
+   * 最终原生草稿的 SHA-256 十六进制指纹。Signal/WhatsApp 用它把正文与 attempt
+   * 绑定；Telegram v3 guest 不依赖该可选字段。
    */
   draftFingerprint?: string
 }
@@ -137,13 +137,13 @@ export interface NativeComposerStateEvent extends NativeBridgeFrame {
   platformConversationId: string
   draft: string
   canSend: boolean
-  /** Signal 进程重启或结果丢失后，外壳可用同一 attempt 查询或续接。 */
+  /** Signal 进程或 WhatsApp 页面重启/结果丢失后，外壳可用同一 attempt 查询或续接。 */
   sendAttempt?: {
     attemptId: string
     /** attempt 首次建立时的会话 revision；重启后的查询不能改写它。 */
     contextRevision: number
     draftFingerprint: string
-    /** 非 null 表示 Signal 已确认最终消息 ID，但外壳尚未 ACK。 */
+    /** 非 null 表示 guest 已确认最终消息 ID，但外壳尚未 ACK。 */
     platformMessageId: string | null
   }
 }

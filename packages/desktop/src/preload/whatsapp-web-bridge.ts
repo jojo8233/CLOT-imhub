@@ -23,6 +23,14 @@ import {
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
 } from './whatsapp-web-utils.js'
+import {
+  confirmedWhatsAppDomMessageId,
+  resolveWhatsAppExistingAttempt,
+  whatsappDraftMatchesFingerprint,
+  whatsappNewAttemptRevisionIsCurrent,
+  whatsappSendPreflightStillValid,
+  WhatsAppSendAttemptGuard,
+} from './whatsapp-web-send.js'
 
 interface WhatsAppBridgeApi {
   emit(event: NativeGuestEvent): void
@@ -103,6 +111,7 @@ class WhatsAppWebController {
   private translationVisibilityTicks = 0
   private translationVisibilityReported = false
   private translationVisibilityTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly sendAttemptGuard = new WhatsAppSendAttemptGuard()
 
   constructor(private readonly api: WhatsAppBridgeApi) {}
 
@@ -477,19 +486,63 @@ class WhatsAppWebController {
       this.emitCommandFailure(command, 'whatsapp_attempt_unbound', 'WhatsApp 发送缺少正文指纹')
       return
     }
-    const existing = await readWhatsAppAttempt(command.attemptId)
-    if (existing) {
-      if (existing.platformConversationId !== command.platformConversationId
-        || existing.contextRevision !== command.attemptContextRevision
-        || existing.draftFingerprint !== command.draftFingerprint) {
+    const binding = {
+      platformConversationId: command.platformConversationId,
+      contextRevision: command.attemptContextRevision,
+      draftFingerprint: command.draftFingerprint,
+    }
+    const guardResult = this.sendAttemptGuard.begin(command.attemptId, binding)
+    if (guardResult !== 'acquired') {
+      this.emitCommandFailure(
+        command,
+        guardResult === 'mismatch' ? 'attempt_context_mismatch' : 'whatsapp_send_result_unknown',
+        guardResult === 'mismatch'
+          ? 'WhatsApp 发送 attempt 与正文或会话不一致'
+          : 'WhatsApp 发送正在确认，已阻止重复发送',
+      )
+      return
+    }
+    try {
+      await this.sendComposerWithGuard(command, binding)
+    } finally {
+      this.sendAttemptGuard.finish(command.attemptId, binding)
+    }
+  }
+
+  private async sendComposerWithGuard(
+    command: Extract<NativeHostCommand, { type: 'composer.send' }>,
+    binding: {
+      platformConversationId: string
+      contextRevision: number
+      draftFingerprint: string
+    },
+  ): Promise<void> {
+    let existing: WhatsAppSendAttemptRecord | null
+    try {
+      existing = await readWhatsAppAttempt(command.attemptId)
+    } catch {
+      this.emitCommandFailure(command, 'whatsapp_send_ledger_unavailable', 'WhatsApp 发送账本不可用，未发送')
+      return
+    }
+    const existingResolution = resolveWhatsAppExistingAttempt(existing, {
+      platformConversationId: binding.platformConversationId,
+      contextRevision: binding.contextRevision,
+      draftFingerprint: binding.draftFingerprint,
+    })
+    if (existingResolution.kind !== 'new') {
+      if (existingResolution.kind === 'mismatch') {
         this.emitCommandFailure(command, 'attempt_context_mismatch', 'WhatsApp 发送 attempt 与正文或会话不一致')
         return
       }
-      if (existing.state === 'confirmed' && existing.platformMessageId) {
-        this.emitCommandSuccess(command, { platformMessageId: existing.platformMessageId })
+      if (existingResolution.kind === 'confirmed') {
+        this.emitCommandSuccess(command, { platformMessageId: existingResolution.platformMessageId })
       } else {
         this.emitCommandFailure(command, 'whatsapp_send_result_unknown', '上次 WhatsApp 发送结果未知，已阻止重复发送')
       }
+      return
+    }
+    if (!whatsappNewAttemptRevisionIsCurrent(binding.contextRevision, command.contextRevision)) {
+      this.emitCommandFailure(command, 'attempt_context_mismatch', 'WhatsApp 新发送 attempt 的初始会话版本不匹配')
       return
     }
     const input = composerInput()
@@ -498,7 +551,7 @@ class WhatsAppWebController {
       this.emitCommandFailure(command, 'whatsapp_composer_empty', 'WhatsApp 输入框为空，未发送')
       return
     }
-    if (await sha256Text(draft) !== command.draftFingerprint) {
+    if (!await whatsappDraftMatchesFingerprint(draft, binding.draftFingerprint)) {
       this.emitCommandFailure(command, 'attempt_context_mismatch', 'WhatsApp 输入框正文已经变化')
       return
     }
@@ -513,8 +566,8 @@ class WhatsAppWebController {
     const attempt: WhatsAppSendAttemptRecord = {
       attemptId: command.attemptId,
       platformConversationId: command.platformConversationId,
-      contextRevision: command.attemptContextRevision,
-      draftFingerprint: command.draftFingerprint,
+      contextRevision: binding.contextRevision,
+      draftFingerprint: binding.draftFingerprint,
       state: 'pending',
       platformMessageId: null,
       createdAt: Date.now(),
@@ -525,9 +578,12 @@ class WhatsAppWebController {
       this.emitCommandFailure(command, 'whatsapp_send_ledger_unavailable', 'WhatsApp 发送账本不可用，未发送')
       return
     }
-    if (!this.commandMatchesContext(command)
-      || composerText(input) !== draft
-      || !sendTarget.isConnected) {
+    if (!whatsappSendPreflightStillValid({
+      contextMatches: this.commandMatchesContext(command),
+      preparedDraft: draft,
+      currentDraft: composerText(input),
+      sendTargetConnected: sendTarget.isConnected,
+    })) {
       try {
         await discardWhatsAppAttempt(command.attemptId)
       } catch {
@@ -923,11 +979,12 @@ async function waitForOutgoingMessage(
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     if (!contextStillCurrent()) return null
-    for (const row of currentMessageRows().reverse()) {
-      if (messageDirection(row) !== 'out' || messageText(row) !== expected) continue
-      const raw = messageDataId(row)
-      if (raw && !beforeIds.has(raw)) return `wa-dom:${raw}`
-    }
+    const confirmed = confirmedWhatsAppDomMessageId(expected, beforeIds, currentMessageRows().map(row => ({
+      direction: messageDirection(row),
+      text: messageText(row),
+      dataId: messageDataId(row),
+    })))
+    if (confirmed) return confirmed
     await delay(150)
   }
   return null

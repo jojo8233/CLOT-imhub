@@ -188,4 +188,7 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
 WhatsApp 的 Web 补丁路线现以当前可见气泡的 DOM 文本实现原文 + 中英译文；进入视口的既有消息和
 后续新增/改稿消息都会重新扫描。它只是一层用户明确接受风险的交互兼容实现，不提供服务端统一
 归档、Webhook 真伪校验、媒体消息语义或长期稳定选择器承诺。需要这些能力时仍必须使用独立
-`cloud_api`，并以官方 `messages[].id` 关联 im-hub 自有双语会话视图。
+`cloud_api`，并以官方 `messages[].id` 关联 im-hub 自有双语会话视图。网页纯文字发送在读取
+IndexedDB 前先用进程内 attempt guard 封住并发双击，再以持久账本覆盖结果丢失和页面重启；只有
+发送前不存在、正文匹配且判定为出站的实际 DOM `data-id` 才能成为 `wa-dom:` 确认结果。该值不能
+冒充 Cloud API `wamid`，pending attempt 也不能再次点击页面发送。

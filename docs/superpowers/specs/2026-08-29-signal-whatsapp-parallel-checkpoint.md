@@ -570,3 +570,29 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - 当前自动化基线为 `pnpm typecheck`、63 个测试文件 520 passed / 1 todo、desktop production build
   与 a39 deep/strict codesign 全部通过。a39 的只读真实验收没有新增消息；新会话应从上述两个未完成
   边界继续，不回滚或重做已通过的 Signal/WhatsApp 功能。
+
+## 21. WhatsApp Web 发送并发门禁修正 checkpoint（2026-08-31）
+
+- 从 `e78f4db` 复核发送主链时发现，首版虽会在点击前写 IndexedDB pending attempt，但两个相同
+  `attemptId` 的并发命令仍可能在首个事务写入前同时读到“无既有 attempt”，存在双击两次页面发送的
+  竞态。现增加 renderer 进程内的 attempt guard，在任何 IndexedDB 读取前按会话、首次
+  `contextRevision` 与草稿 SHA-256 绑定并串行化；相同绑定的并发命令只报告正在确认，任一事实改绑
+  都明确拒绝。账本读取失败也改成发送前明确失败，不再留下无 `command.result` 的异步异常。
+- 发送最终确认已抽成 WhatsApp 专用纯逻辑并由实际 guest 调用：候选必须是发送前不存在、规范正文
+  匹配、方向为 `out` 且带实际 DOM `data-id` 的消息容器，返回值只加 `wa-dom:` 来源前缀。它不使用
+  Telegram 临时/最终 id，也不使用 Signal sender/timestamp。pending attempt 阻止重发，confirmed
+  attempt 才能在结果丢失或页面进程重启后恢复同一最终 DOM id。
+- 新增合成测试覆盖并发双击、会话/revision/fingerprint 改绑、用户改稿、写账本后的会话变化、按钮
+  失联、命令超时、结果丢失、confirmed/pending 重启恢复，以及发送前已存在、同文入站、异文出站和
+  缺 DOM id 的拒绝矩阵。验证通过 `pnpm typecheck`、64 个测试文件 532 passed / 1 todo、desktop
+  production build；首次沙箱内全量测试仍只有本机 PostgreSQL 连接被 `EPERM` 阻止，确认固定连接
+  `imhub_test` 后在沙箱外全量通过，全程未读取 `.env`。
+- 从官方 Signal Desktop 8.25.0 与 a39 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a40.app`，deep/strict codesign 通过。a40 尚未启动；当前 a39、
+  服务端和 Telegram 均未重启，也没有真实发送。尝试自动执行只读滚动前，macOS 拒绝 `osascript`
+  辅助访问，因此未把增量补译记为通过；继续时应先由用户在 a39 手动向上滚动既有消息并只反馈
+  入/出站译文与安全诊断三项结果，不得回传正文、账号标识或 DOM id。
+- 只有只读滚动门槛通过后，才可切换到包含本修正的 a40 做最多一条无敏感纯文字发送。发送成功仍须
+  同时拿到 guest 的正文匹配、出站方向、发送前不存在与最终 DOM id 证据；若 a40 启动会违反当前
+  “不重启 Telegram”的运行约束，应先取得用户明确安排，不能自行关闭 a39。PR #19 与 Issue #12
+  状态保持不变。

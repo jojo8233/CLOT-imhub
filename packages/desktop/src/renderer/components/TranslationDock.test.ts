@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import { sendCurrentNativeDraft, shouldTranslateOnKeyDown } from './TranslationDock.js'
 
 describe('TranslationDock keyboard handling', () => {
@@ -165,5 +166,50 @@ describe('TranslationDock keyboard handling', () => {
       'a'.repeat(64),
       7,
     )
+  })
+
+  it('WhatsApp 绑定员工最终改稿的 SHA-256 与 attempt 初始 revision', async () => {
+    const context = {
+      accountId: 'account-wa', platformConversationId: 'wa:555000111@c.us', contextRevision: 11,
+    }
+    const finalDraft = 'synthetic employee-edited outbound text'
+    const send = vi.fn(async () => 'wa-dom:true_555000111@c.us_FINAL')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft: vi.fn(async () => finalDraft), send },
+      {
+        bindDraftFingerprint: true,
+        resolveAttemptId: () => 'attempt-whatsapp',
+      },
+    )).resolves.toBe('wa-dom:true_555000111@c.us_FINAL')
+
+    expect(send).toHaveBeenCalledWith(
+      context,
+      'attempt-whatsapp',
+      await nativeDraftFingerprint(finalDraft),
+      11,
+    )
+  })
+
+  it('WhatsApp 计算正文指纹期间切会话时不调用 guest 发送', async () => {
+    const context = {
+      accountId: 'account-wa', platformConversationId: 'wa:555000111@c.us', contextRevision: 11,
+    }
+    let checks = 0
+    const send = vi.fn(async () => 'should-not-send')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft: vi.fn(async () => 'synthetic outbound text'), send },
+      {
+        bindDraftFingerprint: true,
+        canContinue: () => {
+          checks += 1
+          return checks === 1
+        },
+      },
+    )).resolves.toBeNull()
+    expect(send).not.toHaveBeenCalled()
   })
 })
