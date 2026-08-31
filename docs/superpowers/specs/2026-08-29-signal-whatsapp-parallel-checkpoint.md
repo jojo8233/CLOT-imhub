@@ -633,3 +633,16 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   连接 `imhub_test`，未读取 `.env`。从官方 Signal Desktop 8.25.0 与 a40 不透明配置生成
   `/private/tmp/Signal-imhub-integrated-a41.app` 并通过 deep/strict codesign；a41 尚未启动，真实门槛
   仍是先确认单份草稿，再最多发送一条并取得 guest 最终 DOM id。PR #19 与 Issue #12 状态未变。
+- a41 启动后，重新点击一次翻译仍未能替换跨重启保留的双份草稿；TranslationDock 继续明确失败且
+  发送按钮禁用，因此真实发送数仍为 0。该结果证明移除额外 `InputEvent` 只修掉首次双重注入，普通
+  DOM Range 全选仍不是 WhatsApp 当前受控编辑器认可的非空草稿替换事务，故没有把 a41 记为通过。
+- 经用户打开同一会话后，以只绑定 `127.0.0.1` 的临时调试端口检查非敏感结构，确认当前 composer
+  是单段落的 `data-lexical-editor=true` contenteditable；检查只返回节点类型、字符长度与布尔结果，
+  没有读取或输出草稿、聊天正文、账号标识或消息键。运行时实验先核对选区锚点和焦点均在 composer
+  内、选区规范长度等于当前草稿，再用编辑器聚焦后的 `document.execCommand('selectAll')` 和一次
+  `insertText`，成功把双份遗留草稿替换为单份非敏感占位草稿，全程没有查询或点击发送按钮。
+- 生产写入现改用同一事务，并把“原生全选成功、选区两端属于 composer、规范选区正文等于写入前
+  可见草稿”设为插入前门禁；任一不满足都拒绝写入。新增测试覆盖全选不可信时 `insertText` 调用为
+  0。验证通过 `pnpm typecheck`、66 个测试文件 539 passed / 1 todo 与 desktop production build。
+  从官方 Signal Desktop 8.25.0 与 a41 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a42.app`，
+  deep/strict codesign 通过且尚未启动；真实消息发送数仍为 0。

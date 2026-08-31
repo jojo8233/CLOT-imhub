@@ -2,7 +2,7 @@ import { normalizeWhatsAppDomText } from './whatsapp-web-utils.js'
 
 export interface WhatsAppComposerWritePort {
   focus(): void
-  selectContents(): void
+  selectContents(): boolean
   insertText(text: string): boolean
   readText(): string
 }
@@ -18,7 +18,7 @@ export function replaceWhatsAppComposerText(
   text: string,
 ): boolean {
   port.focus()
-  port.selectContents()
+  if (!port.selectContents()) return false
   const inserted = port.insertText(text)
   return inserted || port.readText() === normalizeWhatsAppDomText(text)
 }

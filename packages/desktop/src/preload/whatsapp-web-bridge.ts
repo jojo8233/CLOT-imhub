@@ -937,11 +937,17 @@ function setComposerText(input: HTMLElement, text: string): boolean {
     return replaceWhatsAppComposerText({
       focus: () => { input.focus() },
       selectContents: () => {
+        const before = composerText(input)
+        const selected = document.execCommand('selectAll', false)
         const selection = window.getSelection()
-        const range = document.createRange()
-        range.selectNodeContents(input)
-        selection?.removeAllRanges()
-        selection?.addRange(range)
+        const anchorInside = Boolean(selection?.anchorNode
+          && (selection.anchorNode === input || input.contains(selection.anchorNode)))
+        const focusInside = Boolean(selection?.focusNode
+          && (selection.focusNode === input || input.contains(selection.focusNode)))
+        return selected
+          && anchorInside
+          && focusInside
+          && normalizeWhatsAppDomText(selection?.toString() ?? '') === before
       },
       insertText: value => document.execCommand('insertText', false, value),
       readText: () => composerText(input),

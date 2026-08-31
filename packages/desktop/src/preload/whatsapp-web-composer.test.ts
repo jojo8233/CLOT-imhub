@@ -11,7 +11,10 @@ describe('WhatsApp Web composer writer', () => {
 
     expect(replaceWhatsAppComposerText({
       focus: vi.fn(),
-      selectContents: vi.fn(() => { visibleDraft = '' }),
+      selectContents: vi.fn(() => {
+        visibleDraft = ''
+        return true
+      }),
       insertText,
       readText: () => visibleDraft,
     }, 'translated text')).toBe(true)
@@ -26,12 +29,25 @@ describe('WhatsApp Web composer writer', () => {
 
     expect(replaceWhatsAppComposerText({
       focus: vi.fn(),
-      selectContents: vi.fn(),
+      selectContents: vi.fn(() => true),
       insertText: vi.fn((text: string) => {
         visibleDraft = `  ${text}\u00a0 `
         return false
       }),
       readText: () => visibleDraft.replace(/\u00a0/g, ' ').trim(),
     }, 'translated text')).toBe(true)
+  })
+
+  it('原生编辑器没有确认全选时拒绝插入正文', () => {
+    const insertText = vi.fn(() => true)
+
+    expect(replaceWhatsAppComposerText({
+      focus: vi.fn(),
+      selectContents: vi.fn(() => false),
+      insertText,
+      readText: () => 'existing draft',
+    }, 'translated text')).toBe(false)
+
+    expect(insertText).not.toHaveBeenCalled()
   })
 })
