@@ -21,6 +21,7 @@ import {
   normalizeWhatsAppStorageIdentity,
   sha256Text,
   whatsappChatJidFromDataId,
+  whatsappMessageDirectionFromDataId,
 } from './whatsapp-web-utils.js'
 
 interface WhatsAppBridgeApi {
@@ -43,16 +44,21 @@ interface QueuedTranslation {
 
 const IDENTITY_KEYS = ['last-wid-md', 'last-wid', 'WALid'] as const
 const MESSAGE_ROW_SELECTORS = [
+  '#app [data-testid="drawer-left"] div[role="row"] div[data-id][data-testid^="conv-msg-"]',
+  '#app div[data-id][data-testid^="conv-msg-"]',
+  '#app div[data-id] .message-in',
+  '#app div[data-id] .message-out',
   '#main [data-testid^="conv-msg-"]',
   '#main div[role="row"]',
   '#main .message-in',
   '#main .message-out',
 ] as const
 const MESSAGE_TEXT_SELECTORS = [
-  '[data-testid="selectable-text"]',
-  '.selectable-text.copyable-text',
-  '[data-pre-plain-text] .selectable-text',
-  'span.selectable-text',
+  'span.copyable-text[data-testid*="selectable-text"]:not([data-pre-plain-text]):not(.quoted-mention)',
+  'span.copyable-text:not([data-pre-plain-text]):not(.quoted-mention)',
+  '.selectable-text:not([data-pre-plain-text]):not(.quoted-mention)',
+  'span.copyable-text span[data-testid*="selectable-text"]:not([data-pre-plain-text]):not(.quoted-mention)',
+  '.copyable-text:not(.quoted-mention)',
 ] as const
 const COMPOSER_SELECTORS = [
   '#main footer [data-testid="conversation-compose-box-input"][contenteditable="true"]',
@@ -92,6 +98,11 @@ class WhatsAppWebController {
   private translationGeneration = 0
   private selectorFailureTicks = 0
   private selectorFailureReported = false
+  private bridgePhaseFailureTicks = 0
+  private bridgePhaseFailureReported = false
+  private translationVisibilityTicks = 0
+  private translationVisibilityReported = false
+  private translationVisibilityTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly api: WhatsAppBridgeApi) {}
 
@@ -212,8 +223,24 @@ class WhatsAppWebController {
   }
 
   private scanMessages(): void {
-    if (!this.identity || !this.proxyReady) return
-    const rows = messageRows().slice(-300)
+    const main = document.querySelector<HTMLElement>('#main')
+    const stalledPhase = !this.identity ? 'identity' : !this.proxyReady ? 'proxyReady' : !main ? 'main' : null
+    if (stalledPhase) {
+      this.bridgePhaseFailureTicks += 1
+      if (this.bridgePhaseFailureTicks >= 20 && !this.bridgePhaseFailureReported) {
+        this.bridgePhaseFailureReported = true
+        this.api.emit({
+          protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+          type: 'bridge.error',
+          code: 'whatsapp_bridge_phase_stalled',
+          message: `WhatsApp 双语桥接停在 ${stalledPhase} 阶段`,
+        })
+      }
+      return
+    }
+    this.bridgePhaseFailureTicks = 0
+    this.bridgePhaseFailureReported = false
+    const rows = currentMessageRows().slice(-300)
     this.updateSelectorHealth(rows)
     for (const row of rows) {
       const text = messageText(row)
@@ -227,17 +254,62 @@ class WhatsAppWebController {
       this.translationQueue.push({ row, text, generation: this.translationGeneration })
     }
     this.drainTranslationQueue()
+    this.scheduleTranslationVisibilityCheck()
+  }
+
+  private scheduleTranslationVisibilityCheck(): void {
+    if (this.translationVisibilityTimer) return
+    this.translationVisibilityTimer = setTimeout(() => {
+      this.translationVisibilityTimer = null
+      this.updateTranslationVisibility()
+    }, 400)
+  }
+
+  private updateTranslationVisibility(): void {
+    const rows = currentMessageRows().slice(-300)
+    const readable = rows.filter(row => Boolean(messageText(row)))
+    if (readable.length === 0) {
+      this.translationVisibilityTicks = 0
+      return
+    }
+    const markers = readable.flatMap(row => [translationMarker(row, false)]).filter(isHTMLElement)
+    const connected = markers.filter(marker => marker.isConnected)
+    const visible = connected.filter(marker => markerVisibleInViewport(marker))
+    const loading = connected.filter(marker => marker.textContent === '翻译中…').length
+    const failed = connected.filter(marker => marker.hasAttribute('data-imhub-translation-error')).length
+    const stats = {
+      rows: rows.length,
+      readable: readable.length,
+      markers: markers.length,
+      connected: connected.length,
+      visible: visible.length,
+      loading,
+      failed,
+      translated: Math.max(0, connected.length - loading - failed),
+      queued: this.translationQueue.length,
+      active: this.activeTranslations,
+    }
+    if (visible.length > 0) {
+      this.translationVisibilityTicks = 0
+      this.translationVisibilityReported = false
+      return
+    }
+    this.translationVisibilityTicks += 1
+    if (this.translationVisibilityTicks < 8 || this.translationVisibilityReported) return
+    this.translationVisibilityReported = true
+    this.api.emit({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'bridge.error',
+      code: 'whatsapp_translation_marker_hidden',
+      message: `WhatsApp 译文节点未进入可见布局；安全诊断：${JSON.stringify(stats)}`,
+    })
   }
 
   private updateSelectorHealth(rows: HTMLElement[]): void {
     const main = document.querySelector<HTMLElement>('#main')
-    const visibleTextCandidate = main
-      ? [...main.querySelectorAll<HTMLElement>('.selectable-text, .copyable-text, [data-pre-plain-text]')]
-          .some(element => !element.matches('[contenteditable="true"]')
-            && Boolean(normalizeWhatsAppDomText(element.textContent ?? '')))
-      : false
+      ?? document.querySelector<HTMLElement>('#app')
     const hasReadableMessage = rows.some(row => Boolean(messageText(row)))
-    if (!visibleTextCandidate || hasReadableMessage) {
+    if (!main || hasReadableMessage) {
       this.selectorFailureTicks = 0
       if (this.selectorFailureReported) {
         this.selectorFailureReported = false
@@ -256,7 +328,7 @@ class WhatsAppWebController {
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'bridge.error',
       code: 'whatsapp_dom_selector_unavailable',
-      message: 'WhatsApp 页面结构已变化，双语气泡暂不可用',
+      message: `WhatsApp 页面结构已变化，双语气泡暂不可用；安全诊断：${whatsappDomDiagnostic(main, rows).slice(0, 1_500)}`,
     })
   }
 
@@ -435,8 +507,7 @@ class WhatsAppWebController {
       this.emitCommandFailure(command, 'whatsapp_send_unavailable', 'WhatsApp 发送按钮不可用')
       return
     }
-    const beforeIds = new Set(messageRows()
-      .filter(row => messageDirection(row) === 'out')
+    const beforeIds = new Set(currentMessageRows()
       .map(messageDataId)
       .filter((value): value is string => value !== null))
     const attempt: WhatsAppSendAttemptRecord = {
@@ -611,17 +682,111 @@ function sameContext(left: NativeConversationContext | null, right: NativeConver
 
 function messageRows(root: ParentNode = document): HTMLElement[] {
   const seen = new Set<HTMLElement>()
+  const seenIds = new Set<string>()
   const rows: HTMLElement[] = []
   for (const selector of MESSAGE_ROW_SELECTORS) {
-    const scopedSelector = root === document ? selector : selector.replace(/^#main /, '')
+    const scopedSelector = root === document
+      ? selector
+      : selector.replace(/^#(?:main|app) /, '')
     for (const candidate of root.querySelectorAll<HTMLElement>(scopedSelector)) {
-      const row = candidate.closest<HTMLElement>('.message-in, .message-out') ?? candidate
-      if (seen.has(row) || !messageDirection(row)) continue
+      const row = candidate.closest<HTMLElement>('.message-in, .message-out')
+        ?? (candidate.matches('[data-id][data-testid^="conv-msg-"]')
+          ? candidate
+          : candidate.querySelector<HTMLElement>('[data-id][data-testid^="conv-msg-"]') ?? candidate)
+      const dataId = messageDataId(row)
+      if (seen.has(row) || (dataId !== null && seenIds.has(dataId))) continue
+      if (!canonicalMessageRow(row) && !messageDirection(row)) continue
       seen.add(row)
+      if (dataId !== null) seenIds.add(dataId)
       rows.push(row)
     }
   }
   return rows
+}
+
+function canonicalMessageRow(row: HTMLElement): boolean {
+  if (!messageDataId(row)) return false
+  return row.matches('[data-testid^="conv-msg-"]')
+    || row.closest('[data-testid^="conv-msg-"]') !== null
+    || row.querySelector('[data-testid^="conv-msg-"]') !== null
+}
+
+function currentMessageRows(): HTMLElement[] {
+  const main = document.querySelector<HTMLElement>('#main')
+  return main ? messageRows(main) : []
+}
+
+function whatsappTextLeafCandidates(root: HTMLElement): HTMLElement[] {
+  const candidates = new Set<HTMLElement>()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement
+    if (!parent
+      || parent.closest('header, footer, [contenteditable="true"], [data-imhub-whatsapp-translation]')) continue
+    const length = normalizeWhatsAppDomText(node.nodeValue ?? '').length
+    if (length > 0 && length <= 4_000) candidates.add(parent)
+  }
+  return [...candidates]
+}
+
+function whatsappDomDiagnostic(root: HTMLElement | null, rows: HTMLElement[]): string {
+  if (!root) return JSON.stringify({ root: false })
+  const count = (selector: string): number => root.querySelectorAll(selector).length
+  const structures = new Map<string, number>()
+  for (const element of whatsappTextLeafCandidates(root)) {
+    const structure = whatsappElementStructure(element, root)
+    structures.set(structure, (structures.get(structure) ?? 0) + 1)
+  }
+  return JSON.stringify({
+    root: root.id === 'main' ? 'main' : 'app',
+    rows: rows.length,
+    dataId: count('[data-id]'),
+    roleRow: count('[role="row"]'),
+    messageDirection: count('.message-in, .message-out'),
+    conversationMessage: count('[data-testid^="conv-msg-"]'),
+    dataPrePlain: count('[data-pre-plain-text]'),
+    copyableText: count('.copyable-text'),
+    selectableText: count('.selectable-text'),
+    selectableTestId: count('[data-testid*="selectable-text"]'),
+    dirAuto: count('[dir="auto"]'),
+    dirLtr: count('[dir="ltr"]'),
+    textLeaves: whatsappTextLeafCandidates(root).length,
+    structures: [...structures.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 4),
+  })
+}
+
+function whatsappElementStructure(element: HTMLElement, root: HTMLElement): string {
+  const parts: string[] = []
+  let current: HTMLElement | null = element
+  for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+    const classes = [...current.classList].slice(0, 6).join('.')
+    const attributes = [...current.attributes]
+      .map(attribute => attribute.name)
+      .filter(name => !['class', 'style', 'title', 'aria-label', 'data-id'].includes(name))
+      .slice(0, 6)
+      .join(',')
+    parts.push(`${current.tagName.toLowerCase()}${classes ? `.${classes}` : ''}${attributes ? `[${attributes}]` : ''}`)
+    if (current === root) break
+  }
+  return parts.join('>')
+}
+
+function isHTMLElement(value: HTMLElement | null): value is HTMLElement {
+  return value !== null
+}
+
+function markerVisibleInViewport(marker: HTMLElement): boolean {
+  const style = getComputedStyle(marker)
+  if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+  const rect = marker.getBoundingClientRect()
+  return rect.width > 0
+    && rect.height > 0
+    && rect.bottom > 0
+    && rect.right > 0
+    && rect.top < window.innerHeight
+    && rect.left < window.innerWidth
 }
 
 function messageDirection(row: HTMLElement): 'in' | 'out' | null {
@@ -630,7 +795,26 @@ function messageDirection(row: HTMLElement): 'in' | 'out' | null {
   const className = row.className
   if (typeof className === 'string' && /(^|\s)message-in(\s|$)/.test(className)) return 'in'
   if (typeof className === 'string' && /(^|\s)message-out(\s|$)/.test(className)) return 'out'
-  return null
+  if (row.querySelector('[data-icon="tail-in"], [data-testid*="tail-in"]')) return 'in'
+  if (row.querySelector('[data-icon="tail-out"], [data-testid*="tail-out"]')) return 'out'
+  const fromDataId = whatsappMessageDirectionFromDataId(messageDataId(row))
+  if (fromDataId) return fromDataId
+  if (row.querySelector([
+    '[data-icon="msg-check"]',
+    '[data-icon="msg-dblcheck"]',
+    '[data-icon="msg-time"]',
+    '[data-icon="msg-error"]',
+    '[data-testid="msg-check"]',
+    '[data-testid="msg-dblcheck"]',
+  ].join(', '))) return 'out'
+  if (!canonicalMessageRow(row)) return null
+  const anchor = messageTextElement(row) ?? row
+  const rect = anchor.getBoundingClientRect()
+  const mainRect = document.querySelector<HTMLElement>('#main')?.getBoundingClientRect()
+  const frameLeft = mainRect && mainRect.width > 0 ? mainRect.left : 0
+  const frameWidth = mainRect && mainRect.width > 0 ? mainRect.width : window.innerWidth
+  if (rect.width <= 0 || frameWidth <= 0) return null
+  return rect.left + rect.width / 2 < frameLeft + frameWidth / 2 ? 'in' : 'out'
 }
 
 function messageTextElement(row: HTMLElement): HTMLElement | null {
@@ -658,8 +842,6 @@ function translationMarker(row: HTMLElement, create: boolean): HTMLElement | nul
   if (existing || !create) return existing
   const text = messageTextElement(row)
   if (!text) return null
-  const mount = text.closest<HTMLElement>('[data-pre-plain-text]') ?? text.parentElement
-  if (!mount) return null
   const marker = document.createElement('div')
   marker.setAttribute(TRANSLATION_ATTRIBUTE, 'true')
   marker.setAttribute('role', 'note')
@@ -672,8 +854,12 @@ function translationMarker(row: HTMLElement, create: boolean): HTMLElement | nul
     'font-size:0.95em',
     'line-height:1.35',
     'opacity:0.88',
+    'display:block',
+    'width:100%',
   ].join(';')
-  mount.append(marker)
+  // 当前 WhatsApp 父层会裁切额外子项；TranGPT 也把翻译 root 直接挂在正文元素内。
+  // messageText() 会在读取原文时移除该 marker 的 clone，避免把译文再次送去翻译。
+  text.append(marker)
   return marker
 }
 
@@ -737,7 +923,7 @@ async function waitForOutgoingMessage(
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     if (!contextStillCurrent()) return null
-    for (const row of messageRows().reverse()) {
+    for (const row of currentMessageRows().reverse()) {
       if (messageDirection(row) !== 'out' || messageText(row) !== expected) continue
       const raw = messageDataId(row)
       if (raw && !beforeIds.has(raw)) return `wa-dom:${raw}`

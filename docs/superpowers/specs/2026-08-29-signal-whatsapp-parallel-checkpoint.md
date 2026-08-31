@@ -521,3 +521,25 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   准备脚本从官方 Signal Desktop 8.25.0 和 a30 不透明配置生成
   `/private/tmp/Signal-imhub-integrated-a31.app`，deep/strict codesign 通过；a31 仅生成未启动，没有
   重启 Telegram 或服务端，也没有触发真实 WhatsApp/Signal 消息。
+- a31 首次真实登录后 control grant 成功，但当前会话既有中文气泡没有译文，故没有把“账号已登录”
+  误记为“双语显示通过”。复核已解包 TranGPT 3.1.171 的实际 WhatsApp 兼容代码后，确认首版缺少
+  `#app div[data-id]` 行 fallback 和独立 `.copyable-text` 文本 fallback；这些锚点已补入，同时继续
+  排除引用 mention、限制最近 300 条且不记录正文。a32 仍没有显示译文；a33 的页内安全诊断也没有
+  报 selector unavailable，证明消息行与正文已解析，失败边界进一步缩小到 marker 挂载。首版把
+  marker 放在正文父层，当前页面会裁切该额外子项；现改为与 TranGPT 相同，直接挂入正文元素并在
+  原文读取 clone 中排除 marker。该修正仍需新测试包做只读历史气泡续验。
+- a38 的临时安全探针确认当前 `#main` 中存在 3 个同时带实际 `data-id` 与 `conv-msg-*` test id 的
+  消息容器，文字锚点也能命中，但旧版 `.message-in/.message-out` 方向 class 数量为 0；此前扫描把
+  “可识别消息”错误绑定到“可识别方向”，因此在翻译前丢弃了全部消息。现已把规范消息容器识别与
+  方向判断解耦：双语扫描接受 WhatsApp 自身的规范容器；只有最终发送确认继续按方向尾标、送达状态、
+  DOM id 的 from-me 前缀与最后的气泡布局 fallback 判断出站。发送前快照改为记录当前会话全部既有
+  DOM id，避免方向 fallback 遗漏旧出站。橙色临时探针已经删除，正式的阶段、选择器与 marker 可见性
+  错误仍保留且只包含计数，不含正文、账号标识或具体消息键。
+- 修正通过 `pnpm typecheck`、定向 4/4、全量 63 个测试文件 520 passed / 1 todo，以及 desktop
+  production build；首次沙箱内全量测试只有本机 PostgreSQL 连接被 `EPERM` 阻止，按规则连接隔离
+  `_test` 库后全量通过。准备脚本从 Signal Desktop 8.25.0 与 a38 不透明配置生成 a39，deep/strict
+  codesign 通过；尚未把只读历史气泡目视结果记为通过，也未发送新消息或重启服务端/Telegram。
+- 用户随后在 a39 目视确认同一 WhatsApp 当前会话的既有入站与出站纯文字气泡均已在原文下方显示
+  中英译文，且橙色临时诊断框已经消失。该续验只复用了页面现有消息，没有新增真实消息，也没有
+  重启服务端或 Telegram；由此关闭 WhatsApp Web 补丁模式“当前可见历史纯文字双向翻译显示”的
+  真实门槛。页面滚动增量、发送最终 DOM id 与进程重启 attempt 恢复仍按本节既定边界继续验收。

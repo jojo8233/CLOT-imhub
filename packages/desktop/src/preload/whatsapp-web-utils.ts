@@ -34,6 +34,13 @@ export function whatsappChatJidFromDataId(raw: string): string | null {
   return `${match[1]}@${match[2].toLowerCase()}`
 }
 
+export function whatsappMessageDirectionFromDataId(raw: string | null): 'in' | 'out' | null {
+  if (!raw) return null
+  if (/^true_/i.test(raw)) return 'out'
+  if (/^false_/i.test(raw)) return 'in'
+  return null
+}
+
 export function normalizeWhatsAppDomText(value: string): string {
   return value.replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').trim()
 }
