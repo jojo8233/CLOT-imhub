@@ -693,7 +693,18 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   官方 Signal Desktop 8.25.0 与 a44 不透明配置生成
   `/private/tmp/Signal-imhub-integrated-a45.app`，deep/strict codesign 通过且尚未启动；未读取或输出
   `.env`、平台 profile/session、账号标识、正文、消息键、媒体引用或密钥。
-- 下一真实步骤只在 a45 重做一次无发送草稿确认：必须同时看到单份草稿、TranslationDock 就绪且
+- a45 的无发送复验明确报告“WhatsApp 输入框未确认新草稿”，且截图确认原生框仍是旧占位草稿，
+  没有稳定为本次译文。该证据排除了 stale revision：浏览器编辑事务曾返回 inserted，但 WhatsApp
+  Lexical 随后用旧 editor state 回滚 DOM；发送按钮继续禁用，没有创建 attempt 或进入发送。
+- 与先前“webview 已长期聚焦时同一事务成功”的运行时实验对照，剩余边界是 guest DOM 刚获得焦点
+  后，Lexical 自身的 focus/selection handler 尚未完成。现由 guest 显式聚焦 composer，在确认
+  `document.hasFocus()` 与 activeElement 后仍等待一个 50ms 稳定周期，再复核焦点并执行唯一一次
+  全选/插入；稳定期丢焦或延迟 200ms 仍未获得焦点都拒绝编辑，不做重复插入。
+- 新增合成测试覆盖立即聚焦也必须等待、稳定期丢焦拒绝、延迟到达后再留一轮稳定周期。验证通过
+  `pnpm typecheck`、67 个测试文件 550 passed / 1 todo 与 desktop production build。准备脚本从
+  官方 Signal Desktop 8.25.0 与 a45 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a46.app`，deep/strict codesign 通过且尚未启动。
+- 下一真实步骤只在 a46 重做一次无发送草稿确认：必须同时看到新译文单份、TranslationDock 就绪且
   发送按钮可用。通过后才可进入最多一条无敏感纯文字发送；成功仍要求发送前不存在匹配容器、
   guest 确认正文匹配且方向为出站，并返回最终 WhatsApp DOM `data-id`。PR #19 与 Issue #12 状态
   不变。

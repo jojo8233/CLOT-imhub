@@ -1,7 +1,48 @@
 import { describe, expect, it, vi } from 'vitest'
-import { replaceWhatsAppComposerText } from './whatsapp-web-composer.js'
+import {
+  replaceWhatsAppComposerText,
+  waitForWhatsAppComposerFocus,
+} from './whatsapp-web-composer.js'
 
 describe('WhatsApp Web composer writer', () => {
+  it('即使 DOM 已聚焦也先等待 Lexical 完成一轮焦点处理', async () => {
+    const order: string[] = []
+
+    await expect(waitForWhatsAppComposerFocus({
+      focus: () => { order.push('focus') },
+      hasFocus: () => {
+        order.push('has-focus')
+        return true
+      },
+    }, async () => { order.push('settle') })).resolves.toBe(true)
+
+    expect(order).toEqual(['focus', 'has-focus', 'settle', 'has-focus'])
+  })
+
+  it('焦点在稳定周期内丢失时拒绝后续编辑', async () => {
+    let focused = true
+
+    await expect(waitForWhatsAppComposerFocus({
+      focus: vi.fn(),
+      hasFocus: () => focused,
+    }, async () => { focused = false })).resolves.toBe(false)
+  })
+
+  it('等待延迟到达的 guest 焦点后再留一轮稳定周期', async () => {
+    let checks = 0
+    const pause = vi.fn(async () => {})
+
+    await expect(waitForWhatsAppComposerFocus({
+      focus: vi.fn(),
+      hasFocus: () => {
+        checks += 1
+        return checks >= 2
+      },
+    }, pause)).resolves.toBe(true)
+
+    expect(pause).toHaveBeenCalledTimes(2)
+  })
+
   it('只执行一次正文插入，让浏览器产生唯一一组原生编辑事件', () => {
     let visibleDraft = '旧草稿'
     const insertText = vi.fn((text: string) => {

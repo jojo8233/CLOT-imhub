@@ -33,7 +33,10 @@ import {
   WhatsAppSendAttemptGuard,
 } from './whatsapp-web-send.js'
 import { WhatsAppDomFailureGate } from './whatsapp-web-health.js'
-import { replaceWhatsAppComposerText } from './whatsapp-web-composer.js'
+import {
+  replaceWhatsAppComposerText,
+  waitForWhatsAppComposerFocus,
+} from './whatsapp-web-composer.js'
 
 interface WhatsAppBridgeApi {
   emit(event: NativeGuestEvent): void
@@ -452,7 +455,15 @@ class WhatsAppWebController {
     }
     if (command.type === 'composer.set-draft') {
       const input = composerInput()
-      if (!input || !setComposerText(input, command.text)) {
+      const focused = input ? await waitForWhatsAppComposerFocus({
+        focus: () => { input.focus() },
+        hasFocus: () => document.hasFocus() && document.activeElement === input,
+      }) : false
+      if (!this.commandMatchesContext(command)) {
+        this.emitCommandFailure(command, 'stale_context', 'WhatsApp 当前会话已经变化')
+        return
+      }
+      if (!input || !focused || !setComposerText(input, command.text)) {
         this.emitCommandFailure(command, 'whatsapp_draft_write_failed', '无法写入 WhatsApp 输入框')
         return
       }

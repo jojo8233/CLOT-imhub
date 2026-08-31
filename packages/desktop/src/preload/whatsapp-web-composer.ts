@@ -7,6 +7,34 @@ export interface WhatsAppComposerWritePort {
   readText(): string
 }
 
+export interface WhatsAppComposerFocusPort {
+  focus(): void
+  hasFocus(): boolean
+}
+
+/**
+ * 等 guest DOM 与 Lexical 自身的 focus 处理完成后再开始唯一一次编辑事务。
+ *
+ * webContents 获得原生焦点时，`document.hasFocus()` 可以先变为 true；Lexical 的
+ * focus handler 随后一轮才接管 selection。此时立即 insertText 会短暂改 DOM，随后
+ * 被旧 editor state 回滚。
+ */
+export async function waitForWhatsAppComposerFocus(
+  port: WhatsAppComposerFocusPort,
+  pause: () => Promise<void> = () => new Promise(resolve => setTimeout(resolve, 50)),
+  attempts = 4,
+): Promise<boolean> {
+  port.focus()
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (port.hasFocus()) {
+      await pause()
+      return port.hasFocus()
+    }
+    await pause()
+  }
+  return false
+}
+
 /**
  * 通过一次浏览器编辑事务替换 WhatsApp 草稿。
  *
