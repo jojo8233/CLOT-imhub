@@ -31,6 +31,7 @@ import {
   whatsappSendPreflightStillValid,
   WhatsAppSendAttemptGuard,
 } from './whatsapp-web-send.js'
+import { WhatsAppDomFailureGate } from './whatsapp-web-health.js'
 
 interface WhatsAppBridgeApi {
   emit(event: NativeGuestEvent): void
@@ -104,10 +105,8 @@ class WhatsAppWebController {
   private readonly translationCache = new Map<string, Promise<string>>()
   private activeTranslations = 0
   private translationGeneration = 0
-  private selectorFailureTicks = 0
-  private selectorFailureReported = false
-  private bridgePhaseFailureTicks = 0
-  private bridgePhaseFailureReported = false
+  private readonly selectorFailureGate = new WhatsAppDomFailureGate(6_000)
+  private readonly bridgePhaseFailureGate = new WhatsAppDomFailureGate(15_000)
   private translationVisibilityTicks = 0
   private translationVisibilityReported = false
   private translationVisibilityTimer: ReturnType<typeof setTimeout> | null = null
@@ -235,9 +234,7 @@ class WhatsAppWebController {
     const main = document.querySelector<HTMLElement>('#main')
     const stalledPhase = !this.identity ? 'identity' : !this.proxyReady ? 'proxyReady' : !main ? 'main' : null
     if (stalledPhase) {
-      this.bridgePhaseFailureTicks += 1
-      if (this.bridgePhaseFailureTicks >= 20 && !this.bridgePhaseFailureReported) {
-        this.bridgePhaseFailureReported = true
+      if (this.bridgePhaseFailureGate.observeFailure(stalledPhase, Date.now())) {
         this.api.emit({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'bridge.error',
@@ -247,8 +244,7 @@ class WhatsAppWebController {
       }
       return
     }
-    this.bridgePhaseFailureTicks = 0
-    this.bridgePhaseFailureReported = false
+    this.bridgePhaseFailureGate.observeHealthy()
     const rows = currentMessageRows().slice(-300)
     this.updateSelectorHealth(rows)
     for (const row of rows) {
@@ -319,9 +315,7 @@ class WhatsAppWebController {
       ?? document.querySelector<HTMLElement>('#app')
     const hasReadableMessage = rows.some(row => Boolean(messageText(row)))
     if (!main || hasReadableMessage) {
-      this.selectorFailureTicks = 0
-      if (this.selectorFailureReported) {
-        this.selectorFailureReported = false
+      if (this.selectorFailureGate.observeHealthy()) {
         this.api.emit({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'bridge.ready',
@@ -330,9 +324,7 @@ class WhatsAppWebController {
       }
       return
     }
-    this.selectorFailureTicks += 1
-    if (this.selectorFailureTicks < 8 || this.selectorFailureReported) return
-    this.selectorFailureReported = true
+    if (!this.selectorFailureGate.observeFailure('selector', Date.now())) return
     this.api.emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'bridge.error',

@@ -192,3 +192,8 @@ WhatsApp 的 Web 补丁路线现以当前可见气泡的 DOM 文本实现原文 
 IndexedDB 前先用进程内 attempt guard 封住并发双击，再以持久账本覆盖结果丢失和页面重启；只有
 发送前不存在、正文匹配且判定为出站的实际 DOM `data-id` 才能成为 `wa-dom:` 确认结果。该值不能
 冒充 Cloud API `wamid`，pending attempt 也不能再次点击页面发送。
+
+WhatsApp 虚拟列表滚动会短暂卸载、重建消息行，MutationObserver 又会在这期间高频触发扫描。页面
+结构诊断因此只能按真实持续时间计门槛，不能按扫描次数累计；失败原因变化要重新计时，已授权页面
+从诊断恢复时直接回到 `ready`。这样仍会明确报告持续的 selector 失配，但不会把正常虚拟滚动误报成
+长篇安全诊断。

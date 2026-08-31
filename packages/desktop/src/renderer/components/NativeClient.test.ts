@@ -6,6 +6,7 @@ import {
   nativeAccountIdsToMount,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
+  recoveredNativeBridgeConnection,
   signalDesktopAccountIdsToMount,
   signalInboundErrorIsNonfatal,
   signalOutboxStatusError,
@@ -108,6 +109,13 @@ describe('native webview load recovery', () => {
       probe({ url: 'https://web.whatsapp.com/', webContentsId: 0, loading: true }),
       'https://web.whatsapp.com/',
     )).toBe(false)
+  })
+
+  it('已授权 WhatsApp 从安全诊断恢复时直接回到 ready，不停在重新核对提示', () => {
+    expect(recoveredNativeBridgeConnection('whatsapp', true, '555000111@c.us')).toBe('ready')
+    expect(recoveredNativeBridgeConnection('whatsapp', true, null)).toBe('waiting')
+    expect(recoveredNativeBridgeConnection('whatsapp', false, '555000111@c.us')).toBe('waiting')
+    expect(recoveredNativeBridgeConnection('telegram', true, null)).toBe('ready')
   })
 })
 

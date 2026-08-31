@@ -180,6 +180,16 @@ export function nativeWebviewAtExpectedOrigin(webview: NativeWebviewLoadProbe, s
   }
 }
 
+export function recoveredNativeBridgeConnection(
+  platform: string,
+  hasUsableGrant: boolean,
+  observedIdentity: string | null,
+): 'ready' | 'waiting' {
+  return hasUsableGrant && (platform !== 'whatsapp' || observedIdentity !== null)
+    ? 'ready'
+    : 'waiting'
+}
+
 /**
  * 同一账号的 control grant 是单活版本：每次签发都会立即让上一份失效。
  * 因此 dom-ready、身份上报和 StrictMode 即使同时触发，也只能共用一次签发。
@@ -989,11 +999,10 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     const handleEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
-        useStore.getState().setNativeBridgeConnection(
-          accountId,
-          'waiting',
-          `正在核对 ${PLATFORM_LABEL[platform] ?? platform} 登录身份`,
-        )
+        const connection = recoveredNativeBridgeConnection(platform, hasUsableGrant, observedIdentity)
+        useStore.getState().setNativeBridgeConnection(accountId, connection, connection === 'waiting'
+          ? `正在核对 ${PLATFORM_LABEL[platform] ?? platform} 登录身份`
+          : null)
         return
       }
       if (event.type === 'account.identity') {

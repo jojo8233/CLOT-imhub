@@ -596,3 +596,20 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   同时拿到 guest 的正文匹配、出站方向、发送前不存在与最终 DOM id 证据；若 a40 启动会违反当前
   “不重启 Telegram”的运行约束，应先取得用户明确安排，不能自行关闭 a39。PR #19 与 Issue #12
   状态保持不变。
+
+## 22. WhatsApp Web 滚动增量与诊断稳定性 checkpoint（2026-08-31）
+
+- 用户在 a39 手动向上滚动既有消息后确认，新进入 DOM 的既有入站与出站纯文字均出现译文；没有
+  新增真实消息，也没有回传正文、账号标识或 DOM id。由此证明 MutationObserver 增量补译功能本身
+  生效。但页面底部曾短暂闪现一段包含很多文字的诊断，因此当时没有直接进入真实发送。
+- 代码复核确认选择器健康度原按扫描次数累计。正常滚动时 WhatsApp 虚拟列表会短暂卸载旧行并装载
+  新行，MutationObserver 的高频回调能把原意约 6 秒的 8 次门槛压缩到不足 1 秒，随后新行解析成功又
+  发 `bridge.ready`，表现正是长诊断闪现后恢复。现改为按墙钟持续时间计门槛：selector 失配须连续
+  6 秒、bridge 阶段停滞须连续 15 秒，失败原因变化会重新计时；任意数量的短时扫描抖动都不能加速。
+- host 同时修正恢复状态：已有可用 control grant 且 WhatsApp 页面身份仍存在时，恢复事件直接清除
+  旧错误并回到 `ready`；首次启动、未授权或身份缺失仍保持 `waiting`，不会把恢复误当成首次登录。
+  合成测试覆盖 200 次高频扫描、失败原因切换、已报告/未报告恢复及 host ready/waiting 分支。
+- 验证通过 `pnpm typecheck`、65 个测试文件 536 passed / 1 todo 与 desktop production build；全量
+  数据库测试仍只连接 `imhub_test`，未读取 `.env`。已从 a39 不透明配置重新生成包含本修正的 a40，
+  deep/strict codesign 通过且尚未启动。a39 不能用于证明该诊断修正或发送并发门禁；真实发送数仍为
+  0，PR #19 与 Issue #12 状态未变。
