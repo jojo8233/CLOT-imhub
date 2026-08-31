@@ -613,3 +613,23 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   数据库测试仍只连接 `imhub_test`，未读取 `.env`。已从 a39 不透明配置重新生成包含本修正的 a40，
   deep/strict codesign 通过且尚未启动。a39 不能用于证明该诊断修正或发送并发门禁；真实发送数仍为
   0，PR #19 与 Issue #12 状态未变。
+
+## 23. WhatsApp Web 草稿单次写入修正 checkpoint（2026-08-31）
+
+- 用户明确允许平滑重启隔离测试客户端后，a39 已退出并启动 a40；服务端与 Telegram 服务端适配器
+  没有重启。用户在 a40 再次用既有消息向上滚动，确认新进入 DOM 的入站、出站纯文字均显示译文，
+  且底部不再出现错误诊断。因此第 22 节的增量翻译与诊断防抖修正已完成真实续验，全程没有新增
+  平台消息。
+- 唯一真实发送流程第一次点击“翻译”时，WhatsApp 原生输入框出现同一译文连续两遍，TranslationDock
+  报“输入框未确认新草稿”并保持发送按钮禁用。该失败发生在 `composer.set-draft`，尚未创建发送
+  `attemptId`、未进入 `composer.send`、未点击页面发送按钮，故真实发送数仍为 0；不能把它记为发送
+  失败或消耗一次真实发送额度。
+- 根因是草稿写入先调用 `document.execCommand('insertText')`，浏览器已经为 WhatsApp 编辑器产生原生
+  input 事件，随后 guest 又人为派发一份携带完整正文的 `InputEvent`。当前页面编辑器吸收了两份正文，
+  等值确认因而正确拒绝。现把替换动作收敛为一次浏览器编辑事务：聚焦、全选、一次 `insertText`，
+  不再二次派发正文事件；旧草稿仍会在同一次事务中被整段替换。
+- 新增纯逻辑回归覆盖“正文只插入一次”和浏览器没有返回 inserted 标记时按可见草稿确认。验证通过
+  `pnpm typecheck`、66 个测试文件 538 passed / 1 todo、desktop production build；数据库测试仍只
+  连接 `imhub_test`，未读取 `.env`。从官方 Signal Desktop 8.25.0 与 a40 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a41.app` 并通过 deep/strict codesign；a41 尚未启动，真实门槛
+  仍是先确认单份草稿，再最多发送一条并取得 guest 最终 DOM id。PR #19 与 Issue #12 状态未变。

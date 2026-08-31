@@ -32,6 +32,7 @@ import {
   WhatsAppSendAttemptGuard,
 } from './whatsapp-web-send.js'
 import { WhatsAppDomFailureGate } from './whatsapp-web-health.js'
+import { replaceWhatsAppComposerText } from './whatsapp-web-composer.js'
 
 interface WhatsAppBridgeApi {
   emit(event: NativeGuestEvent): void
@@ -933,20 +934,18 @@ function composerText(input: HTMLElement): string {
 
 function setComposerText(input: HTMLElement, text: string): boolean {
   try {
-    input.focus()
-    const selection = window.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(input)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    const inserted = document.execCommand('insertText', false, text)
-    input.dispatchEvent(new InputEvent('input', {
-      bubbles: true,
-      composed: true,
-      inputType: 'insertText',
-      data: text,
-    }))
-    return inserted || composerText(input) === normalizeWhatsAppDomText(text)
+    return replaceWhatsAppComposerText({
+      focus: () => { input.focus() },
+      selectContents: () => {
+        const selection = window.getSelection()
+        const range = document.createRange()
+        range.selectNodeContents(input)
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+      },
+      insertText: value => document.execCommand('insertText', false, value),
+      readText: () => composerText(input),
+    }, text)
   } catch {
     return false
   }
