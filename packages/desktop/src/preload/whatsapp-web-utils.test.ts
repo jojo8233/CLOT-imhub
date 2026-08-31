@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  isChineseLanguage,
   normalizeWhatsAppDomText,
   normalizeWhatsAppStorageIdentity,
   sameWhatsAppConversation,
@@ -30,11 +29,8 @@ describe('WhatsApp Web patch helpers', () => {
     expect(whatsappMessageDirectionFromDataId(null)).toBeNull()
   })
 
-  it('规范页面文本并按 provider 语言结果选择中英目标', () => {
+  it('规范页面文本', () => {
     expect(normalizeWhatsAppDomText('  hello\u00a0world\r\n')).toBe('hello world')
-    expect(isChineseLanguage('zh')).toBe(true)
-    expect(isChineseLanguage('zh-CN')).toBe(true)
-    expect(isChineseLanguage('ja')).toBe(false)
   })
 
   it('显示名变化不等于切换 WhatsApp 会话', () => {

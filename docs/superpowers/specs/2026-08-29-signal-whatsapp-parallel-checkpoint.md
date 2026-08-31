@@ -735,3 +735,25 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - 下一真实步骤只在 a48 重做一次无发送草稿确认：必须同时看到新译文单份、TranslationDock 就绪且
   发送按钮可用。通过后才可进入最多一条无敏感纯文字发送；成功仍要求发送前不存在匹配容器、guest
   确认正文匹配且方向为出站，并返回最终 WhatsApp DOM `data-id`。PR #19 与 Issue #12 状态不变。
+
+## 25. 原生客户端通用翻译编排 checkpoint（2026-09-01）
+
+- a48 的无发送草稿续验已通过：用户确认原生输入框只有一份新译文、状态为已写入且发送按钮可用。
+  随后唯一次 TranslationDock 发送尝试明确失败为“WhatsApp 发送按钮不可用”，原生草稿未清空。
+  guest 在发送按钮选择器检查处返回，尚未记录发送前 DOM id、写入 pending attempt 或点击页面按钮；
+  因此真实发送数仍为 0，最终 WhatsApp DOM id 门槛未通过。
+- 用户随后把优先级调整为：以已真实验证的 Telegram 翻译链路为行为基线，封装项目通用翻译组件。
+  这不是复制 Teact 气泡：Telegram 保留上游批处理、pending 状态和原生渲染，Signal 保留中央译文同步，
+  WhatsApp 保留 DOM 队列与 marker。三者的草稿、会话和消息 ID 仍是平台专用，没有套用 Telegram ID 算法。
+- 新增 `packages/shared/src/translation.ts` 作为跨端策略层：先规范 provider 语言代码，`und`/空值作未知；
+  provider 检测为中文时译英文，其他语言译中文，不按汉字字符猜测。服务端既有
+  `incomingTranslationTarget` 改为该函数的兼容别名，避免 Signal/服务端与页内补丁的目标策略漂移。
+- 新增 `packages/desktop/src/preload/native-translation-coordinator.ts` 作为无界面编排器：只依赖既有
+  `detectLanguage` / `translateBatch` 窄代理，统一检测结果规范、单条批量请求、未知语言的一次目标纠偏、
+  同文并发去重、500 条有界缓存与失败清理。WhatsApp 气泡翻译已删除私有重复实现并改调该组件；
+  可注入目标语言 resolver，因此 Telegram 仍可保留已验证的固定中文目标。
+- 验证通过聚焦 4 个文件 17 项、`pnpm typecheck`、全量 69 个测试文件
+  559 passed / 1 todo，以及 desktop production build。全量数据库测试只连接隔离 `imhub_test`，
+  没有加载 `.env`。本次未改 Telegram fork 源码、未重启服务端或 Telegram、未产生新真实消息，
+  从 a48 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a49.app` 并通过 deep/strict codesign；
+  a49 未启动，也没有替换当前 a48 运行态。PR #19 与 Issue #12 状态保持不变。

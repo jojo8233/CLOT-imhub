@@ -56,10 +56,6 @@ export function sameWhatsAppConversation(
     && left.platformConversationId === right.platformConversationId
 }
 
-export function isChineseLanguage(value: string | undefined): boolean {
-  return value?.toLowerCase() === 'zh' || value?.toLowerCase().startsWith('zh-') === true
-}
-
 export async function sha256Text(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')

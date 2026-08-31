@@ -16,7 +16,6 @@ import {
   type WhatsAppSendAttemptRecord,
 } from './whatsapp-web-attempt-ledger.js'
 import {
-  isChineseLanguage,
   normalizeWhatsAppDomText,
   normalizeWhatsAppStorageIdentity,
   sameWhatsAppConversation,
@@ -24,6 +23,7 @@ import {
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
 } from './whatsapp-web-utils.js'
+import { NativeTranslationCoordinator } from './native-translation-coordinator.js'
 import {
   confirmedWhatsAppDomMessageId,
   resolveWhatsAppExistingAttempt,
@@ -86,7 +86,6 @@ const SEND_BUTTON_SELECTORS = [
   '#main footer [role="button"] [data-icon="send"]',
 ] as const
 const TRANSLATION_ATTRIBUTE = 'data-imhub-whatsapp-translation'
-const MAX_TRANSLATION_CACHE = 500
 const MAX_TRANSLATION_CONCURRENCY = 3
 
 export function startWhatsAppWebBridge(api: WhatsAppBridgeApi): void {
@@ -108,7 +107,7 @@ class WhatsAppWebController {
   private translatedRows = new WeakMap<HTMLElement, string>()
   private queuedRows = new WeakSet<HTMLElement>()
   private readonly translationQueue: QueuedTranslation[] = []
-  private readonly translationCache = new Map<string, Promise<string>>()
+  private readonly translationCoordinator: NativeTranslationCoordinator
   private activeTranslations = 0
   private translationGeneration = 0
   private readonly selectorFailureGate = new WhatsAppDomFailureGate(6_000)
@@ -118,7 +117,9 @@ class WhatsAppWebController {
   private translationVisibilityTimer: ReturnType<typeof setTimeout> | null = null
   private readonly sendAttemptGuard = new WhatsAppSendAttemptGuard()
 
-  constructor(private readonly api: WhatsAppBridgeApi) {}
+  constructor(private readonly api: WhatsAppBridgeApi) {
+    this.translationCoordinator = new NativeTranslationCoordinator(api)
+  }
 
   start(): void {
     this.api.onCommand(command => { void this.handleCommand(command) })
@@ -226,7 +227,7 @@ class WhatsAppWebController {
     this.translationGeneration += 1
     for (const marker of document.querySelectorAll(`[${TRANSLATION_ATTRIBUTE}]`)) marker.remove()
     this.translationQueue.length = 0
-    this.translationCache.clear()
+    this.translationCoordinator.clear()
     this.translatedRows = new WeakMap()
     this.queuedRows = new WeakSet()
   }
@@ -361,7 +362,7 @@ class WhatsAppWebController {
     const marker = translationMarker(item.row, true)
     if (!marker) return
     try {
-      const translated = await this.translateText(item.text)
+      const translated = await this.translationCoordinator.translate(item.text)
       if (item.generation !== this.translationGeneration
         || !item.row.isConnected
         || messageText(item.row) !== item.text) {
@@ -382,35 +383,6 @@ class WhatsAppWebController {
         this.scheduleScan()
       }
     }
-  }
-
-  private translateText(text: string): Promise<string> {
-    const cached = this.translationCache.get(text)
-    if (cached) return cached
-    const operation = (async (): Promise<string> => {
-      const detected = await this.api.detectLanguage(text)
-      let targetLang = isChineseLanguage(detected) ? 'en' : 'zh'
-      let result = (await this.api.translateBatch({
-        texts: [text], targetLang, ...(detected ? { sourceLang: detected } : {}),
-      }))?.[0]
-      if (!detected && result && isChineseLanguage(result.detectedLang) && targetLang === 'zh') {
-        targetLang = 'en'
-        result = (await this.api.translateBatch({
-          texts: [text], targetLang, sourceLang: result.detectedLang,
-        }))?.[0]
-      }
-      if (!result || result.failed || !result.translated.trim()) throw new Error('translation failed')
-      return result.translated
-    })().catch(error => {
-      this.translationCache.delete(text)
-      throw error
-    })
-    if (this.translationCache.size >= MAX_TRANSLATION_CACHE) {
-      const oldest = this.translationCache.keys().next().value
-      if (typeof oldest === 'string') this.translationCache.delete(oldest)
-    }
-    this.translationCache.set(text, operation)
-    return operation
   }
 
   private async handleCommand(command: NativeHostCommand): Promise<void> {
