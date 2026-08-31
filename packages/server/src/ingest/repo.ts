@@ -2,7 +2,7 @@ import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../db/types.js'
 import { recordTelegramShadowObservation } from '../shadow/telegram-repo.js'
 import type { TelegramShadowObservation } from '../shadow/telegram.js'
-import { incomingTranslationTarget } from '../translation/incoming-target.js'
+import { bilingualTranslationTarget } from '../translation/incoming-target.js'
 import {
   messageRevision,
   type InsertMessageInput,
@@ -313,7 +313,7 @@ export class KyselyMessageRepo implements MessageRepo {
       const translation = await trx.selectFrom('message_translations')
         .select('translated_text')
         .where('message_id', '=', row.id)
-        .where('target_lang', '=', incomingTranslationTarget(row.body_lang))
+        .where('target_lang', '=', bilingualTranslationTarget(row.body_lang))
         .executeTakeFirst()
       action({
         id: row.id,

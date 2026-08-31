@@ -533,6 +533,66 @@ describe('native bridge routes', () => {
     expect(invalid.statusCode).toBe(422)
   })
 
+  it('Signal 出站只接受实际账号 sender，并按规范键进入相同消息管线', async () => {
+    const signalAci = '11111111-2222-3333-aaaa-555555555555'
+    const signalAccount = await db.updateTable('accounts')
+      .set({
+        platform: 'signal', connection_mode: 'native_desktop',
+        platform_account_external_id: signalAci,
+      })
+      .where('id', '=', accountId)
+      .returning('native_control_version')
+      .executeTakeFirstOrThrow()
+    const { grant } = await signNativeControlGrant({
+      userId: agentId, accountId, platform: 'signal',
+      expectedPlatformAccountExternalId: signalAci,
+      controlVersion: signalAccount.native_control_version,
+    }, TEST_JWT_SECRET)
+    const platformMessageId = `${signalAci}:1788048000010`
+    const event = {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.upsert', eventId: `signal-outgoing:${platformMessageId}:initial`,
+      message: {
+        platformConversationId: 'u:99999999-2222-3333-aaaa-555555555555',
+        platformMessageId, direction: 'out', senderExternalId: signalAci,
+        senderDisplayName: null, conversationDisplayName: 'Alice',
+        body: 'signal outbound', mediaRefs: [], replyToPlatformMessageId: null,
+        sentAt: '2026-08-30T00:00:00.010Z', editedAt: null, editVersion: null,
+        raw: { source: 'signal-desktop' },
+      },
+    }
+    const response = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: { accountId, event },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(ingestDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: 'signal', accountId, direction: 'out',
+        senderExternalId: signalAci, platformMessageId,
+      }),
+      expect.any(Function),
+      undefined,
+    )
+
+    const otherSender = '22222222-2222-3333-aaaa-555555555555'
+    const invalid = await app.inject({
+      method: 'POST', url: '/api/native/events', headers: nativeAuth(grant),
+      payload: {
+        accountId,
+        event: {
+          ...event,
+          message: {
+            ...event.message,
+            senderExternalId: otherSender,
+            platformMessageId: `${otherSender}:1788048000010`,
+          },
+        },
+      },
+    })
+    expect(invalid.statusCode).toBe(422)
+  })
+
   it('Signal 入站回应接受规范目标与回应者，并把删除回应作为墓碑落库', async () => {
     const signalAci = '11111111-2222-3333-aaaa-555555555555'
     const signalAccount = await db.updateTable('accounts')

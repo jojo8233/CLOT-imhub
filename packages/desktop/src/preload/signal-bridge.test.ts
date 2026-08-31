@@ -117,6 +117,7 @@ function signalWindow() {
         submit: vi.fn(() => true),
       },
       __imHubSignalResolveMessageForTranslation: vi.fn().mockResolvedValue(undefined),
+      __imHubSignalListMessagesForTranslation: vi.fn().mockResolvedValue([]),
     },
     attributes,
     setVisibleDraft,
@@ -281,5 +282,58 @@ describe('Signal preload composer bridge', () => {
     expect((current.value as typeof current.value & {
       __imHubSignalTranslations?: { get(localMessageId: string): string | null }
     }).__imHubSignalTranslations?.get('local-inbound-id')).toBe('Hello')
+  })
+
+  it('当前会话用 DataReader 有界回填历史纯文字出站，不把本地 id 带出 guest', async () => {
+    const current = signalWindow()
+    current.value.__imHubSignalListMessagesForTranslation.mockResolvedValue([{
+      attributes: {
+        id: 'local-outgoing-id', conversationId: 'local-conversation-id',
+        type: 'outgoing', sent_at: 1_700_000_000_000, body: 'Previous outbound',
+      },
+    }])
+
+    installSignalPreloadBridge(current.value)
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(current.value.__imHubSignalListMessagesForTranslation)
+      .toHaveBeenCalledWith('local-conversation-id', 200)
+    expect(outbox.enqueue).toHaveBeenCalledWith(
+      '11111111-2222-3333-aaaa-555555555555',
+      expect.objectContaining({
+        type: 'message.upsert',
+        message: expect.objectContaining({ direction: 'out', body: 'Previous outbound' }),
+      }),
+    )
+    expect(JSON.stringify(outbox.enqueue.mock.calls)).not.toContain('local-outgoing-id')
+    expect(JSON.stringify(outbox.enqueue.mock.calls)).not.toContain('local-conversation-id')
+  })
+
+  it('Signal 持久化新出站后同时确认 attempt 并进入幂等消息 outbox', async () => {
+    const current = signalWindow()
+    installSignalPreloadBridge(current.value)
+    await vi.advanceTimersByTimeAsync(250)
+    outbox.enqueue.mockClear()
+
+    const message = {
+      attributes: {
+        id: 'local-new-id', conversationId: 'local-conversation-id',
+        type: 'outgoing', sent_at: 1_700_000_000_010, body: 'New outbound',
+      },
+      get(key: string) { return this.attributes[key as keyof typeof this.attributes] },
+    }
+    const bridge = (current.value as typeof current.value & {
+      __imHubSignalBridge?: { onOutgoingMessagePersisted(value: typeof message): Promise<void> }
+    }).__imHubSignalBridge
+    await bridge?.onOutgoingMessagePersisted(message)
+
+    expect(sendLedger.onOutgoingMessagePersisted).toHaveBeenCalledWith(message)
+    expect(outbox.enqueue).toHaveBeenCalledWith(
+      '11111111-2222-3333-aaaa-555555555555',
+      expect.objectContaining({
+        eventId: expect.stringContaining('signal-outgoing:'),
+        message: expect.objectContaining({ direction: 'out', body: 'New outbound' }),
+      }),
+    )
   })
 })

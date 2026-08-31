@@ -1,7 +1,7 @@
 import type { WsTranslationEvent } from '@im-hub/shared'
 import type { EngineConfig, TranslationGateway } from '../translation/gateway.js'
 import type { TranslateJobData } from './queue.js'
-import { incomingTranslationTarget } from '../translation/incoming-target.js'
+import { bilingualTranslationTarget } from '../translation/incoming-target.js'
 
 export interface TranslateJobDeps {
   loadMessage(messageId: string): Promise<{
@@ -33,9 +33,9 @@ export interface TranslateJobDeps {
 export async function runTranslateJob(data: TranslateJobData, deps: TranslateJobDeps): Promise<void> {
   const message = await deps.loadMessage(data.messageId)
   if (!message) return
-  // 新 ingestor 不再为出向消息入队，但部署时 Redis 里可能还有旧任务，
-  // 也可能存在其他生产者。worker 自身仍要守住“只翻译入向”边界。
-  if (message.direction !== 'in') return
+  // Signal 原生气泡要求入向与出向都显示双语；其他平台仍保持原有只翻译入向边界，
+  // 避免在没有产品验收的情况下扩大翻译调用量。
+  if (message.direction === 'out' && message.platform !== 'signal') return
   if (message.body.trim() === '') return
   const expectedRevision = data.revision ?? message.revision
   // 旧版本任务可能还在队列中。翻译前先挡一次，写入时还会在行锁下再校验一次。
@@ -43,7 +43,7 @@ export async function runTranslateJob(data: TranslateJobData, deps: TranslateJob
 
   // BullMQ 的 jobId 去重只在任务还在队列里时有效；任务完成并被清理后，
   // 同一 messageId 再次入队会真的再跑一遍。这里兜住那种情况。
-  let targetLang = incomingTranslationTarget(message.bodyLang)
+  let targetLang = bilingualTranslationTarget(message.bodyLang)
   if (await deps.hasTranslation(message.id, targetLang)) return
 
   const config = await deps.loadEngineConfig(data.conversationId)
@@ -51,7 +51,7 @@ export async function runTranslateJob(data: TranslateJobData, deps: TranslateJob
     text: message.body, from: 'auto', to: targetLang, config,
   })
   const detectedLang = result.detectedLang
-  const detectedTarget = incomingTranslationTarget(detectedLang)
+  const detectedTarget = bilingualTranslationTarget(detectedLang)
   if (detectedTarget !== targetLang) {
     targetLang = detectedTarget
     if (await deps.hasTranslation(message.id, targetLang)) return

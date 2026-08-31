@@ -413,3 +413,31 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   全程只使用 a28 阶段已经发送的那一条入站消息，没有新增消息。截图中本账号发出的蓝色出站消息
   仍只显示 Signal 保存的单一正文，这是当前 `direction=in` 产品边界，不属于本次入站双语验收；
   若产品要求出站也双语，必须另行定义员工原文与最终平台正文的保存、编辑和删除语义。
+
+## 17. Signal 出站双语与历史回填 checkpoint（2026-08-31）
+
+- 用户确认蓝色出站气泡也需要双语。本轮语义确定为“以 Signal 实际保存并发送的正文为原文”：
+  provider 检测中文时译英文，否则译中文。它既适用于 im-hub 翻译坞发送，也适用于 Signal 原生 UI
+  手动发送；不尝试从 SHA-256 attempt fingerprint 反推出员工最初输入，也不把发送账本改成保存
+  正文。WhatsApp `cloud_api` 尚未实现，本 checkpoint 只改变 Signal。
+- 新出站在 Signal 8.25.0 消息与 send job 的原生事务持久化 hook 完成后归一化，复用既有 Signal
+  IndexedDB outbox、ACK/dead-letter、`/api/native/events` 和中央唯一键。规范 sender 必须是 control
+  grant 绑定的实际账号 ACI，服务端再次拒绝任何不匹配 sender；平台消息键仍是 self ACI + 实际
+  `sent_at`，没有套用 Telegram 临时/最终 ID 算法。
+- 进程启动或切换当前会话时，guest 只用官方
+  `DataReader.getOlderMessagesByConversation` 读取最近 200 条候选，筛选纯文字 `type=outgoing` 后做
+  幂等历史回填。查询以 Signal 本地 conversation id 为 guest 内部参数，但该 id 和本地 message id
+  都不进入事件、日志、outbox payload 或中央库；带附件、贴纸、空正文和 story 不进入本轮边界。
+- 中央 ingestor/worker 只为 Signal 扩展出站翻译，Telegram、WhatsApp 和其他平台出站继续跳过，
+  避免未经产品验收扩大调用量。REST 快照、WebSocket 译文事件和 `message.set-translations` 批命令
+  现在同时下发 in/out；Signal resolver 对入站核对 source，对出站核对 self ACI，随后 guest store
+  仍重验方向、sender、`sent_at` 与 edit revision。原文下方的 React 渲染锚点保持不变且不读 DOM。
+- 自动化已通过 `pnpm typecheck`、出站归一化/历史回填/renderer/ingestor/worker/native 路由定向
+  回归，以及全量 53 个测试文件 482 passed / 1 todo；desktop build 通过。数据库用例只连接按规则
+  派生的隔离测试库，没有读取或输出开发库正文、ACI、具体消息键或凭据。
+- 准备脚本从官方 Signal Desktop 8.25.0 与 a29 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a30.app`；双向 resolver、历史 DataReader action 和 React 渲染
+  引用均精确命中，preload 语法与 deep/strict codesign 通过。只平滑替换了独立测试 bundle，未退出
+  官方 Signal 或 Telegram，也没有发送新消息。a30 启动后的只读聚合显示近 10 分钟恰有 2 条历史
+  Signal 纯文字出站回填、2 条中文译文且 2 条均完成语言识别；核验未读取或输出正文、译文、ACI 或
+  具体消息键。中央链路已闭合，原生蓝色气泡目视结果仍需用户确认。

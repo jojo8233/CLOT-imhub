@@ -11,6 +11,7 @@ import {
   normalizeSignalDesktopDelete,
   normalizeSignalDesktopEdit,
   normalizeSignalDesktopInbound,
+  normalizeSignalDesktopOutgoing,
   normalizeSignalDesktopReaction,
   readSignalDesktopAci,
   SignalDesktopInboundError,
@@ -43,12 +44,17 @@ const BOOTSTRAP_CHANNEL = 'imhub:signal-bridge-bootstrap'
 const IDENTITY_INTERVAL_MS = 2_000
 const IDENTITY_GRACE_MS = 15_000
 const COMPOSER_WATCH_INTERVAL_MS = 250
+const OUTGOING_HISTORY_LIMIT = 200
 
 interface SignalBridgeWindow extends SignalDesktopComposerWindowLike {
   __imHubSignalResolveMessageForTranslation?(
     senderExternalId: string,
     sentAtMs: number,
   ): Promise<SignalDesktopModelLike | null | undefined>
+  __imHubSignalListMessagesForTranslation?(
+    localConversationId: string,
+    limit: number,
+  ): Promise<SignalDesktopModelLike[] | null | undefined>
   __imHubSignalBridge?: {
     onNewMessage(
       conversation: SignalDesktopModelLike,
@@ -98,6 +104,8 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   let lastPlatformConversationId: string | null | undefined
   let lastComposerSignature: string | undefined
   let composerEmissionGeneration = 0
+  const outgoingHistorySynced = new Set<string>()
+  const outgoingHistoryInFlight = new Set<string>()
 
   const accountIdentity = (): string => {
     const accountExternalId = lastIdentity ?? readSignalDesktopAci(signalWindow)
@@ -113,17 +121,17 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
   const enqueue = async (event: SignalOutboxEvent | null): Promise<boolean> => {
     if (!event) return false
     const queued = await outbox.enqueue(accountIdentity(), event)
-    if (queued) console.info('[signal-bridge] inbound event persisted')
+    if (queued) console.info('[signal-bridge] message event persisted')
     return queued
   }
 
-  const reportInboundError = (error: unknown): void => {
+  const reportMessageError = (error: unknown): void => {
     const inboundError = error instanceof SignalDesktopInboundError ? error : null
     emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'bridge.error',
       code: inboundError?.code ?? 'invalid_signal_inbound',
-      message: inboundError?.safeMessage ?? 'Signal 入站事件无法安全归一化，已拒绝回传',
+      message: inboundError?.safeMessage ?? 'Signal 消息事件无法安全归一化，已拒绝回传',
     })
   }
 
@@ -225,8 +233,56 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
         context: snapshot?.context ?? null,
       })
     }
-    if (snapshot) emitComposerState(snapshot, contextChanged || force)
+    if (snapshot) {
+      emitComposerState(snapshot, contextChanged || force)
+      if (contextChanged || force) void syncOutgoingHistory(snapshot, contextRevision)
+    }
     return snapshot
+  }
+
+  async function syncOutgoingHistory(
+    snapshot: SignalDesktopComposerSnapshot,
+    capturedRevision: number,
+  ): Promise<void> {
+    const listMessages = signalWindow.__imHubSignalListMessagesForTranslation
+    const conversation = signalWindow.ConversationController?.get?.(snapshot.localConversationId)
+    if (!listMessages || !conversation) return
+    let accountExternalId: string
+    try {
+      accountExternalId = accountIdentity()
+    } catch {
+      return
+    }
+    // 本机 conversation id 只作为 guest 内存去重键，不进入事件、日志或持久账本。
+    const syncKey = `${accountExternalId}:${snapshot.localConversationId}`
+    if (outgoingHistorySynced.has(syncKey) || outgoingHistoryInFlight.has(syncKey)) return
+    outgoingHistoryInFlight.add(syncKey)
+    try {
+      const messages = await listMessages(snapshot.localConversationId, OUTGOING_HISTORY_LIMIT)
+      if (!Array.isArray(messages) || messages.length > OUTGOING_HISTORY_LIMIT) return
+      if (capturedRevision !== contextRevision
+        || currentComposer?.localConversationId !== snapshot.localConversationId) return
+      for (const message of messages) {
+        try {
+          const event = normalizeSignalDesktopOutgoing(
+            conversation, message, accountExternalId,
+          )
+          if (event) await enqueue(event)
+        } catch (error) {
+          reportMessageError(error)
+        }
+      }
+      outgoingHistorySynced.add(syncKey)
+    } catch {
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'bridge.error',
+        code: 'signal_outgoing_history_unavailable',
+        message: 'Signal 历史出站消息暂时无法回填；切换会话后将重试',
+      })
+    } finally {
+      outgoingHistoryInFlight.delete(syncKey)
+    }
   }
 
   const ensureComposerWatcher = (): boolean => {
@@ -313,7 +369,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       try {
         await enqueue(normalizeSignalDesktopInbound(conversation, message, senderConversation))
       } catch (error) {
-        reportInboundError(error)
+        reportMessageError(error)
       }
     },
     async onMessageEdited(conversation, message, senderConversation): Promise<void> {
@@ -321,7 +377,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       try {
         await enqueue(normalizeSignalDesktopEdit(conversation, message, senderConversation))
       } catch (error) {
-        reportInboundError(error)
+        reportMessageError(error)
       }
     },
     async onMessageDeleted(message, deleteDetails): Promise<void> {
@@ -329,7 +385,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
       try {
         await enqueue(normalizeSignalDesktopDelete(message, deleteDetails))
       } catch (error) {
-        reportInboundError(error)
+        reportMessageError(error)
       }
     },
     async onReaction(targetMessage, reaction, reactorConversation): Promise<void> {
@@ -346,7 +402,7 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
           )
         }
       } catch (error) {
-        reportInboundError(error)
+        reportMessageError(error)
       }
     },
     async onOutgoingMessagePrepared(message): Promise<void> {
@@ -354,6 +410,19 @@ export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): vo
     },
     async onOutgoingMessagePersisted(message): Promise<void> {
       await sendLedger.onOutgoingMessagePersisted(message)
+      try {
+        const localConversationId = message.get?.('conversationId')
+          ?? message.attributes?.conversationId
+        const conversation = typeof localConversationId === 'string'
+          ? signalWindow.ConversationController?.get?.(localConversationId)
+          : undefined
+        if (!conversation) return
+        await enqueue(normalizeSignalDesktopOutgoing(
+          conversation, message, accountIdentity(),
+        ))
+      } catch (error) {
+        reportMessageError(error)
+      }
     },
   }
 

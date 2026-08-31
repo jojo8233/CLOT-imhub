@@ -4,6 +4,7 @@ import {
   normalizeSignalDesktopDelete,
   normalizeSignalDesktopEdit,
   normalizeSignalDesktopInbound,
+  normalizeSignalDesktopOutgoing,
   normalizeSignalDesktopReaction,
   readSignalDesktopAci,
   SignalDesktopInboundError,
@@ -203,6 +204,57 @@ describe('normalizeSignalDesktopInbound', () => {
     expect(event?.message.raw).toEqual({
       source: 'signal-desktop', signalMessageId: 'local-id', receivedAtMs: 11,
     })
+  })
+
+  it('纯文字出站使用本账号 ACI 与实际 sent_at，并且不导出本地消息或会话 id', () => {
+    const event = normalizeSignalDesktopOutgoing(
+      model({ serviceId: '99999999-2222-3333-AAAA-555555555555' }, 'Alice'),
+      model({
+        id: 'local-outgoing-id', conversationId: 'local-conversation-id',
+        type: 'outgoing', sent_at: 1_700_000_000_000, body: 'Hello',
+      }),
+      '11111111-2222-3333-AAAA-555555555555',
+    )
+
+    expect(event).toMatchObject({
+      eventId: 'signal-outgoing:11111111-2222-3333-aaaa-555555555555:1700000000000:initial',
+      message: {
+        platformConversationId: 'u:99999999-2222-3333-aaaa-555555555555',
+        platformMessageId: '11111111-2222-3333-aaaa-555555555555:1700000000000',
+        direction: 'out', senderExternalId: '11111111-2222-3333-aaaa-555555555555',
+        conversationDisplayName: 'Alice', body: 'Hello', mediaRefs: [],
+        editedAt: null, raw: { source: 'signal-desktop' },
+      },
+    })
+    expect(parseNativeGuestEvent(event)).toEqual(event)
+    expect(JSON.stringify(event)).not.toContain('local-outgoing-id')
+    expect(JSON.stringify(event)).not.toContain('local-conversation-id')
+  })
+
+  it('历史出站按当前编辑 revision 回填，媒体或非出站消息不扩张本轮边界', () => {
+    const conversation = model({ groupId: 'Z3JvdXA=' }, '客服群')
+    const edited = normalizeSignalDesktopOutgoing(
+      conversation,
+      model({
+        type: 'outgoing', sent_at: 1_700_000_000_000,
+        editMessageTimestamp: 1_700_000_001_000, body: 'Edited',
+      }),
+      '11111111-2222-3333-aaaa-555555555555',
+    )
+    expect(edited?.message).toMatchObject({
+      platformConversationId: 'g:Z3JvdXA=',
+      editedAt: '2023-11-14T22:13:21.000Z', body: 'Edited',
+    })
+    expect(normalizeSignalDesktopOutgoing(
+      conversation,
+      model({ type: 'outgoing', sent_at: 1, body: 'caption', attachments: [{}] }),
+      '11111111-2222-3333-aaaa-555555555555',
+    )).toBeNull()
+    expect(normalizeSignalDesktopOutgoing(
+      conversation,
+      model({ type: 'incoming', sent_at: 1, body: 'incoming' }),
+      '11111111-2222-3333-aaaa-555555555555',
+    )).toBeNull()
   })
 
   it('编辑沿用原消息规范键，以编辑时间推进版本并允许清空正文', () => {

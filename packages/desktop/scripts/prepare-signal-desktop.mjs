@@ -153,10 +153,10 @@ try {
     'if(r)return window.MessageCache.register(new Hp(r))}var lle,Gp=',
     // ii(message) 是 Signal 本机 ConversationModel.id，不是 sourceServiceId；它只适合
     // Signal 内部会话关联，不能与 im-hub 的规范发送者键比较。先用官方 DataReader 按
-    // sent_at 取候选，再按消息自身的稳定发送者字段筛选；guest store 还会二次校验
-    // incoming、规范 sender、sent_at 与 edit revision，避免时间戳碰撞或迟到译文串消息。
-    'if(r)return window.MessageCache.register(new Hp(r))}window.__imHubSignalResolveOutgoingMessage=e=>Aa.getMessageById(e),window.__imHubSignalResolveMessageForTranslation=async(e,t)=>{let n=(await Aa.getMessagesBySentAt(t)).find(t=>t.type===`incoming`&&(t.sourceServiceId?.toLowerCase()===e||t.source===e));return n?window.MessageCache.register(new Hp(n)):null};var lle,Gp=',
-    'Signal 最终出向消息与入站译文解析 action',
+    // sent_at 取候选；入站按消息自身 sender、出站按 self ACI 筛选。guest store 还会
+    // 二次校验方向、规范 sender、sent_at 与 edit revision，避免时间戳碰撞或迟到译文串消息。
+    'if(r)return window.MessageCache.register(new Hp(r))}window.__imHubSignalResolveOutgoingMessage=e=>Aa.getMessageById(e),window.__imHubSignalResolveMessageForTranslation=async(e,t)=>{let n=window.ConversationController.getOurConversationOrThrow().getAci()?.toLowerCase(),r=(await Aa.getMessagesBySentAt(t)).find(t=>t.type===`outgoing`?n===e:t.type===`incoming`&&(t.sourceServiceId?.toLowerCase()===e||t.source===e));return r?window.MessageCache.register(new Hp(r)):null},window.__imHubSignalListMessagesForTranslation=async(e,t)=>{if(typeof e!=`string`||!Number.isSafeInteger(t)||t<1||t>200)return[];let n=await Aa.getOlderMessagesByConversation({conversationId:e,limit:t,storyId:void 0,includeStoryReplies:!1});return n.map(e=>window.MessageCache.register(new Hp(e)))};var lle,Gp=',
+    'Signal 最终出向消息、双向译文解析与历史回填 action',
   )
   signalPreloadMain = replaceOnce(
     signalPreloadMain,

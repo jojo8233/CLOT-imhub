@@ -3,7 +3,11 @@ import {
   parseSignalMessageKey,
   type NativeMessageTranslation,
 } from '@im-hub/shared'
-import type { SignalDesktopModelLike } from './signal-desktop-message.js'
+import {
+  readSignalDesktopAci,
+  type SignalDesktopModelLike,
+  type SignalDesktopWindowLike,
+} from './signal-desktop-message.js'
 
 type TranslationListener = () => void
 
@@ -12,7 +16,7 @@ export interface SignalDesktopTranslationRenderApi {
   subscribe(listener: TranslationListener): () => void
 }
 
-export interface SignalDesktopTranslationWindowLike {
+export interface SignalDesktopTranslationWindowLike extends SignalDesktopWindowLike {
   __imHubSignalResolveMessageForTranslation?(
     senderExternalId: string,
     sentAtMs: number,
@@ -44,15 +48,22 @@ function matchesCanonicalMessage(
   message: SignalDesktopModelLike,
   senderExternalId: string,
   sentAtMs: number,
+  signalWindow: SignalDesktopTranslationWindowLike,
 ): boolean {
-  if (attribute(message, 'type') !== 'incoming') return false
-  const source = nonEmptyString(attribute(message, 'sourceServiceId'))
-    ?? nonEmptyString(attribute(message, 'source'))
-  if (!source) return false
-  let normalizedSource: string
-  try {
-    normalizedSource = normalizeSignalPersonId(source)
-  } catch {
+  const direction = attribute(message, 'type')
+  let normalizedSource: string | null = null
+  if (direction === 'incoming') {
+    const source = nonEmptyString(attribute(message, 'sourceServiceId'))
+      ?? nonEmptyString(attribute(message, 'source'))
+    if (!source) return false
+    try {
+      normalizedSource = normalizeSignalPersonId(source)
+    } catch {
+      return false
+    }
+  } else if (direction === 'outgoing') {
+    normalizedSource = readSignalDesktopAci(signalWindow)
+  } else {
     return false
   }
   return normalizedSource === senderExternalId && attribute(message, 'sent_at') === sentAtMs
@@ -99,7 +110,9 @@ export class SignalDesktopTranslationStore {
     } catch {
       return
     }
-    if (!message || !matchesCanonicalMessage(message, key.senderId, key.sentAtMs)) return
+    if (!message || !matchesCanonicalMessage(
+      message, key.senderId, key.sentAtMs, this.signalWindow,
+    )) return
     if (revision(message) !== translation.revision) return
     const localMessageId = nonEmptyString(attribute(message, 'id'))
     if (!localMessageId) return

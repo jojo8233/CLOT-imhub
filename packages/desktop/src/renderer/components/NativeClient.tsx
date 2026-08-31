@@ -140,11 +140,13 @@ export function signalOutboxStatusError(
 /** 单条入站消息归一化失败不影响账号授权，也不能阻断后续消息继续回传。 */
 export function signalInboundErrorIsNonfatal(code: string): boolean {
   return code === 'invalid_signal_inbound'
+    || code === 'invalid_signal_outgoing'
     || code === 'invalid_signal_media'
     || code === 'unsupported_signal_media'
     || code === 'invalid_signal_edit'
     || code === 'invalid_signal_delete'
     || code === 'invalid_signal_reaction'
+    || code === 'signal_outgoing_history_unavailable'
     || code === 'signal_composer_state_unavailable'
     || code === 'signal_draft_too_large'
     || code === 'signal_send_ledger_unavailable'

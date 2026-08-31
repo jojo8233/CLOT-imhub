@@ -5,7 +5,7 @@ import type { ScopedDb } from '../../rbac/scoped-db.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
 import { resolveTargetLang } from '../../translation/target-lang.js'
-import { incomingTranslationTarget } from '../../translation/incoming-target.js'
+import { bilingualTranslationTarget } from '../../translation/incoming-target.js'
 
 const sendBody = z.object({
   conversationId: z.string().uuid(),
@@ -103,7 +103,7 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
         ...message
       }) => ({
         ...message,
-        translated_text: incomingTranslationTarget(bodyLang) === 'en'
+        translated_text: bilingualTranslationTarget(bodyLang) === 'en'
           ? translatedTextEn
           : translatedTextZh,
       })),

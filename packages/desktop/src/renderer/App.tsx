@@ -228,7 +228,7 @@ export function App() {
             translated_text: event.translatedBody,
           })
         }
-        if (event.platform === 'signal' && event.direction === 'in' && event.translatedBody) {
+        if (event.platform === 'signal' && event.translatedBody) {
           void nativeMessageTranslationBridge.sync(event.accountId, [{
             platformMessageId: event.platformMessageId,
             translatedText: event.translatedBody,

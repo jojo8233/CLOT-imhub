@@ -256,7 +256,7 @@ describe('nativeComposerBridge', () => {
     unregister()
   })
 
-  it('把当前入站译文作为一个有界批命令发送给指定账号', async () => {
+  it('把当前会话入站与出站译文作为一个有界批命令发送给指定账号', async () => {
     const sent: unknown[] = []
     const unregister = registerNativeCommandTarget(context.accountId, {
       send: (_channel, command) => { sent.push(command) },
@@ -267,7 +267,7 @@ describe('nativeComposerBridge', () => {
         edited_at: null,
       },
       {
-        platform_message_id: 'self:124', direction: 'out', translated_text: '不应发送',
+        platform_message_id: 'self:124', direction: 'out', translated_text: '此前发出',
         edited_at: null,
       },
     ])
@@ -277,9 +277,10 @@ describe('nativeComposerBridge', () => {
     expect(sent).toEqual([{
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'message.set-translations',
-      translations: [{
-        platformMessageId: 'sender:123', translatedText: '你好', revision: 'initial',
-      }],
+      translations: [
+        { platformMessageId: 'sender:123', translatedText: '你好', revision: 'initial' },
+        { platformMessageId: 'self:124', translatedText: '此前发出', revision: 'initial' },
+      ],
     }])
     unregister()
   })

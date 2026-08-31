@@ -151,6 +151,12 @@ Signal Desktop 的主体依赖原生 SQLCipher/libsignal 模块和完整主进�
   Signal 8.25.0 原生 React 消息组件的唯一补丁锚点显示在原文下方，不读取或查询 DOM，也不把
   Signal 本地消息 id 交给 renderer 或服务端。编辑/删除先清旧译文；进程重启后由中央会话快照
   批量回填。
+- Signal 出站纯文字使用相同的中英目标规则。新消息只在 Signal 自身消息与 send job 持久化后进入
+  既有 IndexedDB outbox；sender 必须等于 control grant 绑定的实际账号 ACI，最终消息键仍是
+  `self ACI + sent_at`。当前原生会话通过 Signal 8.25.0
+  `DataReader.getOlderMessagesByConversation` 有界读取最近 200 条做历史补偿，仅归一化纯文字
+  `type=outgoing`；本地 message/conversation id 不进入事件或中央库。媒体出站、引用和 story 不在
+  本边界。译文仍由中央库保存并用同一原生 React 组件显示，禁止 DOM 抓取。
 - Signal 翻译坞的纯文字发送先把 `attemptId`、首次 `contextRevision`、正文 SHA-256 fingerprint
   和 Signal 自身提交时间写入 guest IndexedDB 账本，再调用 `CompositionInput.submit`。prepared
   hook 在消息与 send job 持久化前绑定 Signal 本地消息引用，persisted hook 在事务完成后使用本账号

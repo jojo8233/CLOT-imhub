@@ -65,11 +65,23 @@ describe('runTranslateJob', () => {
     expect(d.gateway.translate).not.toHaveBeenCalled()
   })
 
-  it('部署前遗留的出向任务也会在 worker 边界被丢弃', async () => {
+  it('Signal 出向任务使用相同中英双语目标', async () => {
     const d = deps({
       loadMessage: vi.fn().mockResolvedValue({
         id: 'msg-1', body: 'outbound', direction: 'out', conversationId: 'conv-1', revision: 'initial',
         accountId: 'account-1', platform: 'signal', platformMessageId: 'sender:1', bodyLang: null,
+      }),
+    })
+    await runTranslateJob(job, d as never)
+    expect(d.gateway.translate).toHaveBeenCalledWith(expect.objectContaining({ to: 'zh' }))
+    expect(d.saveTranslation).toHaveBeenCalledOnce()
+  })
+
+  it('其他平台遗留的出向任务仍在 worker 边界被丢弃', async () => {
+    const d = deps({
+      loadMessage: vi.fn().mockResolvedValue({
+        id: 'msg-1', body: 'outbound', direction: 'out', conversationId: 'conv-1', revision: 'initial',
+        accountId: 'account-1', platform: 'telegram', platformMessageId: 'sender:1', bodyLang: null,
       }),
     })
     await runTranslateJob(job, d as never)

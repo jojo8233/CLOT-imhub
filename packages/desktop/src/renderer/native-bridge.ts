@@ -98,7 +98,7 @@ export function nativeMessageTranslationsFromRows(rows: Array<{
   translated_text: string | null
   edited_at: string | null
 }>): NativeMessageTranslation[] {
-  return rows.flatMap(row => row.direction === 'in' && row.translated_text
+  return rows.flatMap(row => row.translated_text
     ? [{
         platformMessageId: row.platform_message_id,
         translatedText: row.translated_text,

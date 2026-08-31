@@ -126,7 +126,8 @@ export class MessageIngestor {
     // 队列故障导致首次派发失败时，平台的重复推送或调用方的重试能把它补回来。
     // 代价可控——BullMQ 用 messageId 作 jobId 去重，且相同文本会命中翻译缓存。
     // 纯媒体消息没有可翻译文本。空正文仍然正常存档，但不制造必然失败的翻译任务。
-    if (isInbound && msg.body.trim() !== '') {
+    const shouldTranslate = isInbound || (msg.platform === 'signal' && msg.direction === 'out')
+    if (shouldTranslate && msg.body.trim() !== '') {
       await this.queue.enqueueTranslate({
         messageId,
         conversationId,

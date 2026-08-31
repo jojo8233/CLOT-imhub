@@ -32,6 +32,7 @@ export interface SignalDesktopWindowLike {
 
 export type SignalDesktopInboundErrorCode =
   | 'invalid_signal_inbound'
+  | 'invalid_signal_outgoing'
   | 'invalid_signal_media'
   | 'unsupported_signal_media'
   | 'invalid_signal_edit'
@@ -323,6 +324,73 @@ export function normalizeSignalDesktopInbound(
     type: 'message.upsert',
     eventId: boundedEventId(`signal-inbound:${normalized.platformMessageId}`, 'invalid_signal_inbound'),
     message: normalized,
+  }
+}
+
+/**
+ * Signal 自己已持久化的纯文字出站快照。sender 使用实际账号 ACI，私聊会话仍使用
+ * 对方的规范身份；本地 conversation/message id 不跨出 guest。带附件、贴纸或空正文
+ * 的出站消息不进入本轮双语回填，避免在未续验媒体边界时制造不完整中央记录。
+ */
+export function normalizeSignalDesktopOutgoing(
+  conversation: SignalDesktopModelLike,
+  message: SignalDesktopModelLike,
+  accountExternalId: string,
+): NativeMessageUpsertEvent | null {
+  if (attribute(message, 'type') !== 'outgoing') return null
+  const attachments = attribute(message, 'attachments')
+  if (attachments !== undefined && attachments !== null && !Array.isArray(attachments)) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_outgoing',
+      'Signal 出站消息媒体结构无效，已拒绝双语回填',
+    )
+  }
+  if ((attachments?.length ?? 0) > 0 || attribute(message, 'sticker') != null) return null
+
+  const body = nonEmptyString(attribute(message, 'body'))
+  const sentAtMs = safeTimestamp(attribute(message, 'sent_at'))
+  const context = normalizeSignalDesktopConversationContext(conversation)
+  if (!body || sentAtMs === null || !context) {
+    if (!body) return null
+    throw new SignalDesktopInboundError(
+      'invalid_signal_outgoing',
+      'Signal 出站消息缺少稳定会话或发送时间，已拒绝双语回填',
+    )
+  }
+
+  const editedAtValue = attribute(message, 'editMessageTimestamp')
+  const editedAtMs = editedAtValue == null ? null : safeTimestamp(editedAtValue)
+  if (editedAtValue != null && editedAtMs === null) {
+    throw new SignalDesktopInboundError(
+      'invalid_signal_outgoing',
+      'Signal 出站编辑缺少稳定编辑时间，已拒绝双语回填',
+    )
+  }
+
+  const senderExternalId = normalizeSignalAci(accountExternalId)
+  const platformMessageId = signalMessageKey(senderExternalId, sentAtMs)
+  return {
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type: 'message.upsert',
+    eventId: boundedEventId(
+      `signal-outgoing:${platformMessageId}:${editedAtMs ?? 'initial'}`,
+      'invalid_signal_outgoing',
+    ),
+    message: {
+      platformConversationId: context.platformConversationId,
+      platformMessageId,
+      direction: 'out',
+      senderExternalId,
+      senderDisplayName: null,
+      conversationDisplayName: context.contactDisplayName,
+      body,
+      mediaRefs: [],
+      replyToPlatformMessageId: null,
+      sentAt: new Date(sentAtMs).toISOString(),
+      editedAt: editedAtMs === null ? null : new Date(editedAtMs).toISOString(),
+      editVersion: null,
+      raw: { source: 'signal-desktop' },
+    },
   }
 }
 

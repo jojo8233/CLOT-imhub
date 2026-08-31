@@ -56,6 +56,21 @@ describe('SignalDesktopTranslationStore', () => {
     expect(store.renderApi.get('local-message-id')).toBeNull()
   })
 
+  it('出站消息只接受与 Signal self conversation ACI 相同的规范 sender', async () => {
+    const resolved = model({ type: 'outgoing', sourceServiceId: undefined })
+    const signalWindow = {
+      ConversationController: {
+        getOurConversationOrThrow: () => ({ getAci: () => sender.toUpperCase() }),
+      },
+      __imHubSignalResolveMessageForTranslation: vi.fn().mockResolvedValue(resolved),
+    }
+    const store = new SignalDesktopTranslationStore(signalWindow)
+
+    await store.applyBatch([translation()])
+
+    expect(store.renderApi.get('local-message-id')).toBe('你好，你在做什么？')
+  })
+
   it('编辑 revision 不一致时拒绝迟到译文', async () => {
     const signalWindow = {
       __imHubSignalResolveMessageForTranslation: vi.fn().mockResolvedValue(model({

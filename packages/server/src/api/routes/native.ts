@@ -173,7 +173,10 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       const canonicalError = validateCanonicalTelegramEvent(event)
       if (canonicalError) return reply.code(422).send({ error: canonicalError })
     } else if (account.platform === 'signal') {
-      const canonicalError = validateCanonicalSignalEvent(event)
+      const canonicalError = validateCanonicalSignalEvent(
+        event,
+        account.expectedPlatformAccountExternalId,
+      )
       if (canonicalError) return reply.code(422).send({ error: canonicalError })
       if (event.type === 'message.reaction'
         && event.reactorExternalId === account.expectedPlatformAccountExternalId) {
@@ -429,6 +432,7 @@ function sameEditRevision(
 function validateCanonicalSignalEvent(
   event: NativeMessageUpsertEvent | NativeMessageDeletedEvent
     | NativeMessageIdRemappedEvent | NativeMessageReactionEvent,
+  expectedAccountExternalId: string,
 ): string | null {
   if (event.type === 'message.id-remapped') {
     return 'Signal message ids cannot be remapped'
@@ -466,6 +470,21 @@ function validateCanonicalSignalEvent(
   }
   if (message.platformMessageId !== expectedMessageId) {
     return 'Signal message id does not match sender and sent time'
+  }
+  const parsedMessageId = parseSignalMessageKey(message.platformMessageId)
+  if (!parsedMessageId || parsedMessageId.senderId !== message.senderExternalId) {
+    return 'Signal message sender is not canonical'
+  }
+  if (message.direction === 'out') {
+    let expectedSender: string
+    try {
+      expectedSender = normalizeSignalPersonId(expectedAccountExternalId)
+    } catch {
+      return 'invalid canonical Signal account id'
+    }
+    if (message.senderExternalId !== expectedSender) {
+      return 'Signal outbound sender does not match account identity'
+    }
   }
   if (message.platformConversationId.startsWith('u:')
     && message.direction === 'in'
