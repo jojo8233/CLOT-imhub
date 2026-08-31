@@ -1,8 +1,8 @@
 # M5/M6 Signal 与 WhatsApp 并行首检点
 
 日期：2026-08-29
-状态：执行中；2026-08-30 Signal 已通过同一物理窗口原生发送、入站文字唯一落库、持久 outbox
-真实重放、图片/贴纸结构化元数据、编辑/删除/回应，以及当前会话与可见原生草稿写入真实续验
+状态：执行中；Signal 约定的原生与双语门槛已通过；WhatsApp Cloud API 纯文字双语链已完成
+代码与自动化，仍等待 Meta 应用、公开 HTTPS Webhook 与最多一条无敏感文字的真实续验
 
 > 续接校正：本文件最初定义的 signal-cli 文字首检点保留为后台基线与回退证据。
 > 用户明确要求图片与贴纸能力后，用户可见入口已切到 Signal Desktop 8.25.0；当前实现
@@ -444,3 +444,34 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - 用户随后目视确认同一当前会话的两条既有蓝色出站气泡均已显示译文，期间没有发送新消息或重做
   任何既有发送/入站/outbox 矩阵。因此 Signal“新纯文字出站捕获 + 当前会话最近 200 条历史纯文字
   出站回填 + 原生气泡双语显示”真实门槛已关闭；媒体出站和 WhatsApp Cloud API 仍保持未完成边界。
+
+## 18. WhatsApp Cloud API 纯文字双语链 checkpoint（2026-08-31）
+
+- `web_shell` 继续只承载官方 `web.whatsapp.com`：没有 preload、DOM 抓取、页面脚本或统一消息
+  bridge。新 `cloud_api` 路线使用显式锁定的 Graph API `v25.0`、WABA Webhook 与 Meta Embedded
+  Signup；版本升级必须重新按 Meta 官方 collection 和 changelog 回归，不能漂移到 `latest`。
+- owner 从桌面端发起一次性 onboarding session，bearer ticket 只以 SHA-256 落库并通过公开 HTTPS
+  页面的 URL fragment 传递，页面加载后立即清除 fragment。Meta code 在同源服务端交换；WABA 与
+  phone-number 归属经 Graph API 复核后才建账号并订阅 Webhook。access token 使用每账号 AAD 的
+  AES-256-GCM 密文保存，renderer、webview、账号 `credentials_ref`、日志和错误文本均不接触明文。
+- Webhook GET challenge 使用常量时间 verify-token 比较；POST 必须按原始请求字节通过
+  `X-Hub-Signature-256` HMAC-SHA256。解析器只接受有界且完整的官方 WhatsApp Business Account
+  payload。入站纯文字以官方 `messages[].id` 唯一落库，进入既有中央语言识别与翻译 worker：
+  中文译英文，其余语言译中文；Cloud API 账号使用 im-hub 自有会话视图显示原文与译文。媒体与
+  未支持类型当前只做聚合告警，不读取 `web_shell` 页面，也不伪装成已接入。
+- 出站 attempt 在调用 Graph 前持久化，绑定 `attemptId`、账号、会话、员工、目标、正文 SHA-256
+  与 authorization revision。双击由本地发送锁挡住；切会话或用户改稿会废弃未发起的旧 attempt；
+  网络超时、响应丢失、2xx 无最终 ID 与进程重启后的同键重放都保持 `sending/unknown` 并禁止盲目
+  自动重发。只有 `POST /{phone-number-id}/messages` 返回最终 `wamid` 后，消息、attempt 与
+  `accepted` 状态才原子落库并向 UI 报告成功；后续 `sent/delivered/read/failed` Webhook 按同一
+  官方 ID 单调更新，不套用 Telegram temp/final 或 Signal sender/timestamp 算法。
+- 新增两份 additive migration：Cloud 账号/加密 secret/发送与状态账本，以及短时 onboarding
+  session；两份 migration 已分别在开发库与按规则派生的隔离 `_test` 库成功应用。Cloud 路由只有
+  在所有必需配置通过校验后注册；公开页面采用 nonce CSP、禁止被嵌套并
+  只开放 Meta 官方 SDK/Graph origin。当前服务端未配置 Cloud API，故本轮不重启服务端、Telegram
+  或 Signal，也没有发送 WhatsApp 消息、打开二维码、读取平台 session 或输出任何平台标识。
+- 自动化通过 `pnpm typecheck`、61 个测试文件 512 passed / 1 todo 与 desktop production build；
+  新增覆盖原始字节签名、严格 payload、Graph 最终 ID/未知结果、AES-GCM AAD、一次性 ticket、
+  attempt 绑定/重放、乱序状态、公开路由权限和 Cloud/Web 布局分流。该 checkpoint 是代码完成，
+  不是生产验收；真实门槛仍是 Meta 应用与业务授权、公开 HTTPS 回调，以及最多一条无敏感纯文字
+  的入站双语/最终 ID 续验。

@@ -27,6 +27,10 @@ import { KyselyTelegramShadowCoverageRepo } from './shadow/coverage.js'
 import { TelegramShadowRefresher } from './shadow/refresh.js'
 import { KyselyTelegramShadowRepo } from './shadow/telegram-repo.js'
 import { TelegramTdlibIngestGate } from './shadow/rollout.js'
+import { WhatsAppGraphClient } from './whatsapp-cloud/graph-client.js'
+import { KyselyWhatsAppCloudRepo } from './whatsapp-cloud/repo.js'
+import { decodeSecretMasterKey, SecretCipher } from './whatsapp-cloud/secret-cipher.js'
+import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
@@ -57,6 +61,7 @@ const hub = new WsHub()
 const queue = new BullTranslateQueue(redis)
 const messageRepo = new KyselyMessageRepo(db)
 const ingestor = new MessageIngestor(messageRepo, queue)
+const whatsappCloudRepo = new KyselyWhatsAppCloudRepo(db)
 const telegramShadowCoverage = new KyselyTelegramShadowCoverageRepo(db)
 const telegramShadowRefresher = new TelegramShadowRefresher(adapters, ingestor)
 const telegramShadowRepo = new KyselyTelegramShadowRepo(db)
@@ -64,6 +69,45 @@ const telegramTdlibIngestGate = new TelegramTdlibIngestGate(
   config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS,
   telegramShadowRepo,
 )
+
+async function publishNewMessage(messageId: string): Promise<void> {
+  await messageRepo.withMessageForPublish(messageId, message => {
+    if (message.deletedAt) return
+    hub.publishTo(message.ownerUserId, {
+      type: 'message',
+      messageId: message.id,
+      platformMessageId: message.platformMessageId,
+      conversationId: message.conversationId,
+      accountId: message.accountId,
+      platform: message.platform,
+      direction: message.direction,
+      body: message.body,
+      translatedBody: message.translatedBody,
+      sentAt: message.sentAt.toISOString(),
+      editedAt: message.editedAt?.toISOString() ?? null,
+    })
+  })
+}
+
+const whatsappCloudService = config.WHATSAPP_CLOUD_ENABLED
+  ? new WhatsAppCloudService({
+      appId: config.WHATSAPP_META_APP_ID,
+      configId: config.WHATSAPP_META_CONFIG_ID,
+      graphApiVersion: config.WHATSAPP_GRAPH_API_VERSION,
+      publicBaseUrl: config.WHATSAPP_PUBLIC_BASE_URL,
+      graphClient: version => new WhatsAppGraphClient({
+        version,
+        appId: config.WHATSAPP_META_APP_ID,
+        appSecret: config.WHATSAPP_META_APP_SECRET,
+      }),
+    }, {
+      repo: whatsappCloudRepo,
+      cipher: new SecretCipher(decodeSecretMasterKey(config.WHATSAPP_SECRET_MASTER_KEY)),
+      ingestor,
+      onInboundStored: result => result.isNew ? publishNewMessage(result.messageId) : undefined,
+      onOutgoingAccepted: publishNewMessage,
+    })
+  : null
 
 if (config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS.length > 0) {
   console.warn(
@@ -331,6 +375,16 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
 const app = await buildServer({
   adapters,
   gateway,
+  ...(whatsappCloudService
+    ? {
+        whatsappCloud: whatsappCloudService,
+        whatsappCloudRoutes: {
+          service: whatsappCloudService,
+          webhookVerifyToken: config.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+          appSecret: config.WHATSAPP_META_APP_SECRET,
+        },
+      }
+    : {}),
   native: {
     ingestor,
     repo: messageRepo,
@@ -402,9 +456,13 @@ async function connectRegisteredAccounts(): Promise<void> {
     console.log(`[server] ${webShellAccounts.length} 个官方网页壳账号交由 im-hub 桌面主进程托管`)
   }
   if (cloudApiAccounts.length > 0) {
-    console.warn(
-      `[server] ${cloudApiAccounts.length} 个 Cloud API 账号尚未启用；请完成官方授权配置后再连接`,
-    )
+    if (whatsappCloudService) {
+      console.log(`[server] ${cloudApiAccounts.length} 个 WhatsApp Cloud API 账号由 Webhook/Graph API 托管`)
+    } else {
+      console.warn(
+        `[server] ${cloudApiAccounts.length} 个 Cloud API 账号尚未启用；请完成官方授权配置后再连接`,
+      )
+    }
   }
 
   // 只自动连接「服务端适配器模式且本机确实有可用 session」的账号，

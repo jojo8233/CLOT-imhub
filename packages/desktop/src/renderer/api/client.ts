@@ -58,7 +58,11 @@ export class NetworkError extends Error {
 
 /** 服务端明确返回的非 2xx；status 供消息 outbox 区分永久拒绝与可重试故障。 */
 export class HttpError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code: string | null = null,
+  ) {
     super(message)
     this.name = 'HttpError'
   }
@@ -142,13 +146,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let detail = ''
+    let code: string | null = null
     try {
-      const body = (await res.json()) as { error?: string }
+      const body = (await res.json()) as { error?: string; code?: string }
       if (body?.error) detail = `: ${body.error}`
+      if (body?.code) code = body.code
     } catch {
       // 响应体不是 JSON 或读取失败，忽略，用纯状态码报错
     }
-    throw new HttpError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`)
+    throw new HttpError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`, code)
   }
   return res.json() as Promise<T>
 }
@@ -193,6 +199,12 @@ export interface MessageRow {
   translated_text: string | null
 }
 
+export interface WhatsAppOnboardingStatus {
+  state: 'pending' | 'processing' | 'completed' | 'failed'
+  accountId: string | null
+  expiresAt: string
+}
+
 export const api = {
   /**
    * 登录成功后立即尝试加密持久化（safeStorage 不可用时 persistSession 静默跳过，
@@ -220,6 +232,20 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
+  getWhatsAppCloudConfig: () => request<{
+    appId: string
+    configId: string
+    graphApiVersion: string
+  }>('/api/whatsapp/cloud/config'),
+  startWhatsAppCloudOnboarding: (displayName: string) => request<{
+    sessionId: string
+    url: string
+    expiresAt: string
+  }>('/api/whatsapp/cloud/onboarding-sessions', {
+    method: 'POST', body: JSON.stringify({ displayName }),
+  }),
+  getWhatsAppCloudOnboarding: (sessionId: string) =>
+    request<WhatsAppOnboardingStatus>(`/api/whatsapp/cloud/onboarding-sessions/${sessionId}`),
   createNativeControlGrant: (accountId: string, platformAccountExternalId?: string) =>
     request<NativeControlGrantResponse>(`/api/accounts/${accountId}/native-control-grant`, {
       method: 'POST',
@@ -241,10 +267,20 @@ export const api = {
    * 不再翻译一次——重译结果可能和预览不一致，那样"先看后发"就没意义了。
    * targetLang 在 preTranslated: true 时服务端会忽略，只在 preTranslated: false（旧行为）时使用。
    */
-  send: (conversationId: string, body: string, opts: { preTranslated: boolean; targetLang?: string }) =>
+  send: (conversationId: string, body: string, opts: {
+    preTranslated: boolean
+    targetLang?: string
+    attemptId?: string
+  }) =>
     request<{ platformMessageId: string; sentText: string; provider?: string }>('/api/messages/send', {
       method: 'POST',
-      body: JSON.stringify({ conversationId, body, preTranslated: opts.preTranslated, targetLang: opts.targetLang }),
+      body: JSON.stringify({
+        conversationId,
+        body,
+        preTranslated: opts.preTranslated,
+        targetLang: opts.targetLang,
+        attemptId: opts.attemptId,
+      }),
     }),
   /** targetLang 为 null 表示解锁、恢复自动跟随客户语言。 */
   updateTargetLang: (conversationId: string, targetLang: string | null) =>

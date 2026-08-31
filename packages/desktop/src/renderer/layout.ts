@@ -34,6 +34,13 @@ export function showsNativeTranslationDock(platform: string): boolean {
   return platform !== 'whatsapp'
 }
 
+export function usesCloudConversationWorkspace(account: {
+  platform: string
+  connection_mode: string
+} | undefined): boolean {
+  return account?.platform === 'whatsapp' && account.connection_mode === 'cloud_api'
+}
+
 /**
  * 窗口窄到放不下"展开的功能中心 + 会话列表 + 聊天区"时，先把功能中心收成
  * 图标栏。它是这一排里最不常用又最占地方的一栏，比收掉会话列表划算得多。

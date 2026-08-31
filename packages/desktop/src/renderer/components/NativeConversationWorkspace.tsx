@@ -8,16 +8,27 @@ import {
   RESIZER_WIDTH,
   saveWidths,
   showsNativeTranslationDock,
+  usesCloudConversationWorkspace,
 } from '../layout.js'
 import { CustomerPanel } from './CustomerPanel.js'
 import { NativeClient, signalOutboxStatusError } from './NativeClient.js'
 import { Resizer } from './Resizer.js'
 import { TranslationDock } from './TranslationDock.js'
+import { ChatWorkspace } from './ChatWorkspace.js'
 
 const DEFAULT_CUSTOMER_WIDTH = 310
 
 /** 单一会话工作区：原生客户端与固定翻译输入坞在中间，客户档案固定在右侧。 */
 export function NativeConversationWorkspace() {
+  const activeAccountId = useStore(s => s.activeAccountId)
+  const cloudApiActive = useStore(s => usesCloudConversationWorkspace(
+    s.accounts.find(account => account.id === activeAccountId),
+  ))
+  if (cloudApiActive) return <ChatWorkspace />
+  return <NativeClientConversationWorkspace />
+}
+
+function NativeClientConversationWorkspace() {
   const activePlatform = useStore(s => s.activePlatform)
   const activeAccountId = useStore(s => s.activeAccountId)
   const activeNative = useStore(s => activeAccountId

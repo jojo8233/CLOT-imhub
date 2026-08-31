@@ -67,6 +67,9 @@ contextBridge.exposeInMainWorld('imHub', {
     load: (): Promise<SessionPayload | null> => ipcRenderer.invoke('session:load'),
     clear: (): Promise<void> => ipcRenderer.invoke('session:clear'),
   },
+  external: {
+    open: (url: string): Promise<void> => ipcRenderer.invoke('external:open', url),
+  },
   nativeControl: {
     configure: (target: NativeControlTarget, grant: NativeControlGrantResponse): Promise<NativeControlStateUpdate> =>
       ipcRenderer.invoke(NATIVE_CONTROL_CONFIGURE_CHANNEL, { ...target, grant: grant.grant }),

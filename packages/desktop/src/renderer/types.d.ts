@@ -48,6 +48,7 @@ declare global {
     imHub?: {
       platform?: string
       serverUrl?: string
+      external?: { open(url: string): Promise<void> }
       nativeBridgePreload?: string
       nativeControl?: NativeControlBridge
       signalDesktop?: SignalDesktopBridge

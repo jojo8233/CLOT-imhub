@@ -249,17 +249,30 @@ WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽�
 `webview.isLoading()`；WhatsApp 登录后该标志可能长期为 `true`，应按已附着的精确 origin
 显示页面，同时继续用 `did-fail-load` 处理真实主框架错误。
 
-WhatsApp 统一消息链必须另行接入 Business Platform。当前数据库只预留
-`connection_mode=cloud_api`，创建接口会明确拒绝，直到以下前置条件全部满足：
+WhatsApp 统一消息链使用独立的 Business Platform `cloud_api` 路线。代码已接入 Meta Embedded
+Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 attempt/状态账本与 im-hub
+自有双语会话视图；默认仍关闭，`web_shell` 不会获得这些能力。启用前按以下顺序准备：
 
-- Meta Business/Developer 应用与适用的业务资质已经准备，并通过官方 Embedded Signup 为客户授权；
-- 服务端有公开 HTTPS Webhook，能完成验证、按官方方案校验回调真实性并订阅目标 WABA；
-- WABA id、phone-number id 与 im-hub owner/account 的绑定经过服务端复核；access token 仅以
-  服务端 secret reference 保存，绝不进入 renderer、webview、日志或 `credentials_ref` 明文；
-- 入站直接使用 Webhook `messages[].id`，出站只在 Graph API 响应返回 `messages[].id` 后报告
-  “平台已接受”，后续 `sent/delivered/read/failed` 由状态 Webhook 按同一 id 更新；
-- 请求超时或响应丢失时不得假设平台支持客户端幂等键并自动重发。先按选定 Graph API 版本的
-  官方文档确定去重/对账策略，再实现 `attemptId` 账本；禁止套用 Telegram 或 Signal 的 id 算法。
+1. 在 Meta Business/Developer 中准备应用、业务资质与 Embedded Signup configuration；给服务端
+   准备一个公开 HTTPS origin。Webhook callback 固定为
+   `${WHATSAPP_PUBLIC_BASE_URL}/api/webhooks/whatsapp`，验证值使用私下配置的
+   `WHATSAPP_WEBHOOK_VERIFY_TOKEN`，并订阅 WhatsApp `messages` 字段。
+2. 只在服务器本机填写 `.env.example` 已列出的 `WHATSAPP_*` 变量；不要把值粘贴到工单、聊天、
+   日志或 renderer。`WHATSAPP_SECRET_MASTER_KEY` 用 `openssl rand -base64 32` 生成。确认 URL、应用
+   和 secret 均就绪后才设 `WHATSAPP_CLOUD_ENABLED=true`。
+3. 执行 `pnpm db:migrate` 后重启服务端。owner 在“添加 WhatsApp 账号”中选择 Cloud API；桌面端只
+   打开公开 HTTPS onboarding 页面，一次性 ticket 走 URL fragment 并立即清除，Meta code 在同源
+   服务端交换。access token 只以 AES-256-GCM 密文保存，账号行只存 secret reference。
+4. WABA id、phone-number id 会由服务端调用 Graph API 复核并订阅 Webhook。入站纯文字直接使用
+   Webhook `messages[].id` 进入中央消息/翻译管线；中文译英文，其余语言译中文，然后在 Cloud API
+   自有会话视图中显示原文与译文。媒体目前只做安全忽略和聚合告警，不能当成已接入。
+5. 出站必须带 `attemptId`，账本绑定账号、会话、员工、目标、正文 SHA-256 与授权 revision；只有
+   Graph API 返回最终 `messages[].id` 后才报告成功。超时、响应丢失、2xx 缺少最终 ID 或进程重启
+   后都不得自动换 attempt 重发，结果保持未知并等待人工对账；禁止套用 Telegram 或 Signal ID 算法。
+
+在真实 Meta 配置完成前不要重启当前服务端来“试开” Cloud API：缺少任何必需变量都会被配置
+校验明确拒绝。第一次真实续验最多使用一条无敏感纯文字，先验证签名 Webhook、唯一落库、双语
+显示和最终平台 ID，再另行扩大媒体或模板消息范围。
 
 ---
 
@@ -355,7 +368,7 @@ Telegram：
 - [ ] Signal 收到英文文字时，同一原生气泡显示英文原文和中文译文；收到中文文字时显示中文原文和英文译文
 - [x] Signal 当前会话中本账号发出的纯文字也显示中英双语；重开或切入会话后最近 200 条历史纯文字出站可回填
 - [ ] 编辑入站文字后旧译文立即消失，只有新 revision 的译文可以重新出现；重开 Signal 后由中央快照恢复
-- [ ] WhatsApp 的同等双语验收只在 `cloud_api` + WABA Webhook + im-hub 自有会话视图完成后执行；不得用 `web_shell` DOM 抓取替代
+- [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验，不得用 `web_shell` DOM 抓取替代
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
 
 ---
@@ -396,12 +409,13 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站文字 bridge
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
-  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 只接入 `web_shell` 官方 Web
-  的 owner-only 隔离壳。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
+  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp `web_shell` 仍只是官方 Web
+  的 owner-only 隔离壳；独立 `cloud_api` 已完成授权、Webhook、纯文字收发账本和自有双语视图的
+  代码与自动化，但尚未配置真实 Meta 应用和公开 HTTPS 回调。Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
   入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
   通过真实客户端续验。纯文字自动发送的真实单条送达与最终 ID 主链已通过；a24 的成功态 UI 竞态
-  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp `cloud_api` 尚无官方授权、
-  Webhook 或统一 bridge；两者都不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp
+  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp Cloud API 尚无真实授权、
+  Webhook 回调和单条消息证据，不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp
   Business Platform 闭环仍待后续，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，

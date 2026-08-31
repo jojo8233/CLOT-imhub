@@ -85,6 +85,17 @@ function installRuntime(options: ImHubWindowRuntimeOptions): void {
     rmSync(tokenFile(), { force: true })
   })
 
+  ipcMain.handle('external:open', async (event, raw: unknown) => {
+    requireTrustedHost(event.sender)
+    if (typeof raw !== 'string') throw new Error('invalid external URL')
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+      throw new Error('external URL must be HTTPS')
+    }
+    // URL 可能带一次性 onboarding fragment；不记录 raw，也不把它返回 renderer。
+    await shell.openExternal(parsed.toString())
+  })
+
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() !== 'webview') return
 

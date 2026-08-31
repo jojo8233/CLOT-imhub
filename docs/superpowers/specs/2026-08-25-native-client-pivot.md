@@ -95,8 +95,10 @@
    partition 中承载官方 `web.whatsapp.com`，验证扫码、多开和页面内原生文字收发；该路线现明确
    标记为 `web_shell`，不会注入 im-hub preload、抓取 DOM、桥接或翻译。需要统一回传与发送的
    WhatsApp 账号必须走独立 `cloud_api` 路线，以 Business Platform 官方 Graph API、WABA Webhook
-   和 Embedded Signup 建立身份与事件合约。当前只预留模式并拒绝创建，不能把网页 partition
-   冒充 Cloud API 凭据或写成统一消息闭环。历史 `adapter` 路线继续保留兼容，不在本轮删除；
+   和 Embedded Signup 建立身份与事件合约。Cloud API 的服务端授权、加密 secret、Webhook、纯文字
+   入站、状态账本、最终平台消息 ID 发送门槛与 im-hub 自有双语会话视图现已完成代码和自动化；
+   只有配置公开 HTTPS origin、Meta 应用/业务授权并完成一条真实非敏感消息续验后，才可称为真实
+   闭环。不能把网页 partition 冒充 Cloud API 凭据。历史 `adapter` 路线继续保留兼容，不在本轮删除；
    Zoom 延后。
 
 ## Signal 同窗口宿主的历史与边界

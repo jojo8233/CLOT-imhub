@@ -38,6 +38,7 @@ function fakeActorRepo(): ActorRepo {
 let app: FastifyInstance
 let translate: ReturnType<typeof vi.fn>
 let adapterSend: ReturnType<typeof vi.fn>
+let whatsappSend: ReturnType<typeof vi.fn>
 let token: string
 let auditorToken: string
 let accountId: string
@@ -75,10 +76,12 @@ beforeEach(async () => {
 
   translate = vi.fn()
   adapterSend = vi.fn().mockResolvedValue('platform-msg-id')
+  whatsappSend = vi.fn().mockResolvedValue('wamid.cloud-final')
 
   const deps: MessageRouteDeps = {
     adapters: { send: adapterSend } as never,
     gateway: { translate } as never,
+    whatsappCloud: { sendText: whatsappSend } as never,
   }
 
   ;({ buildServer } = await import('../server.js'))
@@ -274,6 +277,41 @@ describe('POST /api/messages/send', () => {
     expect(translate).not.toHaveBeenCalled()
     expect(adapterSend).toHaveBeenCalledWith(accountId, 'pc-1', { body: 'Confirmed English text' })
     expect(res.json()).toEqual({ platformMessageId: 'platform-msg-id', sentText: 'Confirmed English text', provider: undefined })
+  })
+
+  it('WhatsApp cloud_api 强制使用 attemptId 和最终 wamid，不走网页壳 adapter', async () => {
+    await db.updateTable('accounts').set({
+      platform: 'whatsapp', connection_mode: 'cloud_api',
+    }).where('id', '=', accountId).execute()
+    const attemptId = '11111111-1111-4111-8111-111111111111'
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/send', headers: auth(token),
+      payload: { conversationId, body: 'Confirmed text', preTranslated: true, attemptId },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().platformMessageId).toBe('wamid.cloud-final')
+    expect(whatsappSend).toHaveBeenCalledWith({
+      attemptId,
+      accountId,
+      conversationId,
+      actorUserId: OWNER_ID,
+      targetExternalId: 'contact-1',
+      body: 'Confirmed text',
+    })
+    expect(adapterSend).not.toHaveBeenCalled()
+  })
+
+  it('WhatsApp cloud_api 缺 attemptId 时拒绝，不能退回无幂等发送', async () => {
+    await db.updateTable('accounts').set({
+      platform: 'whatsapp', connection_mode: 'cloud_api',
+    }).where('id', '=', accountId).execute()
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/send', headers: auth(token),
+      payload: { conversationId, body: 'Confirmed text', preTranslated: true },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(whatsappSend).not.toHaveBeenCalled()
+    expect(adapterSend).not.toHaveBeenCalled()
   })
 
   it('preTranslated 缺省为 false 时保持旧行为：服务端翻译后发出（向后兼容旧客户端）', async () => {

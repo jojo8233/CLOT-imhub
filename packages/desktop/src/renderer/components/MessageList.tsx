@@ -70,14 +70,14 @@ export function MessageList() {
                     {m.translated_text}
                   </div>
                 )
-                : (
+                : !out ? (
                   <div style={{
                     marginTop: theme.space.xs, fontSize: theme.font.size.xs,
                     color: out ? theme.color.onInkFaint : theme.color.textFaint,
                   }}>
                     翻译中…
                   </div>
-                )}
+                ) : null}
 
               <div style={{
                 marginTop: theme.space.xs, fontSize: theme.font.size.xs, textAlign: 'right',

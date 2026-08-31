@@ -21,6 +21,12 @@ import {
   telegramShadowRefreshRoutes,
   type TelegramShadowRefreshRouteDeps,
 } from './routes/shadow-refresh.js'
+import {
+  whatsappCloudAccountRoutes,
+  whatsappOnboardingPublicRoutes,
+  whatsappWebhookRoutes,
+  type WhatsAppCloudRouteDeps,
+} from './routes/whatsapp-cloud.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -55,6 +61,7 @@ export interface BuildServerOptions {
 export interface BuildServerDeps extends MessageRouteDeps {
   native?: NativeRouteDeps
   telegramShadowRefresh?: TelegramShadowRefreshRouteDeps
+  whatsappCloudRoutes?: WhatsAppCloudRouteDeps
 }
 
 export async function buildServer(
@@ -86,7 +93,12 @@ export async function buildServer(
 
   app.addHook('onRequest', async (req, reply) => {
     // /api/auth/ 自己校验密码；/ws 自己在首帧里鉴权。两者都不走这个钩子。
-    if (req.url.startsWith('/api/auth/') || req.url.startsWith('/ws')) return
+    const pathname = req.url.split('?', 1)[0]
+    if (req.url.startsWith('/api/auth/')
+      || req.url.startsWith('/ws')
+      || pathname === '/api/webhooks/whatsapp'
+      || pathname === '/whatsapp/cloud/onboard'
+      || pathname === '/api/whatsapp/cloud/onboard/complete') return
     const header = req.headers.authorization
     const nativeGrantPath = req.url.startsWith('/api/native/') || req.url.startsWith('/api/translate/')
     if (nativeGrantPath && isNativeControlAuthorization(header)) return
@@ -108,6 +120,12 @@ export async function buildServer(
     user: { id: req.actor.userId, role: req.actor.role },
   }))
   await app.register(async (instance) => { await accountRoutes(instance, deps) })
+  const whatsappCloud = deps.whatsappCloudRoutes
+  if (whatsappCloud) {
+    await app.register(async instance => whatsappWebhookRoutes(instance, whatsappCloud))
+    await app.register(async instance => whatsappOnboardingPublicRoutes(instance, whatsappCloud))
+    await app.register(async instance => whatsappCloudAccountRoutes(instance, whatsappCloud))
+  }
   await app.register(nativeControlRoutes)
   await app.register(conversationRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })

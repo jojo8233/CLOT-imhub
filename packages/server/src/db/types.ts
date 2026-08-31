@@ -13,6 +13,10 @@ type NullableText = ColumnType<string | null, string | null | undefined, string 
 /** 必填且 DB 无默认值的时间列：insert 时不允许省略 */
 type RequiredTimestamp = ColumnType<Date, Date | string, Date | string>
 
+export type WhatsAppSendAttemptState = 'sending' | 'accepted' | 'unknown' | 'failed'
+export type WhatsAppMessageStatus = 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | 'deleted'
+export type WhatsAppOnboardingState = 'pending' | 'processing' | 'completed' | 'failed'
+
 export interface UsersTable {
   id: Generated<string>
   email: string
@@ -122,6 +126,69 @@ export interface TelegramShadowObservationsTable {
   last_observed_at: Timestamp
 }
 
+/**
+ * 服务端 secret store。ciphertext/iv/auth_tag 都是 base64，主密钥只来自进程环境。
+ * account_id 级联删除，避免删除 Cloud API 账号后遗留不可达 token。
+ */
+export interface PlatformSecretsTable {
+  id: Generated<string>
+  account_id: string
+  purpose: string
+  ciphertext: string
+  iv: string
+  auth_tag: string
+  created_at: Generated<Timestamp>
+  rotated_at: Timestamp | null
+}
+
+export interface WhatsAppCloudAccountsTable {
+  account_id: string
+  waba_id: string
+  phone_number_id: string
+  graph_api_version: string
+  authorization_revision: Generated<number>
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+export interface WhatsAppSendAttemptsTable {
+  attempt_id: string
+  account_id: string
+  conversation_id: string
+  actor_user_id: string
+  target_external_id: string
+  body_sha256: string
+  authorization_revision: number
+  state: WhatsAppSendAttemptState
+  platform_message_id: string | null
+  error_code: string | null
+  started_at: Generated<Timestamp>
+  completed_at: Timestamp | null
+}
+
+export interface WhatsAppMessageStatusesTable {
+  account_id: string
+  platform_message_id: string
+  status: WhatsAppMessageStatus
+  status_at: RequiredTimestamp
+  error_code: string | null
+  updated_at: Generated<Timestamp>
+}
+
+export interface WhatsAppOnboardingSessionsTable {
+  id: Generated<string>
+  owner_user_id: string
+  team_id: string | null
+  display_name: string
+  ticket_sha256: string
+  state: Generated<WhatsAppOnboardingState>
+  account_id: string | null
+  error_code: string | null
+  expires_at: RequiredTimestamp
+  created_at: Generated<Timestamp>
+  consumed_at: Timestamp | null
+}
+
 export interface Database {
   users: UsersTable
   teams: TeamsTable
@@ -133,4 +200,9 @@ export interface Database {
   message_reactions: MessageReactionsTable
   message_id_aliases: MessageIdAliasesTable
   telegram_shadow_observations: TelegramShadowObservationsTable
+  platform_secrets: PlatformSecretsTable
+  whatsapp_cloud_accounts: WhatsAppCloudAccountsTable
+  whatsapp_send_attempts: WhatsAppSendAttemptsTable
+  whatsapp_message_statuses: WhatsAppMessageStatusesTable
+  whatsapp_onboarding_sessions: WhatsAppOnboardingSessionsTable
 }
