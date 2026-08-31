@@ -121,8 +121,8 @@ describe('native webview load recovery', () => {
 })
 
 describe('native webview composer focus', () => {
-  it('只在 WhatsApp 写入或发送前由当前宿主 renderer 聚焦 webview', () => {
-    expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.set-draft' })).toBe(true)
+  it('只在 WhatsApp 真正发送前由当前宿主 renderer 聚焦 webview', () => {
+    expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.set-draft' })).toBe(false)
     expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.send' })).toBe(true)
     expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.get-draft' })).toBe(false)
     expect(nativeWebviewNeedsComposerFocus('telegram', { type: 'composer.set-draft' })).toBe(false)

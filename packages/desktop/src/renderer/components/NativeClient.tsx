@@ -77,8 +77,7 @@ export function nativeWebviewNeedsComposerFocus(
   platform: string,
   command: Pick<NativeHostCommand, 'type'>,
 ): boolean {
-  return platform === 'whatsapp'
-    && (command.type === 'composer.set-draft' || command.type === 'composer.send')
+  return platform === 'whatsapp' && command.type === 'composer.send'
 }
 
 export function browserCompatibleUserAgent(userAgent: string): string {

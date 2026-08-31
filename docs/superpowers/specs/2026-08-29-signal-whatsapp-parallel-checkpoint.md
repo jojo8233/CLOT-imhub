@@ -704,7 +704,21 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   `pnpm typecheck`、67 个测试文件 550 passed / 1 todo 与 desktop production build。准备脚本从
   官方 Signal Desktop 8.25.0 与 a45 不透明配置生成
   `/private/tmp/Signal-imhub-integrated-a46.app`，deep/strict codesign 通过且尚未启动。
-- 下一真实步骤只在 a46 重做一次无发送草稿确认：必须同时看到新译文单份、TranslationDock 就绪且
+- a46 仍保留旧草稿并报告未确认新草稿，证明固定 50ms 不能解决强制原生焦点竞态。随后只在
+  `127.0.0.1` 开临时调试端口，用户打开会话后分别在页面默认 world 与临时隔离 world 执行无发送
+  结构诊断。两次都只看到一个可见 Lexical composer；`document.hasFocus()` 为 false，但 activeElement、
+  完整选区与写入前选区正文确认均通过，浏览器各产生唯一一份 trusted `input/insertText` 事件，
+  新占位草稿从立即到 500ms 始终稳定。诊断只输出布尔量、节点计数和事件计数，没有输出正文、账号、
+  会话键或消息 id，也没有查询或点击发送按钮。
+- 因此草稿写入现明确采用非抢焦 DOM 事务：renderer 与主进程不再为 `composer.set-draft` 聚焦
+  WhatsApp webview，guest 只要求 composer 成为 activeElement、完整选区可信并执行一次插入。
+  `composer.send` 仍由 renderer 与主进程确认 guest webContents 原生焦点；发送前 get-draft、最终正文
+  SHA-256、attemptId、初始 revision、切会话/改稿拒绝和最终出站 DOM 容器确认均未放宽。
+- 更新 renderer/主进程平台命令矩阵，新增草稿读写不抢焦且发送仍抢焦的合成覆盖。验证通过
+  `pnpm typecheck`、67 个测试文件 550 passed / 1 todo 与 desktop production build。准备脚本从
+  官方 Signal Desktop 8.25.0 与 a46 不透明配置生成
+  `/private/tmp/Signal-imhub-integrated-a47.app`，deep/strict codesign 通过且尚未启动。
+- 下一真实步骤只在 a47 重做一次无发送草稿确认：必须同时看到新译文单份、TranslationDock 就绪且
   发送按钮可用。通过后才可进入最多一条无敏感纯文字发送；成功仍要求发送前不存在匹配容器、
   guest 确认正文匹配且方向为出站，并返回最终 WhatsApp DOM `data-id`。PR #19 与 Issue #12 状态
   不变。

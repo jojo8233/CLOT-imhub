@@ -13,11 +13,10 @@ export interface WhatsAppComposerFocusPort {
 }
 
 /**
- * 等 guest DOM 与 Lexical 自身的 focus 处理完成后再开始唯一一次编辑事务。
+ * 等 composer DOM 与 Lexical 自身的 focus 处理完成后再开始唯一一次编辑事务。
  *
- * webContents 获得原生焦点时，`document.hasFocus()` 可以先变为 true；Lexical 的
- * focus handler 随后一轮才接管 selection。此时立即 insertText 会短暂改 DOM，随后
- * 被旧 editor state 回滚。
+ * 草稿写入不能抢 webview 原生焦点；只等待 activeElement 稳定，并在后续事务中继续
+ * 验证完整选区。真正发送仍由主进程单独确认 guest webContents 焦点。
  */
 export async function waitForWhatsAppComposerFocus(
   port: WhatsAppComposerFocusPort,

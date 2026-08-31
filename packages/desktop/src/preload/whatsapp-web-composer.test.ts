@@ -5,7 +5,7 @@ import {
 } from './whatsapp-web-composer.js'
 
 describe('WhatsApp Web composer writer', () => {
-  it('即使 DOM 已聚焦也先等待 Lexical 完成一轮焦点处理', async () => {
+  it('即使 composer DOM 已聚焦也先等待 Lexical 完成一轮焦点处理', async () => {
     const order: string[] = []
 
     await expect(waitForWhatsAppComposerFocus({
@@ -19,7 +19,7 @@ describe('WhatsApp Web composer writer', () => {
     expect(order).toEqual(['focus', 'has-focus', 'settle', 'has-focus'])
   })
 
-  it('焦点在稳定周期内丢失时拒绝后续编辑', async () => {
+  it('activeElement 在稳定周期内丢失时拒绝后续编辑', async () => {
     let focused = true
 
     await expect(waitForWhatsAppComposerFocus({
@@ -28,7 +28,7 @@ describe('WhatsApp Web composer writer', () => {
     }, async () => { focused = false })).resolves.toBe(false)
   })
 
-  it('等待延迟到达的 guest 焦点后再留一轮稳定周期', async () => {
+  it('等待延迟到达的 composer DOM 焦点后再留一轮稳定周期', async () => {
     let checks = 0
     const pause = vi.fn(async () => {})
 
@@ -92,7 +92,7 @@ describe('WhatsApp Web composer writer', () => {
     expect(insertText).not.toHaveBeenCalled()
   })
 
-  it('guest 没有获得原生焦点时不全选也不插入', () => {
+  it('composer 没有成为 activeElement 时不全选也不插入', () => {
     const selectContents = vi.fn(() => true)
     const insertText = vi.fn(() => true)
 

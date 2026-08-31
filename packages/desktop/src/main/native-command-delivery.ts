@@ -24,7 +24,7 @@ export async function waitForNativeGuestFocus(
   return target.isFocused()
 }
 
-/** WhatsApp 的受控编辑器只有在 guest webContents 获得原生焦点后才提交编辑事务。 */
+/** WhatsApp 真正发送前确认 guest webContents 原生焦点；草稿写入留在非抢焦 DOM 事务。 */
 export async function deliverNativeHostCommand(
   target: NativeCommandDeliveryTarget,
   channel: string,
@@ -32,8 +32,7 @@ export async function deliverNativeHostCommand(
   focusComposerCommands: boolean,
   waitForFocus: NativeFocusWaiter = waitForNativeGuestFocus,
 ): Promise<void> {
-  if (focusComposerCommands
-    && (command.type === 'composer.set-draft' || command.type === 'composer.send')) {
+  if (focusComposerCommands && command.type === 'composer.send') {
     target.focus()
     if (!await waitForFocus(target)) throw new Error('原生客户端输入焦点不可用')
   }

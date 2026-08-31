@@ -457,7 +457,7 @@ class WhatsAppWebController {
       const input = composerInput()
       const focused = input ? await waitForWhatsAppComposerFocus({
         focus: () => { input.focus() },
-        hasFocus: () => document.hasFocus() && document.activeElement === input,
+        hasFocus: () => document.activeElement === input,
       }) : false
       if (!this.commandMatchesContext(command)) {
         this.emitCommandFailure(command, 'stale_context', 'WhatsApp 当前会话已经变化')
@@ -957,7 +957,7 @@ function setComposerText(input: HTMLElement, text: string): boolean {
     return replaceWhatsAppComposerText({
       focus: () => {
         input.focus()
-        return document.hasFocus() && document.activeElement === input
+        return document.activeElement === input
       },
       selectContents: () => {
         const before = composerText(input)
