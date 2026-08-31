@@ -52,7 +52,8 @@ export async function nativeControlRoutes(app: FastifyInstance): Promise<void> {
           return { account: current, error: 'identity_mismatch' as const }
         }
         current.platform_account_external_id = requestedSignalIdentity
-      } else if (current.platform === 'whatsapp' && current.connection_mode === 'web_shell') {
+      } else if (current.platform === 'whatsapp'
+        && (current.connection_mode === 'web_shell' || current.connection_mode === 'adapter')) {
         if (!requestedPlatformIdentity) return { account: current, error: 'identity_missing' as const }
         let requestedWhatsAppIdentity: string
         try {

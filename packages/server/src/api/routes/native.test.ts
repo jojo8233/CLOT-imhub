@@ -312,7 +312,7 @@ describe('native bridge routes', () => {
     expect(invalidAci.statusCode).toBe(400)
   })
 
-  it('WhatsApp Web 只允许 owner 用页面实际身份首次绑定并签发短时 grant', async () => {
+  it('WhatsApp Web 新账号与历史 adapter 只允许 owner 用页面实际身份首次绑定', async () => {
     const whatsappAccountId = (await db.insertInto('accounts').values({
       platform: 'whatsapp', owner_user_id: agentId, team_id: teamId,
       display_name: 'Patched WhatsApp', status: 'pending_auth', connection_mode: 'web_shell',
@@ -366,6 +366,26 @@ describe('native bridge routes', () => {
     })
     expect(mismatch.statusCode).toBe(409)
     expect(mismatch.json()).toMatchObject({ error: expect.stringContaining('身份') })
+
+    const legacyAccountId = (await db.insertInto('accounts').values({
+      platform: 'whatsapp', owner_user_id: agentId, team_id: teamId,
+      display_name: 'Legacy WhatsApp', status: 'pending_auth', connection_mode: 'adapter',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const legacy = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${legacyAccountId}/native-control-grant`,
+      headers: auth(agentToken),
+      payload: { platformAccountExternalId: '555123456@lid' },
+    })
+    expect(legacy.statusCode).toBe(200)
+    expect(await db.selectFrom('accounts')
+      .select(['platform_account_external_id', 'status', 'connection_mode'])
+      .where('id', '=', legacyAccountId)
+      .executeTakeFirstOrThrow()).toEqual({
+      platform_account_external_id: '555123456@lid',
+      status: 'connected',
+      connection_mode: 'adapter',
+    })
 
     const invalidAccountId = (await db.insertInto('accounts').values({
       platform: 'whatsapp', owner_user_id: agentId, team_id: teamId,

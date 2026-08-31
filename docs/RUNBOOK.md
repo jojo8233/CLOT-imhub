@@ -256,7 +256,8 @@ partition 的独立 IndexedDB 保存 `attemptId`、首次 context revision、正
 消息后才报告成功；超时、结果丢失或进程重启后的 pending attempt 都禁止自动再点一次。成功由
 外壳 ACK 后删除账本记录。当前兼容层只提供可见纯文字双语和翻译坞发送，不把 DOM 消息回传为
 中央归档，也不承诺媒体、回应、删除或 WhatsApp 页面选择器的长期稳定性。历史
-`connection_mode=adapter` 账号保留兼容，不要批量改写或删除。
+`connection_mode=adapter` 账号保留原值，但页面身份绑定与补丁 bridge 按 `web_shell` 同等处理；
+不要为了启用补丁批量改写或删除账号。
 
 若页面没有出现，先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
 启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确

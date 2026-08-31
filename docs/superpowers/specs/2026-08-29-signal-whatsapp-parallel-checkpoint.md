@@ -492,7 +492,9 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - guest 从 WhatsApp 页面本地状态取得并规范当前登录用户标识，周期重放以覆盖 preload 早于 renderer
   listener 的竞态。服务端只允许 owner 对 `web_shell` 首次绑定该身份，后续页面身份、数据库身份、
   短时 grant 或 partition 任一不一致都会阻断能力。日志与 UI 不输出该标识；历史 `adapter` 和独立
-  `cloud_api` 账号不迁移、不删除。
+  `cloud_api` 账号不迁移、不删除。真实续验使用的是早期创建、migration 后保留为 `adapter` 的网页
+  账号；该账号同样挂载 owner-only partition，因此 control grant 兼容 `adapter` 的首次页面身份
+  绑定，但不改变其数据库模式，也不扩大到 `cloud_api`。
 - 气泡兼容层只扫描当前会话最近 300 个可见纯文字节点，使用 `role=row`、`data-testid`、
   `.message-in/.message-out` 与 selectable-text 多锚点；打开会话时覆盖已存在的可见入/出站消息，
   滚动加载、新消息和正文变化由 MutationObserver 增量触发。语言目标仍以 provider 检测为准：
