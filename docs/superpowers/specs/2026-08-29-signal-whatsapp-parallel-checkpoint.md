@@ -762,14 +762,16 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 
 - 三层边界保持分离：无界面的 coordinator 负责有序批量翻译；通用 controller 负责气泡观察、当前性、
   状态与重试；WhatsApp DOM adapter 负责行解析、marker 生命周期及对实际 DOM port 的适配。
-  Telegram 保持上游批处理与原生渲染，Signal 保持中央译文同步，WhatsApp 保持 DOM 队列与 marker；
-  未修改 Telegram、Signal、composer、send 或各平台消息 ID 的既有边界。
+  WhatsApp DOM adapter 委托通用 controller 排队调度和 coordinator 批量翻译，bridge 不再保留私有
+  翻译队列。Telegram 保持上游批处理与原生渲染，Signal 保持中央译文同步；未修改 Telegram、Signal、
+  composer、send 或各平台消息 ID 的既有边界。
 - Task 1-4 受影响 preload 定向验证重新运行 7 个测试文件，62 passed，exit 0。Phase A 完整
   `pnpm test` 先在沙箱中仅因本机 PostgreSQL `EPERM` 退出 1，随后以相同命令在沙箱外通过：
   71 个测试文件、590 passed、1 todo，exit 0。`pnpm typecheck` exit 0；desktop production build
   exit 0，main、preload 与 renderer bundle 均成功。
 - 从 a49 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a50.app`；脚本报告 Signal Desktop 8.25.0，
   `/usr/bin/codesign --verify --deep --strict` exit 0。未检查 profile/source 内容。
-- 用户只读真实验收反馈为：当前可见入站译文：有；当前可见出站译文：有；向上滚动后新增入站译文：有；
-  向上滚动后新增出站译文：有；错误诊断：无。反馈未包含正文、账号标识或 DOM id。
+- controller 启动 a50 后，用户只读真实验收反馈为：当前可见入站译文：有；当前可见出站译文：有；
+  向上滚动后新增入站译文：有；向上滚动后新增出站译文：有；错误诊断：无。反馈未包含正文、账号
+  标识或 DOM id。
 - 本轮没有真实发送，真实发送数为 0；PR #19 未合并，Issue #12 未关闭。
