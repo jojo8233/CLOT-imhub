@@ -3,6 +3,7 @@ import {
   normalizeWhatsAppDomText,
   normalizeWhatsAppStorageIdentity,
   sameWhatsAppConversation,
+  shouldResetWhatsAppTranslations,
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
 } from './whatsapp-web-utils.js'
@@ -50,5 +51,23 @@ describe('WhatsApp Web patch helpers', () => {
       contactExternalId: '987654321@c.us',
     })).toBe(false)
     expect(sameWhatsAppConversation(current, null)).toBe(false)
+  })
+
+  it('只有真实会话边界才重置 WhatsApp 译文', () => {
+    const current = {
+      platformConversationId: 'wa:first@c.us',
+      contactExternalId: 'first@c.us',
+      contactDisplayName: 'First',
+    }
+    expect(shouldResetWhatsAppTranslations(current, {
+      ...current,
+      contactDisplayName: 'First · online',
+    })).toBe(false)
+    expect(shouldResetWhatsAppTranslations(current, {
+      ...current,
+      platformConversationId: 'wa:second@c.us',
+    })).toBe(true)
+    expect(shouldResetWhatsAppTranslations(current, null)).toBe(true)
+    expect(shouldResetWhatsAppTranslations(null, current)).toBe(true)
   })
 })
