@@ -82,6 +82,15 @@ function compose(scope: FakeNode, target: FakeNode): void {
   attach(scope, target)
 }
 
+function detach(target: FakeNode): void {
+  const parent = target.parent
+  if (!parent) return
+  const siblings = children.get(parent)
+  if (siblings) children.set(parent, siblings.filter(candidate => candidate !== target))
+  target.parent = null
+  target.connected = false
+}
+
 describe('WhatsApp Web send action resolver', () => {
   it('send icon 自身是 role button 时解析为唯一发送动作', () => {
     const scope = node('scope')
@@ -239,6 +248,57 @@ describe('WhatsApp Web send action resolver', () => {
     expect(first.kind === 'resolved' && second.kind === 'resolved'
       ? whatsappSendActionRemainsCurrent(first.target, second)
       : false).toBe(true)
+  })
+
+  it('二次解析改绑到替换后的 target 时拒绝旧 target', () => {
+    const scope = node('scope')
+    const firstTarget = node('first-target', {
+      interactive: true,
+      matches: ['[data-icon="send"]'],
+    })
+    const replacementTarget = node('replacement-target', {
+      interactive: true,
+      matches: ['[data-testid="compose-btn-send"]'],
+    })
+    compose(scope, firstTarget)
+    const domPort = port()
+
+    const first = resolveWhatsAppSendAction(scope, domPort)
+    expect(first).toEqual({ kind: 'resolved', target: firstTarget })
+
+    detach(firstTarget)
+    compose(scope, replacementTarget)
+    const second = resolveWhatsAppSendAction(scope, domPort)
+
+    expect(second).toEqual({ kind: 'resolved', target: replacementTarget })
+    expect(first.kind === 'resolved'
+      ? whatsappSendActionRemainsCurrent(first.target, second)
+      : false).toBe(false)
+  })
+
+  it('二次解析出现多个可用 target 时拒绝旧 target', () => {
+    const scope = node('scope')
+    const firstTarget = node('first-target', {
+      interactive: true,
+      matches: ['[data-icon="send"]'],
+    })
+    const additionalTarget = node('additional-target', {
+      interactive: true,
+      matches: ['[data-testid="send"]'],
+    })
+    compose(scope, firstTarget)
+    const domPort = port()
+
+    const first = resolveWhatsAppSendAction(scope, domPort)
+    expect(first).toEqual({ kind: 'resolved', target: firstTarget })
+
+    compose(scope, additionalTarget)
+    const second = resolveWhatsAppSendAction(scope, domPort)
+
+    expect(second).toEqual({ kind: 'unavailable', reason: 'ambiguous' })
+    expect(first.kind === 'resolved'
+      ? whatsappSendActionRemainsCurrent(first.target, second)
+      : false).toBe(false)
   })
 
   it('scope 为空时返回 no-scope', () => {

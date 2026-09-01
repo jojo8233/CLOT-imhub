@@ -782,8 +782,8 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 
 ## 27. WhatsApp Web 结构化发送控件与最终 DOM ID checkpoint（2026-09-02）
 
-- 发送动作解析已收敛到结构化 resolver 与受控 DOM port：只从当前会话的语义候选解析动作；点击前和最终确认前都再次核对 target identity/currentness，避免页面重渲染、切会话或候选失效时向错误目标派发。可见性 hardening 保持该动作只在当前可见、可操作的页面状态中执行，不把隐藏或过期节点当作发送入口。
-- WhatsApp guest 的发送成功仍以严格事实门禁为准：发送前不存在、正文匹配、方向为出站的实际容器，且取得最终 WhatsApp DOM ID。此处不记录具体 ID、正文、账号或任何敏感配置。
+- 发送动作解析已收敛到结构化 resolver 与受控 DOM port：草稿指纹通过后，首次解析发生在 `beforeIds` 快照和 pending ledger 写入之前；pending 写入后、`click()` 之前再次解析，并要求仍是同一 target 对象，避免页面重渲染、切会话或候选失效时向错误目标派发。可见性 hardening 保持该动作只在当前可见、可操作的页面状态中执行，不把隐藏或过期节点当作发送入口。
+- WhatsApp guest 在 `click()` 后仍以严格事实门禁确认发送成功：会话仍当前，且仅接受发送前不存在、正文匹配、方向为出站并带实际 DOM `data-id` 的新容器，再取得最终 WhatsApp DOM ID。此处不记录具体 ID、正文、账号或任何敏感配置。
 - 验收前发现 control grant 过期但仍带非空时间时会阻塞重签。现由共享 `nativeControlGrantIsUsable(control, now)` 以显式时间判定非 blocked、可解析且严格未过期的授权；Signal 与 Webview 两处调用都传入当前时刻。waiting 且未来有效仍可避免重复签发，waiting/ready 的已过期、无效或空时间会触发重新授权。
 - 定向 5 个文件回归通过，40/40；Task 2 完整 10-file affected regression 通过，102/102。`pnpm typecheck` 与 desktop production build 均通过。完整 `pnpm test` 首次只受本机 PostgreSQL `EPERM` 沙箱限制，随后以完全相同命令在沙箱外通过：73 个测试文件、603 passed、1 个既有 todo。
 - a51 从 a50 不透明配置生成，a52 再从 a51 不透明配置顺序生成；两次脚本均报告 Signal Desktop 8.25.0，且均通过 deep/strict codesign。过程中未读取或输出配置内容。
