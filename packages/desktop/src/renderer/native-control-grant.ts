@@ -5,7 +5,7 @@ export interface NativeControlGrantState {
 
 export function nativeControlGrantIsUsable(
   control: NativeControlGrantState,
-  now = Date.now(),
+  now: number,
 ): boolean {
   if (control.state === 'blocked' || control.expiresAt === null) return false
   const expiresAt = Date.parse(control.expiresAt)

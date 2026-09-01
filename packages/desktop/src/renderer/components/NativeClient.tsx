@@ -460,7 +460,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
 
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
-      hasUsableGrant = nativeControlGrantIsUsable(control)
+      hasUsableGrant = nativeControlGrantIsUsable(control, Date.now())
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
@@ -893,7 +893,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
 
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
-      hasUsableGrant = nativeControlGrantIsUsable(control)
+      hasUsableGrant = nativeControlGrantIsUsable(control, Date.now())
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
