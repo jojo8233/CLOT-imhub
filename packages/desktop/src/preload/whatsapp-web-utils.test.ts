@@ -3,6 +3,7 @@ import {
   normalizeWhatsAppDomText,
   normalizeWhatsAppStorageIdentity,
   sameWhatsAppConversation,
+  shouldExplicitlyResetWhatsAppTranslationsOnSignOut,
   shouldResetWhatsAppTranslations,
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
@@ -69,5 +70,19 @@ describe('WhatsApp Web patch helpers', () => {
     })).toBe(true)
     expect(shouldResetWhatsAppTranslations(current, null)).toBe(true)
     expect(shouldResetWhatsAppTranslations(null, current)).toBe(true)
+  })
+
+  it.each([
+    ['有当前会话', {
+      platformConversationId: 'wa:first@c.us',
+      contactExternalId: 'first@c.us',
+      contactDisplayName: 'First',
+    }],
+    ['当前会话已是 null', null],
+  ])('sign-out 在%s时都只重置一次译文', (_name, current) => {
+    let resetCount = 0
+    if (shouldResetWhatsAppTranslations(current, null)) resetCount += 1
+    if (shouldExplicitlyResetWhatsAppTranslationsOnSignOut(current)) resetCount += 1
+    expect(resetCount).toBe(1)
   })
 })

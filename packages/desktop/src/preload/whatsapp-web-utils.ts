@@ -64,6 +64,13 @@ export function shouldResetWhatsAppTranslations(
   return !sameWhatsAppConversation(current, next)
 }
 
+/** updateContext(null) 只在原本有会话时重置；无会话的 sign-out 需要显式补一次。 */
+export function shouldExplicitlyResetWhatsAppTranslationsOnSignOut(
+  current: NativeConversationContext | null,
+): boolean {
+  return current === null
+}
+
 export async function sha256Text(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')

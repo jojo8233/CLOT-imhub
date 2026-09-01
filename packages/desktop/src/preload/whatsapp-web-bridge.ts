@@ -20,6 +20,7 @@ import {
   normalizeWhatsAppStorageIdentity,
   sameWhatsAppConversation,
   sha256Text,
+  shouldExplicitlyResetWhatsAppTranslationsOnSignOut,
   shouldResetWhatsAppTranslations,
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
@@ -187,7 +188,11 @@ class WhatsAppWebController {
     this.identity = null
     this.lastIdentityEmittedAt = 0
     this.proxyReady = false
+    const previousContext = this.context?.value ?? null
     this.updateContext(null)
+    if (shouldExplicitlyResetWhatsAppTranslationsOnSignOut(previousContext)) {
+      this.resetPageTranslations()
+    }
     this.api.emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'account.signed-out',
