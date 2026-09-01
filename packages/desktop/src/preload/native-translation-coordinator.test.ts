@@ -106,12 +106,45 @@ describe('NativeTranslationCoordinator', () => {
   })
 
   it('成功缓存达到上限时淘汰最早正文', async () => {
-    const port = gateway()
+    const port = gateway({
+      translateBatch: vi.fn(async (input: NativeTranslationBatchInput) => (
+        input.texts.map(text => result(`译:${text}`, 'en'))
+      )),
+    })
     const coordinator = new NativeTranslationCoordinator(port, { maxCacheEntries: 2 })
 
     await coordinator.translateMany(['first', 'second', 'third'])
     await coordinator.translate('first')
     expect(port.translateBatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('缓存容量不淘汰仍在进行的同文操作', async () => {
+    let firstCall = true
+    let releaseFirst: (results: NativeTranslationBatchResult[]) => void = () => undefined
+    const translateBatch = vi.fn(async (input: NativeTranslationBatchInput) => {
+      const results = input.texts.map(text => result(`译:${text}`, 'en'))
+      if (!firstCall) return results
+      firstCall = false
+      return new Promise<NativeTranslationBatchResult[]>(resolve => {
+        releaseFirst = () => resolve(results)
+      })
+    })
+    const port = gateway({ translateBatch })
+    const coordinator = new NativeTranslationCoordinator(port, { maxCacheEntries: 1 })
+
+    const initial = coordinator.translateMany(['first', 'second'])
+    await vi.waitFor(() => expect(translateBatch).toHaveBeenCalledTimes(1))
+    const repeated = coordinator.translate('first')
+    releaseFirst([result('译:first', 'en'), result('译:second', 'en')])
+
+    await Promise.all([initial, repeated])
+    expect(port.detectLanguage).toHaveBeenCalledTimes(2)
+    expect(translateBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('拒绝超过五百条的缓存配置', () => {
+    expect(() => new NativeTranslationCoordinator(gateway(), { maxCacheEntries: 501 }))
+      .toThrow('maxCacheEntries must not exceed 500')
   })
 
   it('规范中文检测结果并译成英文', async () => {

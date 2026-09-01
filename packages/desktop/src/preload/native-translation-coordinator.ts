@@ -26,6 +26,7 @@ export type NativeTranslationTextResult =
 
 interface PendingText {
   text: string
+  operation: Promise<string>
   resolve(translated: string): void
   reject(error: Error): void
 }
@@ -50,6 +51,7 @@ interface InternalTranslationResult {
  */
 export class NativeTranslationCoordinator {
   private readonly cache = new Map<string, Promise<string>>()
+  private readonly inFlight = new Map<string, Promise<string>>()
   private readonly maxCacheEntries: number
   private readonly resolveTargetLanguage: (sourceLang: string | undefined) => string
 
@@ -60,6 +62,9 @@ export class NativeTranslationCoordinator {
     const maxCacheEntries = options.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES
     if (!Number.isSafeInteger(maxCacheEntries) || maxCacheEntries <= 0) {
       throw new Error('maxCacheEntries must be a positive safe integer')
+    }
+    if (maxCacheEntries > DEFAULT_MAX_CACHE_ENTRIES) {
+      throw new Error('maxCacheEntries must not exceed 500')
     }
     this.maxCacheEntries = maxCacheEntries
     this.resolveTargetLanguage = options.resolveTargetLanguage ?? bilingualTranslationTarget
@@ -83,6 +88,13 @@ export class NativeTranslationCoordinator {
           () => ({ status: 'failed' }) as const,
         )
       }
+      const inFlight = this.inFlight.get(text)
+      if (inFlight) {
+        return inFlight.then(
+          translated => ({ status: 'translated', translated }) as const,
+          () => ({ status: 'failed' }) as const,
+        )
+      }
 
       let resolveOperation: (translated: string) => void = () => undefined
       let rejectOperation: (error: Error) => void = () => undefined
@@ -92,11 +104,11 @@ export class NativeTranslationCoordinator {
       })
       let operation: Promise<string>
       operation = base.catch((error: unknown) => {
-        if (this.cache.get(text) === operation) this.cache.delete(text)
+        if (this.inFlight.get(text) === operation) this.inFlight.delete(text)
         throw error
       })
-      this.remember(text, operation)
-      pending.push({ text, resolve: resolveOperation, reject: rejectOperation })
+      this.rememberInFlight(text, operation)
+      pending.push({ text, operation, resolve: resolveOperation, reject: rejectOperation })
       return operation.then(
         translated => ({ status: 'translated', translated }) as const,
         () => ({ status: 'failed' }) as const,
@@ -109,6 +121,7 @@ export class NativeTranslationCoordinator {
 
   clear(): void {
     this.cache.clear()
+    this.inFlight.clear()
   }
 
   private remember(text: string, operation: Promise<string>): void {
@@ -117,6 +130,10 @@ export class NativeTranslationCoordinator {
       if (typeof oldest === 'string') this.cache.delete(oldest)
     }
     this.cache.set(text, operation)
+  }
+
+  private rememberInFlight(text: string, operation: Promise<string>): void {
+    this.inFlight.set(text, operation)
   }
 
   private targetLanguage(sourceLang: string | undefined): string {
@@ -236,10 +253,21 @@ export class NativeTranslationCoordinator {
   }
 
   private resolvePending(item: TranslationWorkItem, pending: PendingText[], translated: string): void {
-    pending[item.index]?.resolve(translated)
+    const pendingText = pending[item.index]
+    if (!pendingText) return
+    if (this.inFlight.get(pendingText.text) === pendingText.operation) {
+      this.inFlight.delete(pendingText.text)
+      this.remember(pendingText.text, Promise.resolve(translated))
+    }
+    pendingText.resolve(translated)
   }
 
   private rejectPending(item: TranslationWorkItem, pending: PendingText[]): void {
-    pending[item.index]?.reject(new Error('translation unavailable'))
+    const pendingText = pending[item.index]
+    if (!pendingText) return
+    if (this.inFlight.get(pendingText.text) === pendingText.operation) {
+      this.inFlight.delete(pendingText.text)
+    }
+    pendingText.reject(new Error('translation unavailable'))
   }
 }
