@@ -41,7 +41,10 @@ export class WhatsAppWebTranslationAdapter<Row extends object, Marker> {
       ),
       onPending: item => {
         const marker = this.dom.marker(item.key, true)
-        if (marker) this.dom.setText(marker, '翻译中…')
+        if (!marker) return
+        this.dom.setText(marker, '翻译中…')
+        this.dom.setError(marker, false)
+        this.dom.setRetryHandler(marker, null)
       },
       onSuccess: (item, translated) => {
         const marker = this.dom.marker(item.key, true)

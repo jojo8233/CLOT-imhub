@@ -234,6 +234,27 @@ describe('WhatsAppWebTranslationAdapter', () => {
     expect(coordinator.calls).toEqual([['hello'], ['hello']])
   })
 
+  it('失败行复用为新正文时清除旧错误与重试状态', async () => {
+    const first = row('A')
+    const { adapter, coordinator } = createAdapter([first])
+
+    adapter.observe(first, first.text)
+    await vi.advanceTimersByTimeAsync(500)
+    coordinator.resolveNext([{ status: 'failed' }])
+    await vi.runAllTicks()
+    const failedMarker = first.marker
+    expect(failedMarker?.attributes.has('data-im-hub-translation-error')).toBe(true)
+    expect(failedMarker?.onclick).not.toBeNull()
+
+    first.text = 'B'
+    expect(adapter.observe(first, first.text)).toBe(true)
+
+    expect(first.marker).toBe(failedMarker)
+    expect(first.marker?.textContent).toBe('翻译中…')
+    expect(first.marker?.attributes.has('data-im-hub-translation-error')).toBe(false)
+    expect(first.marker?.onclick).toBeNull()
+  })
+
   it('reset 清理 marker、cache、队列，并拒绝迟到结果', async () => {
     const first = row('hello')
     const second = row('later')
