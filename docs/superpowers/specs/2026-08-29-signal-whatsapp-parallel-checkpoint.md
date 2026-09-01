@@ -765,13 +765,17 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   WhatsApp DOM adapter 委托通用 controller 排队调度和 coordinator 批量翻译，bridge 不再保留私有
   翻译队列。Telegram 保持上游批处理与原生渲染，Signal 保持中央译文同步；未修改 Telegram、Signal、
   composer、send 或各平台消息 ID 的既有边界。
-- Task 1-4 受影响 preload 定向验证重新运行 7 个测试文件，62 passed，exit 0。Phase A 完整
+- Task 1-4 受影响 preload 定向验证在收尾 Minor 修复后重新运行 7 个测试文件，63 passed，
+  exit 0。修复后完整
   `pnpm test` 先在沙箱中仅因本机 PostgreSQL `EPERM` 退出 1，随后以相同命令在沙箱外通过：
-  71 个测试文件、590 passed、1 todo，exit 0。`pnpm typecheck` exit 0；desktop production build
+  71 个测试文件、591 passed、1 todo，exit 0。`pnpm typecheck` exit 0；desktop production build
   exit 0，main、preload 与 renderer bundle 均成功。
 - 从 a49 不透明配置生成 `/private/tmp/Signal-imhub-integrated-a50.app`；脚本报告 Signal Desktop 8.25.0，
   `/usr/bin/codesign --verify --deep --strict` exit 0。未检查 profile/source 内容。
 - controller 启动 a50 后，用户只读真实验收反馈为：当前可见入站译文：有；当前可见出站译文：有；
   向上滚动后新增入站译文：有；向上滚动后新增出站译文：有；错误诊断：无。反馈未包含正文、账号
   标识或 DOM id。
+- 上述 a50 五项只读验收发生在本次收尾 Minor 修复之前。本次仅在 WhatsApp marker 再次进入
+  pending 时清除旧 error attribute 与 retry handler，并由新增合成回归覆盖；未触碰正文解析、批处理、
+  会话/滚动或发送边界，因此未重复真实历史矩阵。
 - 本轮没有真实发送，真实发送数为 0；PR #19 未合并，Issue #12 未关闭。
