@@ -32,6 +32,7 @@ import {
   resolveWhatsAppExistingAttempt,
   whatsappDraftMatchesFingerprint,
   whatsappNewAttemptRevisionIsCurrent,
+  whatsappSendActionIsVisible,
   whatsappSendPreflightStillValid,
   WhatsAppSendAttemptGuard,
 } from './whatsapp-web-send.js'
@@ -93,13 +94,13 @@ const whatsappSendActionDomPort: WhatsAppSendActionDomPort<HTMLElement> = {
   isConnected: target => target.isConnected,
   isVisible: target => {
     const style = window.getComputedStyle(target)
-    const opacity = Number.parseFloat(style.opacity)
-    return target.getClientRects().length > 0
-      && style.display !== 'none'
-      && style.visibility !== 'hidden'
-      && style.pointerEvents !== 'none'
-      && Number.isFinite(opacity)
-      && opacity > 0
+    return whatsappSendActionIsVisible({
+      rects: [...target.getClientRects()],
+      display: style.display,
+      visibility: style.visibility,
+      pointerEvents: style.pointerEvents,
+      opacity: style.opacity,
+    })
   },
   isDisabled: target => target.matches(':disabled, [aria-disabled="true"]'),
   ariaLabel: target => target.getAttribute('aria-label'),

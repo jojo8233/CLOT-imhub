@@ -81,6 +81,23 @@ export function whatsappSendPreflightStillValid(input: {
     && input.sendActionCurrent
 }
 
+/** 发送 target 只有真正可见且有正面积时才可被页面点击。 */
+export function whatsappSendActionIsVisible(input: {
+  rects: readonly { width: number; height: number }[]
+  display: string
+  visibility: string
+  pointerEvents: string
+  opacity: string
+}): boolean {
+  const opacity = Number.parseFloat(input.opacity)
+  return input.rects.some(rect => rect.width > 0 && rect.height > 0)
+    && input.display !== 'none'
+    && input.visibility === 'visible'
+    && input.pointerEvents !== 'none'
+    && Number.isFinite(opacity)
+    && opacity > 0
+}
+
 /** 新 attempt 的首次 revision 必须就是当前命令 revision；只有既有账本恢复可以沿用旧值。 */
 export function whatsappNewAttemptRevisionIsCurrent(
   attemptContextRevision: number,

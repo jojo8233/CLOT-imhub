@@ -6,6 +6,7 @@ import {
   WhatsAppSendAttemptGuard,
   whatsappDraftMatchesFingerprint,
   whatsappNewAttemptRevisionIsCurrent,
+  whatsappSendActionIsVisible,
   whatsappSendPreflightStillValid,
 } from './whatsapp-web-send.js'
 import { sha256Text } from './whatsapp-web-utils.js'
@@ -77,6 +78,22 @@ describe('WhatsApp Web send invariants', () => {
     expect(whatsappSendPreflightStillValid({ ...valid, contextMatches: false })).toBe(false)
     expect(whatsappSendPreflightStillValid({ ...valid, currentDraft: 'user edited text' })).toBe(false)
     expect(whatsappSendPreflightStillValid({ ...valid, sendActionCurrent: false })).toBe(false)
+  })
+
+  it('发送控件可见性拒绝零面积 rect 和 collapsed visibility', () => {
+    const valid = {
+      rects: [{ width: 24, height: 24 }],
+      display: 'flex',
+      visibility: 'visible',
+      pointerEvents: 'auto',
+      opacity: '1',
+    }
+    expect(whatsappSendActionIsVisible(valid)).toBe(true)
+    expect(whatsappSendActionIsVisible({
+      ...valid,
+      rects: [{ width: 0, height: 24 }],
+    })).toBe(false)
+    expect(whatsappSendActionIsVisible({ ...valid, visibility: 'collapse' })).toBe(false)
   })
 
   it('guest 用最终页面草稿重新计算 SHA-256，用户改稿后不再匹配', async () => {
