@@ -74,11 +74,11 @@ export function whatsappSendPreflightStillValid(input: {
   contextMatches: boolean
   preparedDraft: string
   currentDraft: string
-  sendTargetConnected: boolean
+  sendActionCurrent: boolean
 }): boolean {
   return input.contextMatches
     && input.currentDraft === input.preparedDraft
-    && input.sendTargetConnected
+    && input.sendActionCurrent
 }
 
 /** 新 attempt 的首次 revision 必须就是当前命令 revision；只有既有账本恢复可以沿用旧值。 */

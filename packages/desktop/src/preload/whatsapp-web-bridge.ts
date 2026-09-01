@@ -35,6 +35,11 @@ import {
   whatsappSendPreflightStillValid,
   WhatsAppSendAttemptGuard,
 } from './whatsapp-web-send.js'
+import {
+  resolveWhatsAppSendAction,
+  whatsappSendActionRemainsCurrent,
+  type WhatsAppSendActionDomPort,
+} from './whatsapp-web-send-action.js'
 import { WhatsAppDomFailureGate } from './whatsapp-web-health.js'
 import {
   replaceWhatsAppComposerText,
@@ -77,12 +82,28 @@ const COMPOSER_SELECTORS = [
   '#main footer div[contenteditable="true"][role="textbox"]',
   '#main footer div[contenteditable="true"]',
 ] as const
-const SEND_BUTTON_SELECTORS = [
-  '#main footer [data-testid="compose-btn-send"]',
-  '#main footer button [data-icon="send"]',
-  '#main footer [role="button"] [data-icon="send"]',
-] as const
 const TRANSLATION_ATTRIBUTE = 'data-imhub-whatsapp-translation'
+
+const whatsappSendActionDomPort: WhatsAppSendActionDomPort<HTMLElement> = {
+  query: (scope, selector) => [...scope.querySelectorAll<HTMLElement>(selector)],
+  interactiveTarget: signal => signal.matches('button, [role="button"]')
+    ? signal
+    : signal.closest<HTMLElement>('button, [role="button"]'),
+  isWithin: (scope, target) => scope === target || scope.contains(target),
+  isConnected: target => target.isConnected,
+  isVisible: target => {
+    const style = window.getComputedStyle(target)
+    const opacity = Number.parseFloat(style.opacity)
+    return target.getClientRects().length > 0
+      && style.display !== 'none'
+      && style.visibility !== 'hidden'
+      && style.pointerEvents !== 'none'
+      && Number.isFinite(opacity)
+      && opacity > 0
+  },
+  isDisabled: target => target.matches(':disabled, [aria-disabled="true"]'),
+  ariaLabel: target => target.getAttribute('aria-label'),
+}
 
 export function startWhatsAppWebBridge(api: WhatsAppBridgeApi): void {
   new WhatsAppWebController(api).start()
@@ -505,11 +526,16 @@ class WhatsAppWebController {
       this.emitCommandFailure(command, 'attempt_context_mismatch', 'WhatsApp 输入框正文已经变化')
       return
     }
-    const sendTarget = sendButton()
-    if (!sendTarget) {
-      this.emitCommandFailure(command, 'whatsapp_send_unavailable', 'WhatsApp 发送按钮不可用')
+    const sendAction = resolveSendAction(input)
+    if (sendAction.kind !== 'resolved') {
+      this.emitCommandFailure(
+        command,
+        'whatsapp_send_unavailable',
+        '未找到唯一可用的 WhatsApp 发送控件',
+      )
       return
     }
+    const sendTarget = sendAction.target
     const beforeIds = new Set(currentMessageRows()
       .map(messageDataId)
       .filter((value): value is string => value !== null))
@@ -528,11 +554,15 @@ class WhatsAppWebController {
       this.emitCommandFailure(command, 'whatsapp_send_ledger_unavailable', 'WhatsApp 发送账本不可用，未发送')
       return
     }
+    const contextMatches = this.commandMatchesContext(command)
+    const currentDraft = composerText(input)
+    const currentSendAction = resolveSendAction(input)
+    const sendActionCurrent = whatsappSendActionRemainsCurrent(sendTarget, currentSendAction)
     if (!whatsappSendPreflightStillValid({
-      contextMatches: this.commandMatchesContext(command),
+      contextMatches,
       preparedDraft: draft,
-      currentDraft: composerText(input),
-      sendTargetConnected: sendTarget.isConnected,
+      currentDraft,
+      sendActionCurrent,
     })) {
       try {
         await discardWhatsAppAttempt(command.attemptId)
@@ -540,7 +570,11 @@ class WhatsAppWebController {
         this.emitCommandFailure(command, 'whatsapp_send_ledger_unavailable', 'WhatsApp 会话已变化且发送账本清理失败')
         return
       }
-      this.emitCommandFailure(command, 'attempt_context_mismatch', 'WhatsApp 会话或输入框在发送前已经变化')
+      if (contextMatches && currentDraft === draft && !sendActionCurrent) {
+        this.emitCommandFailure(command, 'whatsapp_send_unavailable', 'WhatsApp 发送控件已经变化')
+      } else {
+        this.emitCommandFailure(command, 'attempt_context_mismatch', 'WhatsApp 会话或输入框在发送前已经变化')
+      }
       return
     }
     sendTarget.click()
@@ -885,6 +919,13 @@ function composerInput(): HTMLElement | null {
   return null
 }
 
+function resolveSendAction(input: HTMLElement) {
+  return resolveWhatsAppSendAction(
+    input.closest<HTMLElement>('footer'),
+    whatsappSendActionDomPort,
+  )
+}
+
 function composerText(input: HTMLElement): string {
   return normalizeWhatsAppDomText(input.innerText || input.textContent || '')
 }
@@ -918,15 +959,6 @@ function setComposerText(
   } catch {
     return false
   }
-}
-
-function sendButton(): HTMLElement | null {
-  for (const selector of SEND_BUTTON_SELECTORS) {
-    const candidate = document.querySelector<HTMLElement>(selector)
-    const button = candidate?.closest<HTMLElement>('button, [role="button"]') ?? candidate
-    if (button) return button
-  }
-  return null
 }
 
 async function waitForOutgoingMessage(

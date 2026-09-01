@@ -66,17 +66,17 @@ describe('WhatsApp Web send invariants', () => {
     expect(whatsappNewAttemptRevisionIsCurrent(6, 7)).toBe(false)
   })
 
-  it('写账本后切会话、用户改稿或发送按钮失联都会阻止页面点击', () => {
+  it('写账本后切会话、用户改稿或发送控件变更都会阻止页面点击', () => {
     const valid = {
       contextMatches: true,
       preparedDraft: 'synthetic outbound text',
       currentDraft: 'synthetic outbound text',
-      sendTargetConnected: true,
+      sendActionCurrent: true,
     }
     expect(whatsappSendPreflightStillValid(valid)).toBe(true)
     expect(whatsappSendPreflightStillValid({ ...valid, contextMatches: false })).toBe(false)
     expect(whatsappSendPreflightStillValid({ ...valid, currentDraft: 'user edited text' })).toBe(false)
-    expect(whatsappSendPreflightStillValid({ ...valid, sendTargetConnected: false })).toBe(false)
+    expect(whatsappSendPreflightStillValid({ ...valid, sendActionCurrent: false })).toBe(false)
   })
 
   it('guest 用最终页面草稿重新计算 SHA-256，用户改稿后不再匹配', async () => {
