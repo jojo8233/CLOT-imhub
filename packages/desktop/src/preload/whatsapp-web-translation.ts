@@ -66,6 +66,7 @@ export class WhatsAppWebTranslationAdapter<Row extends object, Marker> {
   observe(row: Row, text: string): boolean {
     const marker = this.dom.marker(row, false)
     if (marker && this.translatedRows.get(row) === text) return false
+    this.translatedRows.delete(row)
     return this.controller.observe({ key: row, text, revision: this.generation })
   }
 

@@ -170,6 +170,32 @@ describe('WhatsAppWebTranslationAdapter', () => {
     expect(coordinator.calls).toEqual([['first'], ['second']])
   })
 
+  it('虚拟化行回到旧正文时重新请求，并忽略中间正文的迟到结果', async () => {
+    const first = row('A')
+    const { adapter, coordinator } = createAdapter([first])
+
+    adapter.observe(first, first.text)
+    await vi.advanceTimersByTimeAsync(500)
+    coordinator.resolveNext([translated('A 的译文')])
+    await vi.runAllTicks()
+    expect(first.marker?.textContent).toBe('A 的译文')
+
+    first.text = 'B'
+    expect(adapter.observe(first, first.text)).toBe(true)
+    await vi.advanceTimersByTimeAsync(500)
+
+    first.text = 'A'
+    expect(adapter.observe(first, first.text)).toBe(true)
+    coordinator.resolveNext([translated('B 的迟到译文')])
+    await vi.runAllTicks()
+    expect(first.marker?.textContent).toBe('翻译中…')
+
+    await vi.advanceTimersByTimeAsync(500)
+    coordinator.resolveNext([translated('A 的新译文')])
+    await vi.runAllTicks()
+    expect(first.marker?.textContent).toBe('A 的新译文')
+  })
+
   it.each([
     ['正文变化', (first: FakeRow) => { first.text = 'changed' }],
     ['行已断开', (first: FakeRow) => { first.connected = false }],
