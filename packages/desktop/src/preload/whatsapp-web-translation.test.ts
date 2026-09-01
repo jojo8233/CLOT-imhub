@@ -4,6 +4,7 @@ import {
   WhatsAppWebTranslationAdapter,
   type WhatsAppTranslationDomPort,
 } from './whatsapp-web-translation.js'
+import { shouldResetWhatsAppTranslations } from './whatsapp-web-utils.js'
 
 interface FakeMarker {
   textContent: string | null
@@ -256,6 +257,41 @@ describe('WhatsAppWebTranslationAdapter', () => {
     expect(coordinator.clears).toBe(1)
     expect(coordinator.calls).toEqual([['hello']])
     expect(adapter.stats()).toEqual({ queued: 0, active: 0 })
+  })
+
+  it('同会话元数据变化保留成功 marker，真实会话切换才 reset', async () => {
+    const first = row('hello')
+    const { adapter, coordinator } = createAdapter([first])
+    const initialContext = {
+      platformConversationId: 'wa:first@c.us',
+      contactExternalId: 'first@c.us',
+      contactDisplayName: 'First',
+    }
+
+    adapter.observe(first, first.text)
+    await vi.advanceTimersByTimeAsync(500)
+    coordinator.resolveNext([translated('你好')])
+    await vi.runAllTicks()
+    const successfulMarker = first.marker
+
+    const metadataUpdate = {
+      ...initialContext,
+      contactDisplayName: 'First · online',
+    }
+    if (shouldResetWhatsAppTranslations(initialContext, metadataUpdate)) adapter.reset()
+    expect(first.marker).toBe(successfulMarker)
+    expect(first.marker?.textContent).toBe('你好')
+    expect(coordinator.clears).toBe(0)
+
+    const nextConversation = {
+      platformConversationId: 'wa:second@c.us',
+      contactExternalId: 'second@c.us',
+      contactDisplayName: 'Second',
+    }
+    if (shouldResetWhatsAppTranslations(metadataUpdate, nextConversation)) adapter.reset()
+    expect(successfulMarker?.removed).toBe(true)
+    expect(first.marker).toBeNull()
+    expect(coordinator.clears).toBe(1)
   })
 
   it('stats 透传 controller 的 queued 与 active', async () => {

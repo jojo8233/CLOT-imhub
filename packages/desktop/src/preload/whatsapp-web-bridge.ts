@@ -20,10 +20,12 @@ import {
   normalizeWhatsAppStorageIdentity,
   sameWhatsAppConversation,
   sha256Text,
+  shouldResetWhatsAppTranslations,
   whatsappChatJidFromDataId,
   whatsappMessageDirectionFromDataId,
 } from './whatsapp-web-utils.js'
 import { NativeTranslationCoordinator } from './native-translation-coordinator.js'
+import { WhatsAppWebTranslationAdapter } from './whatsapp-web-translation.js'
 import {
   confirmedWhatsAppDomMessageId,
   resolveWhatsAppExistingAttempt,
@@ -49,12 +51,6 @@ interface WhatsAppBridgeApi {
 interface CurrentContext {
   revision: number
   value: NativeConversationContext
-}
-
-interface QueuedTranslation {
-  row: HTMLElement
-  text: string
-  generation: number
 }
 
 const IDENTITY_KEYS = ['last-wid-md', 'last-wid', 'WALid'] as const
@@ -86,7 +82,6 @@ const SEND_BUTTON_SELECTORS = [
   '#main footer [role="button"] [data-icon="send"]',
 ] as const
 const TRANSLATION_ATTRIBUTE = 'data-imhub-whatsapp-translation'
-const MAX_TRANSLATION_CONCURRENCY = 3
 
 export function startWhatsAppWebBridge(api: WhatsAppBridgeApi): void {
   new WhatsAppWebController(api).start()
@@ -104,12 +99,8 @@ class WhatsAppWebController {
   private scanTimer: ReturnType<typeof setTimeout> | null = null
   private lastComposerSignature = ''
   private lastComposerEmittedAt = 0
-  private translatedRows = new WeakMap<HTMLElement, string>()
-  private queuedRows = new WeakSet<HTMLElement>()
-  private readonly translationQueue: QueuedTranslation[] = []
   private readonly translationCoordinator: NativeTranslationCoordinator
-  private activeTranslations = 0
-  private translationGeneration = 0
+  private readonly pageTranslations: WhatsAppWebTranslationAdapter<HTMLElement, HTMLElement>
   private readonly selectorFailureGate = new WhatsAppDomFailureGate(6_000)
   private readonly bridgePhaseFailureGate = new WhatsAppDomFailureGate(15_000)
   private translationVisibilityTicks = 0
@@ -119,6 +110,25 @@ class WhatsAppWebController {
 
   constructor(private readonly api: WhatsAppBridgeApi) {
     this.translationCoordinator = new NativeTranslationCoordinator(api)
+    this.pageTranslations = new WhatsAppWebTranslationAdapter<HTMLElement, HTMLElement>(
+      {
+        text: row => messageText(row),
+        isConnected: row => row.isConnected,
+        marker: (row, create) => translationMarker(row, create),
+        setText: (marker, text) => { marker.textContent = text },
+        setError: (marker, failed) => {
+          if (failed) marker.setAttribute('data-imhub-translation-error', 'true')
+          else marker.removeAttribute('data-imhub-translation-error')
+        },
+        setRetryHandler: (marker, handler) => { marker.onclick = handler },
+        removeMarker: marker => marker.remove(),
+        removeAllMarkers: () => {
+          for (const marker of document.querySelectorAll(`[${TRANSLATION_ATTRIBUTE}]`)) marker.remove()
+        },
+        scheduleScan: () => this.scheduleScan(),
+      },
+      this.translationCoordinator,
+    )
   }
 
   start(): void {
@@ -178,7 +188,6 @@ class WhatsAppWebController {
     this.lastIdentityEmittedAt = 0
     this.proxyReady = false
     this.updateContext(null)
-    this.resetPageTranslations()
     this.api.emit({
       protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
       type: 'account.signed-out',
@@ -207,8 +216,9 @@ class WhatsAppWebController {
   }
 
   private updateContext(value: NativeConversationContext | null): void {
-    if (sameContext(this.context?.value ?? null, value)) return
-    if (sameWhatsAppConversation(this.context?.value ?? null, value)) {
+    const previous = this.context?.value ?? null
+    if (sameContext(previous, value)) return
+    if (sameWhatsAppConversation(previous, value)) {
       this.context = value ? { revision: this.contextRevision, value } : null
       return
     }
@@ -221,15 +231,11 @@ class WhatsAppWebController {
       contextRevision: this.contextRevision,
       context: value,
     })
+    if (shouldResetWhatsAppTranslations(previous, value)) this.resetPageTranslations()
   }
 
   private resetPageTranslations(): void {
-    this.translationGeneration += 1
-    for (const marker of document.querySelectorAll(`[${TRANSLATION_ATTRIBUTE}]`)) marker.remove()
-    this.translationQueue.length = 0
-    this.translationCoordinator.clear()
-    this.translatedRows = new WeakMap()
-    this.queuedRows = new WeakSet()
+    this.pageTranslations.reset()
   }
 
   private scheduleScan(): void {
@@ -261,15 +267,8 @@ class WhatsAppWebController {
     for (const row of rows) {
       const text = messageText(row)
       if (!text || text.length > 4_000) continue
-      if (this.translatedRows.get(row) === text && translationMarker(row, false)) continue
-      if (this.queuedRows.has(row)) continue
-      const marker = translationMarker(row, true)
-      if (!marker) continue
-      marker.textContent = '翻译中…'
-      this.queuedRows.add(row)
-      this.translationQueue.push({ row, text, generation: this.translationGeneration })
+      this.pageTranslations.observe(row, text)
     }
-    this.drainTranslationQueue()
     this.scheduleTranslationVisibilityCheck()
   }
 
@@ -293,6 +292,7 @@ class WhatsAppWebController {
     const visible = connected.filter(marker => markerVisibleInViewport(marker))
     const loading = connected.filter(marker => marker.textContent === '翻译中…').length
     const failed = connected.filter(marker => marker.hasAttribute('data-imhub-translation-error')).length
+    const translationStats = this.pageTranslations.stats()
     const stats = {
       rows: rows.length,
       readable: readable.length,
@@ -302,8 +302,8 @@ class WhatsAppWebController {
       loading,
       failed,
       translated: Math.max(0, connected.length - loading - failed),
-      queued: this.translationQueue.length,
-      active: this.activeTranslations,
+      queued: translationStats.queued,
+      active: translationStats.active,
     }
     if (visible.length > 0) {
       this.translationVisibilityTicks = 0
@@ -342,47 +342,6 @@ class WhatsAppWebController {
       code: 'whatsapp_dom_selector_unavailable',
       message: `WhatsApp 页面结构已变化，双语气泡暂不可用；安全诊断：${whatsappDomDiagnostic(main, rows).slice(0, 1_500)}`,
     })
-  }
-
-  private drainTranslationQueue(): void {
-    while (this.activeTranslations < MAX_TRANSLATION_CONCURRENCY) {
-      const next = this.translationQueue.shift()
-      if (!next) return
-      this.activeTranslations += 1
-      void this.translateRow(next).finally(() => {
-        this.activeTranslations -= 1
-        this.queuedRows.delete(next.row)
-        this.drainTranslationQueue()
-      })
-    }
-  }
-
-  private async translateRow(item: QueuedTranslation): Promise<void> {
-    if (item.generation !== this.translationGeneration) return
-    const marker = translationMarker(item.row, true)
-    if (!marker) return
-    try {
-      const translated = await this.translationCoordinator.translate(item.text)
-      if (item.generation !== this.translationGeneration
-        || !item.row.isConnected
-        || messageText(item.row) !== item.text) {
-        this.scheduleScan()
-        return
-      }
-      marker.textContent = translated
-      marker.removeAttribute('data-imhub-translation-error')
-      marker.onclick = null
-      this.translatedRows.set(item.row, item.text)
-    } catch {
-      marker.textContent = '翻译暂不可用 · 点击重试'
-      marker.setAttribute('data-imhub-translation-error', 'true')
-      this.translatedRows.set(item.row, item.text)
-      marker.onclick = () => {
-        this.translatedRows.delete(item.row)
-        marker.remove()
-        this.scheduleScan()
-      }
-    }
   }
 
   private async handleCommand(command: NativeHostCommand): Promise<void> {
