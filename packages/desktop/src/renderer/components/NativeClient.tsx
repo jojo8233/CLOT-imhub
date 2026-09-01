@@ -20,6 +20,7 @@ import {
   nativeMessageTranslationsFromRows,
   registerNativeCommandTarget,
 } from '../native-bridge.js'
+import { nativeControlGrantIsUsable } from '../native-control-grant.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { EmptyHint, IconButton } from './ui.js'
@@ -459,7 +460,7 @@ function SignalDesktopPane({ accountId, visible }: { accountId: string; visible:
 
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
-      hasUsableGrant = control.expiresAt !== null && control.state !== 'blocked'
+      hasUsableGrant = nativeControlGrantIsUsable(control)
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
@@ -892,7 +893,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
 
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
-      hasUsableGrant = control.expiresAt !== null && control.state !== 'blocked'
+      hasUsableGrant = nativeControlGrantIsUsable(control)
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
