@@ -779,3 +779,14 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
   pending 时清除旧 error attribute 与 retry handler，并由新增合成回归覆盖；未触碰正文解析、批处理、
   会话/滚动或发送边界，因此未重复真实历史矩阵。
 - 本轮没有真实发送，真实发送数为 0；PR #19 未合并，Issue #12 未关闭。
+
+## 27. WhatsApp Web 结构化发送控件与最终 DOM ID checkpoint（2026-09-02）
+
+- 发送动作解析已收敛到结构化 resolver 与受控 DOM port：只从当前会话的语义候选解析动作；点击前和最终确认前都再次核对 target identity/currentness，避免页面重渲染、切会话或候选失效时向错误目标派发。可见性 hardening 保持该动作只在当前可见、可操作的页面状态中执行，不把隐藏或过期节点当作发送入口。
+- WhatsApp guest 的发送成功仍以严格事实门禁为准：发送前不存在、正文匹配、方向为出站的实际容器，且取得最终 WhatsApp DOM ID。此处不记录具体 ID、正文、账号或任何敏感配置。
+- 验收前发现 control grant 过期但仍带非空时间时会阻塞重签。现由共享 `nativeControlGrantIsUsable(control, now)` 以显式时间判定非 blocked、可解析且严格未过期的授权；Signal 与 Webview 两处调用都传入当前时刻。waiting 且未来有效仍可避免重复签发，waiting/ready 的已过期、无效或空时间会触发重新授权。
+- 定向 5 个文件回归通过，40/40；Task 2 完整 10-file affected regression 通过，102/102。`pnpm typecheck` 与 desktop production build 均通过。完整 `pnpm test` 首次只受本机 PostgreSQL `EPERM` 沙箱限制，随后以完全相同命令在沙箱外通过：73 个测试文件、603 passed、1 个既有 todo。
+- a51 从 a50 不透明配置生成，a52 再从 a51 不透明配置顺序生成；两次脚本均报告 Signal Desktop 8.25.0，且均通过 deep/strict codesign。过程中未读取或输出配置内容。
+- a48 的单实例行为曾使旧窗口造成误导；在精确应用路径核验没有并发进程后，只启动测试客户端，未关闭官方 Signal，未重启服务端或 Telegram。
+- a52 发送前用户确认原生草稿为新译文单份、发送按钮可用、错误诊断无；用户恰好点击发送一次。发送状态成功，原生草稿已清空，WhatsApp 新出站消息有，错误诊断无；guest 已确认最终 WhatsApp DOM ID。真实发送总数为 1，未重试。
+- Telegram、Signal 的消息逻辑、control 协议、composer draft 与各平台消息 ID 未改；PR #19 未合并，Issue #12 未关闭。
