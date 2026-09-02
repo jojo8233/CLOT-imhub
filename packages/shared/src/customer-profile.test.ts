@@ -11,7 +11,7 @@ import {
 } from './customer-profile.js'
 
 describe('customer profile contract', () => {
-  it('固定人工字段顺序，供审计和 UI 共用', () => {
+  it('固定人工字段顺序，供存储和 UI 共用', () => {
     expect(CUSTOMER_PROFILE_FIELDS).toEqual([
       'name',
       'ageLocation',

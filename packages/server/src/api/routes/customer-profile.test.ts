@@ -66,7 +66,6 @@ function putProfile(token: string, payload: CustomerProfileUpdate) {
 beforeEach(async () => {
   actorRoles.clear()
   memberships.clear()
-  await db.deleteFrom('audit_logs').execute()
   await db.deleteFrom('customer_profiles').execute()
   await db.deleteFrom('conversations').execute()
   await db.deleteFrom('accounts').execute()
@@ -159,7 +158,7 @@ describe('customer profile routes', () => {
     })
   })
 
-  it('PUT trim 字段、首建 revision 1 且只审计字段名', async () => {
+  it('PUT trim 字段并首建 revision 1', async () => {
     const res = await putProfile(agentToken, {
       name: '  Synthetic Name  ',
       ageLocation: null,
@@ -175,10 +174,6 @@ describe('customer profile routes', () => {
       interests: 'Synthetic Interest',
       revision: 1,
     })
-    const audit = await db.selectFrom('audit_logs').selectAll().executeTakeFirstOrThrow()
-    expect(audit.changed_fields).toEqual(['name', 'interests'])
-    expect(JSON.stringify(audit)).not.toContain('Synthetic Name')
-    expect(JSON.stringify(audit)).not.toContain('Synthetic Interest')
   })
 
   it.each([
@@ -270,14 +265,10 @@ describe('customer profile routes', () => {
     expect(res.json()).toMatchObject({ name: null, revision: 0 })
   })
 
-  it('相同内容重复 PUT 不增加 revision 或审计行', async () => {
+  it('相同内容重复 PUT 不增加 revision', async () => {
     const first = await putProfile(ownerToken, validBody(0))
     const second = await putProfile(ownerToken, validBody(1))
     expect(first.json()).toMatchObject({ revision: 1 })
     expect(second.json()).toMatchObject({ revision: 1 })
-    const count = await db.selectFrom('audit_logs')
-      .select(({ fn }) => fn.countAll<number>().as('count'))
-      .executeTakeFirstOrThrow()
-    expect(Number(count.count)).toBe(1)
   })
 })

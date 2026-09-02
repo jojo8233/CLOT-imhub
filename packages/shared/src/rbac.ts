@@ -14,12 +14,7 @@ export interface Actor {
   leadTeamIds: string[]
 }
 
-/**
- * requiresAudit 目前只被计算、没有任何调用方消费。
- * TODO(P2 audit-log): auditor 查阅原文时据此写 audit_logs；在那之前
- * 本系统并不具备审计能力，不要因为这个字段存在就认为已经在记录了。
- */
 export type ScopeFilter =
-  | { kind: 'all'; requiresAudit: boolean }
-  | { kind: 'teams'; teamIds: string[]; requiresAudit: false }
-  | { kind: 'self'; userId: string; requiresAudit: false }
+  | { kind: 'all' }
+  | { kind: 'teams'; teamIds: string[] }
+  | { kind: 'self'; userId: string }

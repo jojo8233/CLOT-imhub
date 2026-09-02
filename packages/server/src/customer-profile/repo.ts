@@ -13,7 +13,7 @@ import { applyAccountScope } from '../rbac/apply.js'
 export type SaveCustomerProfileResult =
   | { kind: 'not_found' }
   | { kind: 'conflict'; currentRevision: number }
-  | { kind: 'saved'; profile: CustomerProfile; changedFields: CustomerProfileField[] }
+  | { kind: 'saved'; profile: CustomerProfile }
 
 type CustomerProfileRow = Selectable<CustomerProfilesTable>
 
@@ -91,10 +91,7 @@ export class ScopedCustomerProfileRepo {
           .innerJoin('conversations', 'conversations.account_id', 'accounts.id'),
         this.scope,
       )
-        .select([
-          'accounts.id as account_id',
-          'conversations.id as conversation_id',
-        ])
+        .select('conversations.id as conversation_id')
         .where('conversations.id', '=', conversationId)
         .forUpdate('conversations')
         .executeTakeFirst()
@@ -110,14 +107,13 @@ export class ScopedCustomerProfileRepo {
       }
 
       const currentValues = valuesFromRow(current)
-      const changedFields = CUSTOMER_PROFILE_FIELDS.filter(
+      const hasChanges = CUSTOMER_PROFILE_FIELDS.some(
         field => currentValues[field] !== update[field],
       )
-      if (changedFields.length === 0) {
+      if (!hasChanges) {
         return {
           kind: 'saved',
           profile: current ? rowToProfile(current) : emptyCustomerProfile(conversationId),
-          changedFields,
         }
       }
 
@@ -142,15 +138,7 @@ export class ScopedCustomerProfileRepo {
           .returningAll()
           .executeTakeFirstOrThrow()
 
-      await trx.insertInto('audit_logs').values({
-        actor_user_id: actorUserId,
-        account_id: visible.account_id,
-        conversation_id: visible.conversation_id,
-        action: 'customer_profile.updated',
-        changed_fields: JSON.stringify(changedFields),
-      }).execute()
-
-      return { kind: 'saved', profile: rowToProfile(saved), changedFields }
+      return { kind: 'saved', profile: rowToProfile(saved) }
     })
   }
 }
