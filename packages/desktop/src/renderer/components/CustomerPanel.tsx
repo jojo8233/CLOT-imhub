@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
+import { getCurrentUser } from '../api/client.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
-import { Avatar, Chip, EmptyHint, NotWired, SectionTitle, relativeTime } from './ui.js'
+import { Avatar, Chip, EmptyHint, SectionTitle, relativeTime } from './ui.js'
+import { CustomerProfileSection } from './CustomerProfileSection.js'
 
 /**
  * 右侧客户信息栏。
@@ -9,22 +11,11 @@ import { Avatar, Chip, EmptyHint, NotWired, SectionTitle, relativeTime } from '.
  * 分成两层，界线要让用户一眼看出来：
  *
  *   上层「互动情况」——全是库里查得到的事实，可信；
- *   下层「客户档案」——需要从聊天记录里提取，服务端还没有这张表，所以一律显示
- *   「尚未提取」并且编辑按钮是灰的。
+ *   下层「客户档案」——由服务端按内部会话持久化，人工资料是当前权威值。
  *
  * 宁可空着也不填占位文字：这块内容将来要拿去做客户跟进判断，一旦有假数据混进去，
  * 用户没法分辨哪条是真提取的、哪条是界面编的。
  */
-
-/** 档案字段。顺序就是员工读的顺序，改动这个数组即可增删。 */
-const PROFILE_FIELDS = [
-  { key: 'name', label: '姓名', hint: '客户自称或签名里出现的名字' },
-  { key: 'ageLocation', label: '年龄 / 居住地', hint: '提到的年龄段、城市或时区' },
-  { key: 'occupation', label: '职业 / 退休状况', hint: '在职、行业，或已退休' },
-  { key: 'family', label: '家庭 / 婚姻状况', hint: '同住家人、子女、婚姻' },
-  { key: 'interests', label: '兴趣', hint: '反复提到的爱好与话题' },
-  { key: 'other', label: '其他', hint: '不属于以上几类但值得记的' },
-] as const
 
 export function CustomerPanel({ nativePending = false }: { nativePending?: boolean }) {
   const conversations = useStore(s => s.conversations)
@@ -56,7 +47,7 @@ export function CustomerPanel({ nativePending = false }: { nativePending?: boole
           <SectionTitle>客户信息</SectionTitle>
           <EmptyHint>
             {nativePending ? (
-              <>Telegram 原生会话将在 M3 接线<br />接通后这里自动跟随客户</>
+              <>请先在原生客户端<br />打开一个会话</>
             ) : (
               <>选中一个会话后<br />这里显示该客户的资料</>
             )}
@@ -122,72 +113,10 @@ export function CustomerPanel({ nativePending = false }: { nativePending?: boole
             {stats.first && <>，最早一条 {stats.first.slice(0, 10)}</>}
           </div>
 
-          {/* 客户档案：等服务端 */}
-          <SectionTitle extra={<NotWired what="客户档案" />}>客户档案</SectionTitle>
-          <div style={{ padding: `0 ${theme.space.lg}px` }}>
-            {PROFILE_FIELDS.map(f => (
-              <div key={f.key} style={{
-                padding: `${theme.space.sm}px 0`,
-                borderBottom: `1px solid ${theme.color.border}`,
-              }}>
-                <div style={{
-                  fontSize: theme.font.size.xs, color: theme.color.textMuted,
-                  marginBottom: 2, fontWeight: theme.font.weight.medium,
-                }}>
-                  {f.label}
-                </div>
-                <div title={f.hint} style={{
-                  fontSize: theme.font.size.base, color: theme.color.textFaint, fontStyle: 'italic',
-                }}>
-                  尚未提取
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{
-            margin: theme.space.lg, padding: theme.space.md,
-            background: theme.color.surface, borderRadius: theme.radius.lg,
-            fontSize: theme.font.size.xs, color: theme.color.textMuted, lineHeight: 1.8,
-          }}>
-            <div style={{ fontWeight: 600, color: theme.color.text, marginBottom: 4 }}>档案还差什么</div>
-            服务端目前没有存档案的表。要让这几栏活起来，需要：一张
-            <code style={{ background: theme.color.white, padding: '1px 5px', borderRadius: 4, margin: '0 3px' }}>
-              customer_profiles
-            </code>
-            表（跟会话一对一）、一个读写接口（手动补充要能存），以及从聊天记录里提取摘要的那一步。
-            <div style={{ marginTop: 6 }}>
-              自动提取和手动补充是两件事，手动那条路先通了，员工就能自己记，不必等模型。
-            </div>
-          </div>
-
-          <div style={{ padding: `0 ${theme.space.lg}px ${theme.space.xl}px`, display: 'flex', gap: theme.space.sm }}>
-            <button
-              disabled
-              title="等 customer_profiles 表和读写接口"
-              className="ih-btn"
-              style={{
-                flex: 1, padding: '10px 0', borderRadius: theme.radius.pill, border: 'none',
-                background: theme.color.ink, color: theme.color.lime,
-                fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
-              }}
-            >
-              手动补充
-            </button>
-            <button
-              disabled
-              title="等摘要提取接入"
-              className="ih-btn"
-              style={{
-                flex: 1, padding: '10px 0', borderRadius: theme.radius.pill,
-                border: `1px solid ${theme.color.borderStrong}`, background: theme.color.card,
-                color: theme.color.text, fontSize: theme.font.size.base,
-                fontWeight: theme.font.weight.bold,
-              }}
-            >
-              重新提取
-            </button>
-          </div>
+          <CustomerProfileSection
+            conversationId={conv.id}
+            readOnly={getCurrentUser()?.role === 'auditor'}
+          />
         </div>
       )}
     </aside>
