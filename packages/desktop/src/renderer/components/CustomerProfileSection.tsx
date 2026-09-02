@@ -336,14 +336,6 @@ export function CustomerProfileSectionView({
                 手动补充
               </button>
             ) : null}
-            <button
-              className="ih-btn"
-              disabled
-              title="自动提取建议将在后续 M4 切片接入"
-              style={secondaryButtonStyle}
-            >
-              重新提取（后续 M4）
-            </button>
           </div>
         </>
       )}
