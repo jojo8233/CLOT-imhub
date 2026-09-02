@@ -1251,7 +1251,8 @@ Expected: FAIL because the component does not exist.
 - use a 300 ms timer to update the debounced query;
 - reset an account filter when its account does not belong to the selected platform;
 - keep one `AbortController` and monotonically increasing request ID;
-- dispatch `filters.changed` before each replacement query;
+- dispatch `filters.changed` only when filter values change; same-filter refresh, retry and save-refresh keep
+  the current rows and selection until the replacement response decides whether the selection is still valid;
 - call `api.searchCustomerProfiles({ q, platform, accountId, limit: 50, cursor }, signal)`;
 - map `NetworkError` to `连不上服务端，请稍后重试` and all other non-401 failures to `客户档案库加载失败，请稍后重试`;
 - ignore a settlement when its controller is already aborted, and let `UnauthorizedError` use the existing global sign-out listener without showing a transient library error;
@@ -1441,7 +1442,7 @@ Expected: no `requiresAudit` remains in active code/current docs, no desktop “
 - [ ] **Step 3: Run focused test suites**
 
 ```bash
-pnpm exec vitest run packages/shared/src/customer-profile.test.ts packages/server/src/db/migrations/0014_customer_profile_library.test.ts packages/server/src/rbac/scope.test.ts packages/server/src/rbac/scoped-db.test.ts packages/server/src/rbac/apply.test.ts packages/server/src/customer-profile/library-query.test.ts packages/server/src/customer-profile/repo.test.ts packages/server/src/customer-profile/library-repo.test.ts packages/server/src/api/routes/customer-profile.test.ts packages/server/src/api/routes/customer-profiles.test.ts packages/desktop/src/renderer/api/client.test.ts packages/desktop/src/renderer/customer-profile-library.test.ts packages/desktop/src/renderer/components/CustomerProfileSection.test.ts packages/desktop/src/renderer/components/CustomerProfileLibraryView.test.tsx packages/desktop/src/renderer/components/FunctionCenter.test.tsx
+pnpm exec vitest run packages/shared/src/customer-profile.test.ts packages/server/src/db/migrations/0014_customer_profile_library.test.ts packages/server/src/rbac/scope.test.ts packages/server/src/rbac/scoped-db.test.ts packages/server/src/rbac/apply.test.ts packages/server/src/customer-profile/library-query.test.ts packages/server/src/customer-profile/repo.test.ts packages/server/src/customer-profile/library-repo.test.ts packages/server/src/api/routes/customer-profile.test.ts packages/server/src/api/routes/customer-profiles.test.ts packages/desktop/src/renderer/api/client.test.ts packages/desktop/src/renderer/customer-profile-library.test.ts packages/desktop/src/renderer/customer-profile-library-controller.test.ts packages/desktop/src/renderer/components/CustomerProfileSection.test.ts packages/desktop/src/renderer/components/CustomerProfileLibraryView.test.tsx packages/desktop/src/renderer/components/FunctionCenter.test.tsx
 ```
 
 Expected: all listed tests pass with zero failures.
