@@ -45,8 +45,10 @@ export function CustomerProfileSection({
     initialCustomerProfileEditorState(),
   )
   const requestIdRef = useRef(0)
+  const saveRequestIdRef = useRef(0)
   const controllerRef = useRef<AbortController | null>(null)
   const activeConversationIdRef = useRef(conversationId)
+  const activeSaveRef = useRef<{ conversationId: string; requestId: number } | null>(null)
   activeConversationIdRef.current = conversationId
 
   const loadProfile = useCallback((
@@ -86,7 +88,10 @@ export function CustomerProfileSection({
   useEffect(() => {
     dispatch({ type: 'conversation.changed', conversationId })
     loadProfile(conversationId, 'replace')
-    return () => controllerRef.current?.abort()
+    return () => {
+      controllerRef.current?.abort()
+      activeSaveRef.current = null
+    }
   }, [conversationId, loadProfile])
 
   const save = useCallback(async () => {
@@ -96,22 +101,40 @@ export function CustomerProfileSection({
       || state.activeLoad) return
 
     const capturedConversationId = conversationId
+    const requestId = ++saveRequestIdRef.current
     const update = {
       ...state.draft,
       expectedRevision: state.snapshot.revision,
     }
-    dispatch({ type: 'save.started' })
+    activeSaveRef.current = { conversationId: capturedConversationId, requestId }
+    dispatch({ type: 'save.started', conversationId: capturedConversationId, requestId })
     try {
       const profile = await api.updateCustomerProfile(capturedConversationId, update)
-      if (activeConversationIdRef.current !== capturedConversationId) return
-      dispatch({ type: 'save.succeeded', profile })
+      if (activeConversationIdRef.current !== capturedConversationId
+        || activeSaveRef.current?.conversationId !== capturedConversationId
+        || activeSaveRef.current.requestId !== requestId) return
+      activeSaveRef.current = null
+      dispatch({
+        type: 'save.succeeded',
+        conversationId: capturedConversationId,
+        requestId,
+        profile,
+      })
     } catch (error) {
-      if (activeConversationIdRef.current !== capturedConversationId) return
+      if (activeConversationIdRef.current !== capturedConversationId
+        || activeSaveRef.current?.conversationId !== capturedConversationId
+        || activeSaveRef.current.requestId !== requestId) return
+      activeSaveRef.current = null
       if (error instanceof HttpError && error.status === 409) {
         loadProfile(capturedConversationId, 'conflict')
         return
       }
-      dispatch({ type: 'save.failed', message: customerProfileErrorMessage(error) })
+      dispatch({
+        type: 'save.failed',
+        conversationId: capturedConversationId,
+        requestId,
+        message: customerProfileErrorMessage(error),
+      })
     }
   }, [conversationId, loadProfile, readOnly, state.activeLoad, state.draft, state.snapshot, state.status])
 
@@ -123,6 +146,7 @@ export function CustomerProfileSection({
   return (
     <CustomerProfileSectionView
       state={state}
+      conversationId={conversationId}
       readOnly={readOnly}
       onEdit={() => dispatch({ type: 'edit.started' })}
       onCancel={() => dispatch({ type: 'edit.cancelled' })}
@@ -135,6 +159,7 @@ export function CustomerProfileSection({
 
 export function CustomerProfileSectionView({
   state,
+  conversationId,
   readOnly,
   onEdit,
   onCancel,
@@ -143,6 +168,7 @@ export function CustomerProfileSectionView({
   onFieldChange,
 }: {
   state: CustomerProfileEditorState
+  conversationId: string
   readOnly: boolean
   onEdit(): void
   onCancel(): void
@@ -150,6 +176,15 @@ export function CustomerProfileSectionView({
   onRetry(): void
   onFieldChange(field: CustomerProfileField, value: string): void
 }) {
+  if (state.conversationId !== conversationId) {
+    return (
+      <section>
+        <SectionTitle extra={readOnly ? <Chip>只读</Chip> : undefined}>客户档案</SectionTitle>
+        <ProfileNotice>正在加载客户档案…</ProfileNotice>
+      </section>
+    )
+  }
+
   const editing = state.status === 'editing' || state.status === 'saving'
   const busy = state.status === 'saving' || state.activeLoad !== null
 
@@ -190,28 +225,35 @@ export function CustomerProfileSectionView({
                 }}>
                   {field.label}
                   {editing ? (
-                    field.singleLine ? (
-                      <input
-                        aria-label={field.label}
-                        value={state.draft[field.key] ?? ''}
-                        maxLength={CUSTOMER_PROFILE_MAX_CODE_POINTS[field.key] * 2}
-                        onChange={event => onFieldChange(field.key, event.currentTarget.value)}
-                        disabled={busy}
-                        placeholder={field.hint}
-                        style={profileInputStyle}
-                      />
-                    ) : (
-                      <textarea
-                        aria-label={field.label}
-                        value={state.draft[field.key] ?? ''}
-                        maxLength={CUSTOMER_PROFILE_MAX_CODE_POINTS[field.key] * 2}
-                        onChange={event => onFieldChange(field.key, event.currentTarget.value)}
-                        disabled={busy}
-                        placeholder={field.hint}
-                        rows={2}
-                        style={{ ...profileInputStyle, resize: 'vertical' }}
-                      />
-                    )
+                    <>
+                      {field.singleLine ? (
+                        <input
+                          aria-label={field.label}
+                          value={state.draft[field.key] ?? ''}
+                          maxLength={CUSTOMER_PROFILE_MAX_CODE_POINTS[field.key] * 2}
+                          onChange={event => onFieldChange(field.key, event.currentTarget.value)}
+                          disabled={busy}
+                          placeholder={field.hint}
+                          style={profileInputStyle}
+                        />
+                      ) : (
+                        <textarea
+                          aria-label={field.label}
+                          value={state.draft[field.key] ?? ''}
+                          maxLength={CUSTOMER_PROFILE_MAX_CODE_POINTS[field.key] * 2}
+                          onChange={event => onFieldChange(field.key, event.currentTarget.value)}
+                          disabled={busy}
+                          placeholder={field.hint}
+                          rows={2}
+                          style={{ ...profileInputStyle, resize: 'vertical' }}
+                        />
+                      )}
+                      {state.hasConflict && (
+                        <span style={latestValueStyle}>
+                          服务器最新：{state.snapshot?.[field.key] ?? '尚未填写'}
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span title={field.hint} className="ih-selectable" style={{
                       display: 'block',
@@ -341,4 +383,14 @@ const retryButtonStyle: React.CSSProperties = {
   border: `1px solid ${theme.color.borderStrong}`,
   background: theme.color.card,
   color: theme.color.text,
+}
+
+const latestValueStyle: React.CSSProperties = {
+  display: 'block',
+  marginTop: 4,
+  color: theme.color.textMuted,
+  fontSize: theme.font.size.xs,
+  fontWeight: theme.font.weight.medium,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 }

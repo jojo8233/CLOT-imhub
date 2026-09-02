@@ -85,16 +85,34 @@ describe('customer profile editor reducer', () => {
   it('保存网络失败保留草稿', () => {
     const editing = editingState('Draft')
     const failed = reduceCustomerProfileEditor(
-      reduceCustomerProfileEditor(editing, { type: 'save.started' }),
-      { type: 'save.failed', message: '连不上服务端，请稍后重试' },
+      reduceCustomerProfileEditor(editing, {
+        type: 'save.started', conversationId: 'c', requestId: 1,
+      }),
+      {
+        type: 'save.failed',
+        conversationId: 'c',
+        requestId: 1,
+        message: '连不上服务端，请稍后重试',
+      },
     )
     expect(failed.status).toBe('editing')
     expect(failed.draft.name).toBe('Draft')
     expect(failed.error).toBe('连不上服务端，请稍后重试')
   })
 
-  it('冲突刷新更新 snapshot/revision 但保留本地草稿', () => {
-    let state = editingState('Local Draft')
+  it('冲突刷新保留本地改动并把未改字段 rebase 到最新 snapshot', () => {
+    let state = loadedEditorState({
+      ...emptyCustomerProfile('c'),
+      name: 'Server',
+      occupation: 'Original Occupation',
+      revision: 1,
+    })
+    state = reduceCustomerProfileEditor(state, { type: 'edit.started' })
+    state = reduceCustomerProfileEditor(state, {
+      type: 'draft.changed',
+      field: 'name',
+      value: 'Local Draft',
+    })
     state = reduceCustomerProfileEditor(state, {
       type: 'load.started',
       conversationId: 'c',
@@ -106,11 +124,17 @@ describe('customer profile editor reducer', () => {
       conversationId: 'c',
       requestId: 9,
       mode: 'conflict',
-      profile: { ...emptyCustomerProfile('c'), name: 'Remote Value', revision: 2 },
+      profile: {
+        ...emptyCustomerProfile('c'),
+        name: 'Remote Value',
+        occupation: 'Remote Occupation',
+        revision: 2,
+      },
     })
     expect(state.snapshot?.revision).toBe(2)
     expect(state.snapshot?.name).toBe('Remote Value')
     expect(state.draft.name).toBe('Local Draft')
+    expect(state.draft.occupation).toBe('Remote Occupation')
     expect(state.status).toBe('editing')
     expect(state.error).toContain('其他人更新')
   })
@@ -159,7 +183,9 @@ describe('customer profile editor reducer', () => {
   })
 
   it('保存成功用服务器响应替换 snapshot 和草稿', () => {
-    const saving = reduceCustomerProfileEditor(editingState('Draft'), { type: 'save.started' })
+    const saving = reduceCustomerProfileEditor(editingState('Draft'), {
+      type: 'save.started', conversationId: 'c', requestId: 1,
+    })
     const savedProfile = {
       ...emptyCustomerProfile('c'),
       name: 'Saved',
@@ -168,6 +194,8 @@ describe('customer profile editor reducer', () => {
     }
     const saved = reduceCustomerProfileEditor(saving, {
       type: 'save.succeeded',
+      conversationId: 'c',
+      requestId: 1,
       profile: savedProfile,
     })
     expect(saved.status).toBe('viewing')
@@ -176,8 +204,12 @@ describe('customer profile editor reducer', () => {
   })
 
   it('保存中忽略重复 save.started 和 draft.changed', () => {
-    const saving = reduceCustomerProfileEditor(editingState('Draft'), { type: 'save.started' })
-    const repeated = reduceCustomerProfileEditor(saving, { type: 'save.started' })
+    const saving = reduceCustomerProfileEditor(editingState('Draft'), {
+      type: 'save.started', conversationId: 'c', requestId: 1,
+    })
+    const repeated = reduceCustomerProfileEditor(saving, {
+      type: 'save.started', conversationId: 'c', requestId: 2,
+    })
     const changed = reduceCustomerProfileEditor(repeated, {
       type: 'draft.changed',
       field: 'name',
@@ -185,5 +217,99 @@ describe('customer profile editor reducer', () => {
     })
     expect(changed.status).toBe('saving')
     expect(changed.draft.name).toBe('Draft')
+  })
+
+  it('甲乙甲切换后忽略甲的旧保存成功响应', () => {
+    let state = loadedEditorState({
+      ...emptyCustomerProfile('a'),
+      name: 'Initial A',
+      revision: 1,
+    })
+    state = reduceCustomerProfileEditor(state, { type: 'edit.started' })
+    state = reduceCustomerProfileEditor(state, {
+      type: 'draft.changed',
+      field: 'name',
+      value: 'First Draft',
+    })
+    const firstSave = {
+      type: 'save.started',
+      conversationId: 'a',
+      requestId: 1,
+    } as const
+    state = reduceCustomerProfileEditor(state, firstSave)
+
+    state = reduceCustomerProfileEditor(state, {
+      type: 'conversation.changed',
+      conversationId: 'b',
+    })
+    state = reduceCustomerProfileEditor(state, {
+      type: 'conversation.changed',
+      conversationId: 'a',
+    })
+    state = reduceCustomerProfileEditor(state, {
+      type: 'load.started',
+      conversationId: 'a',
+      requestId: 2,
+      mode: 'replace',
+    })
+    state = reduceCustomerProfileEditor(state, {
+      type: 'load.succeeded',
+      conversationId: 'a',
+      requestId: 2,
+      mode: 'replace',
+      profile: { ...emptyCustomerProfile('a'), name: 'Current A', revision: 2 },
+    })
+    state = reduceCustomerProfileEditor(state, { type: 'edit.started' })
+    state = reduceCustomerProfileEditor(state, {
+      type: 'draft.changed',
+      field: 'name',
+      value: 'Second Draft',
+    })
+    const secondSave = {
+      type: 'save.started',
+      conversationId: 'a',
+      requestId: 3,
+    } as const
+    state = reduceCustomerProfileEditor(state, secondSave)
+
+    const staleSuccess = {
+      type: 'save.succeeded',
+      conversationId: 'a',
+      requestId: 1,
+      profile: { ...emptyCustomerProfile('a'), name: 'First Saved', revision: 2 },
+    } as const
+    state = reduceCustomerProfileEditor(state, staleSuccess)
+    expect(state.status).toBe('saving')
+    expect(state.draft.name).toBe('Second Draft')
+
+    const currentSuccess = {
+      type: 'save.succeeded',
+      conversationId: 'a',
+      requestId: 3,
+      profile: { ...emptyCustomerProfile('a'), name: 'Second Saved', revision: 3 },
+    } as const
+    state = reduceCustomerProfileEditor(state, currentSuccess)
+    expect(state.status).toBe('viewing')
+    expect(state.draft.name).toBe('Second Saved')
+  })
+
+  it('忽略不匹配当前保存请求的失败响应', () => {
+    let state = editingState('Current Draft')
+    const started = {
+      type: 'save.started',
+      conversationId: 'c',
+      requestId: 8,
+    } as const
+    state = reduceCustomerProfileEditor(state, started)
+    const staleFailure = {
+      type: 'save.failed',
+      conversationId: 'c',
+      requestId: 7,
+      message: '迟到失败',
+    } as const
+    state = reduceCustomerProfileEditor(state, staleFailure)
+    expect(state.status).toBe('saving')
+    expect(state.error).toBeNull()
+    expect(state.draft.name).toBe('Current Draft')
   })
 })

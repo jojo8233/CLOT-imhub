@@ -65,16 +65,22 @@ function conflictEditorState(localName: string, remoteRevision: number): Custome
   })
 }
 
-function renderView(state: CustomerProfileEditorState, readOnly = false): string {
-  return renderToStaticMarkup(createElement(CustomerProfileSectionView, {
+function renderView(
+  state: CustomerProfileEditorState,
+  readOnly = false,
+  conversationId = state.conversationId ?? '',
+): string {
+  const props = {
     state,
     readOnly,
+    conversationId,
     onEdit: () => {},
     onCancel: () => {},
     onSave: () => {},
     onRetry: () => {},
     onFieldChange: () => {},
-  }))
+  }
+  return renderToStaticMarkup(createElement(CustomerProfileSectionView, props))
 }
 
 describe('CustomerProfileSectionView', () => {
@@ -100,6 +106,7 @@ describe('CustomerProfileSectionView', () => {
     const html = renderView(conflictEditorState('Local Draft', 2))
     expect(html).toContain('value="Local Draft"')
     expect(html).toContain('其他人更新')
+    expect(html).toContain('服务器最新：Remote Value')
     expect(html).toContain('保存')
   })
 
@@ -148,7 +155,9 @@ describe('CustomerProfileSectionView', () => {
   })
 
   it('保存或冲突重载期间禁用取消和保存', () => {
-    const saving = reduceCustomerProfileEditor(editingState('Draft'), { type: 'save.started' })
+    const saving = reduceCustomerProfileEditor(editingState('Draft'), {
+      type: 'save.started', conversationId: 'c', requestId: 1,
+    })
     let conflictLoading = editingState('Draft')
     conflictLoading = reduceCustomerProfileEditor(conflictLoading, {
       type: 'load.started',
@@ -160,5 +169,16 @@ describe('CustomerProfileSectionView', () => {
     expect(renderView(saving)).toMatch(/<button[^>]*disabled=""[^>]*>保存中<\/button>/)
     expect(renderView(conflictLoading)).toMatch(/<button[^>]*disabled=""[^>]*>取消<\/button>/)
     expect(renderView(conflictLoading)).toMatch(/<button[^>]*disabled=""[^>]*>保存<\/button>/)
+  })
+
+  it('prop 已切到新会话时首帧不显示旧会话档案', () => {
+    const oldConversation = loadedEditorState({
+      ...emptyCustomerProfile('old-conversation'),
+      name: 'Old Profile Value',
+      revision: 1,
+    })
+    const html = renderView(oldConversation, false, 'new-conversation')
+    expect(html).not.toContain('Old Profile Value')
+    expect(html).toContain('正在加载客户档案')
   })
 })
