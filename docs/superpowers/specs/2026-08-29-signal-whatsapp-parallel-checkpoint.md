@@ -790,3 +790,27 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - a48 的单实例行为曾使旧窗口造成误导；在精确应用路径核验没有并发进程后，只启动测试客户端，未关闭官方 Signal，未重启服务端或 Telegram。
 - a52 发送前用户确认原生草稿为新译文单份、发送按钮可用、错误诊断无；用户恰好点击发送一次。发送状态成功，原生草稿已清空，WhatsApp 新出站消息有，错误诊断无；guest 已确认最终 WhatsApp DOM ID。真实发送总数为 1，未重试。
 - Telegram、Signal 的消息逻辑、control 协议、composer draft 与各平台消息 ID 未改；PR #19 未合并，Issue #12 未关闭。
+
+## 28. Telegram / Signal / WhatsApp 合并态真实验收 checkpoint（2026-09-02）
+
+- 三个平台在同一 `/private/tmp/Signal-imhub-integrated-a52.app` 外壳中完成合并态验收。WhatsApp 复用
+  第 27 节已经通过的只读气泡矩阵与唯一次真实发送证据，没有再次发送：可见及滚动新增的入/出站纯
+  文字译文均已确认，TranslationDock 写入单份新译文，发送后草稿清空，且 guest 以发送前不存在、
+  正文匹配、出站方向和实际 DOM `data-id` 四项事实确认最终消息。最终 DOM id 未写入本文档。
+- Telegram 首次接入 a52 时，误启动了落后且缺少空 GramJS receive 防护的独立补丁 checkout，页面在
+  `MTProtoSender._recvLoop` 读取空响应长度时崩溃。运行依赖改回此前已经完成并提交的 Telegram outbox
+  分支后，既有空 receive 回归 4/4 与该仓库 TypeScript 检查均通过；a52 隔离 partition 内重新登录
+  后页面正常、账号控制就绪且无错误诊断。用户确认当前可见入站与出站译文均有；当前会话没有更早
+  历史记录，因此滚动增量记为未覆盖而不是失败。随后 TranslationDock 写入单份新译文、发送按钮
+  可用，用户恰好点击发送一次；发送成功、草稿清空且出现新出站消息，没有重试。
+- Signal 在同一 a52 中保持登录正常。用户确认当前可见入站/出站译文均有，向上滚动后新增入站/出站
+  译文也均有，且无错误诊断。随后 TranslationDock 写入单份新译文、发送按钮可用，用户恰好点击
+  发送一次；发送成功、草稿清空且出现新出站消息，没有重试。本轮未重复已经通过的 Signal 生命周期、
+  媒体或 outbox 矩阵。
+- 待推送 worktree 的完整 `pnpm test` 首次仅因沙箱禁止连接本机 PostgreSQL 而失败；以完全相同命令
+  解除该连接限制后通过：73 个测试文件、605 passed、1 todo，exit 0。`pnpm typecheck` 与
+  `pnpm --filter @im-hub/desktop build` 也均为 exit 0。测试没有加载 `.env`，数据库用例仍只使用既有
+  隔离测试库。
+- Telegram 独立补丁开发服务为选择正确既有提交而重启；im-hub 服务端、官方 Signal 客户端与
+  Telegram 服务端适配器没有重启。全程未记录或输出平台 profile/session、账号标识、消息正文、
+  消息键、媒体引用、token、二维码、验证码或密钥。PR #19 仍未合并，Issue #12 仍未关闭。
