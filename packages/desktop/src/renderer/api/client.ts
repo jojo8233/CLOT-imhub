@@ -1,6 +1,8 @@
 import type {
   AccountConnectionMode,
   CustomerProfile,
+  CustomerProfileListPage,
+  CustomerProfileSearchRequest,
   CustomerProfileUpdate,
   NativeControlGrantResponse,
   WsServerEvent,
@@ -240,6 +242,12 @@ export const api = {
     request<CustomerProfile>(`/api/conversations/${conversationId}/customer-profile`, {
       method: 'PUT',
       body: JSON.stringify(update),
+    }),
+  searchCustomerProfiles: (search: CustomerProfileSearchRequest, signal?: AbortSignal) =>
+    request<CustomerProfileListPage>('/api/customer-profiles/search', {
+      method: 'POST',
+      body: JSON.stringify(search),
+      signal,
     }),
   getWhatsAppCloudConfig: () => request<{
     appId: string

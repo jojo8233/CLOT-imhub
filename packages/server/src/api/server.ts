@@ -12,6 +12,7 @@ import type { WsHub } from './ws.js'
 import { authRoutes } from './routes/auth.js'
 import { accountRoutes } from './routes/accounts.js'
 import { conversationRoutes } from './routes/conversations.js'
+import { customerProfileLibraryRoutes } from './routes/customer-profiles.js'
 import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
 import { translateRoutes } from './routes/translate.js'
 import { nativeRoutes, type NativeRouteDeps } from './routes/native.js'
@@ -128,6 +129,7 @@ export async function buildServer(
   }
   await app.register(nativeControlRoutes)
   await app.register(conversationRoutes)
+  await app.register(customerProfileLibraryRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
   await app.register(async (instance) => { await translateRoutes(instance, deps) })
   const telegramShadowRefresh = deps.telegramShadowRefresh
