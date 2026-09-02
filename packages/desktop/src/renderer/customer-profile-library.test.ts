@@ -125,6 +125,43 @@ describe('customer profile library state', () => {
     expect(state.selectedConversationId).toBeNull()
   })
 
+  it('preserves a valid selection across same-filter replacement and clears it if absent', () => {
+    let state = readyState([firstItem], null)
+    state = reduceCustomerProfileLibrary(state, {
+      type: 'selection.changed',
+      conversationId: firstItem.conversationId,
+    })
+    state = reduceCustomerProfileLibrary(state, {
+      type: 'load.started',
+      requestId: 1,
+      mode: 'replace',
+    })
+
+    expect(state.items).toEqual([firstItem])
+    expect(state.selectedConversationId).toBe(firstItem.conversationId)
+
+    state = reduceCustomerProfileLibrary(state, {
+      type: 'load.succeeded',
+      requestId: 1,
+      mode: 'replace',
+      page: page([firstItem], null),
+    })
+    expect(state.selectedConversationId).toBe(firstItem.conversationId)
+
+    state = reduceCustomerProfileLibrary(state, {
+      type: 'load.started',
+      requestId: 2,
+      mode: 'replace',
+    })
+    state = reduceCustomerProfileLibrary(state, {
+      type: 'load.succeeded',
+      requestId: 2,
+      mode: 'replace',
+      page: page([secondItem], null),
+    })
+    expect(state.selectedConversationId).toBeNull()
+  })
+
   it('reports replacement failure without pretending the first load completed', () => {
     let state = initialCustomerProfileLibraryState()
     state = reduceCustomerProfileLibrary(state, {

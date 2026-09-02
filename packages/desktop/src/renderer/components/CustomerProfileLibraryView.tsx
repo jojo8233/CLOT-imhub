@@ -26,6 +26,11 @@ import {
   type CustomerProfileLibraryLoadMode,
   type CustomerProfileLibraryState,
 } from '../customer-profile-library.js'
+import {
+  createCustomerProfileQueryDebouncer,
+  prepareCustomerProfileReplacement,
+  type CustomerProfileDebouncedQuery,
+} from '../customer-profile-library-controller.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { CustomerProfileSection } from './CustomerProfileSection.js'
@@ -70,11 +75,21 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
     initialCustomerProfileLibraryState(),
   )
   const [queryInput, setQueryInput] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState<CustomerProfileDebouncedQuery>({
+    query: '',
+    generation: 0,
+  })
   const [platform, setPlatform] = useState<Platform | null>(null)
   const [accountId, setAccountId] = useState<string | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const requestIdRef = useRef(0)
+  const lastScheduledQueryInputRef = useRef(queryInput)
+  const queryDebouncerRef = useRef<ReturnType<typeof createCustomerProfileQueryDebouncer> | null>(
+    null,
+  )
+  if (!queryDebouncerRef.current) {
+    queryDebouncerRef.current = createCustomerProfileQueryDebouncer(setDebouncedSearch)
+  }
 
   const accountMatchesPlatform = useCallback((candidateId: string, target: Platform | null) => {
     const account = accounts.find(value => value.id === candidateId)
@@ -85,17 +100,23 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
     ? accountId
     : null
 
-  const invalidateVisibleResults = useCallback(() => {
+  const cancelActiveLoad = useCallback(() => {
     controllerRef.current?.abort()
     controllerRef.current = null
-    dispatch({ type: 'filters.changed' })
   }, [])
 
+  const invalidateVisibleResults = useCallback(() => {
+    prepareCustomerProfileReplacement('filters', cancelActiveLoad, () => {
+      dispatch({ type: 'filters.changed' })
+    })
+  }, [cancelActiveLoad])
+
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setDebouncedQuery(queryInput.trim())
-    }, 300)
-    return () => window.clearTimeout(timer)
+    if (lastScheduledQueryInputRef.current === queryInput) return
+    lastScheduledQueryInputRef.current = queryInput
+    const debouncer = queryDebouncerRef.current
+    debouncer?.schedule(queryInput)
+    return () => debouncer?.cancel()
   }, [queryInput])
 
   useEffect(() => {
@@ -107,7 +128,11 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
     cursor: string | null = null,
   ) => {
     if (mode === 'append' && controllerRef.current) return
-    if (mode === 'replace') invalidateVisibleResults()
+    if (mode === 'replace') {
+      prepareCustomerProfileReplacement('same-filter', cancelActiveLoad, () => {
+        dispatch({ type: 'filters.changed' })
+      })
+    }
 
     const controller = new AbortController()
     controllerRef.current = controller
@@ -115,7 +140,7 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
     dispatch({ type: 'load.started', requestId, mode })
 
     void api.searchCustomerProfiles({
-      ...(debouncedQuery ? { q: debouncedQuery } : {}),
+      ...(debouncedSearch.query ? { q: debouncedSearch.query } : {}),
       ...(platform ? { platform } : {}),
       ...(effectiveAccountId ? { accountId: effectiveAccountId } : {}),
       limit: PAGE_LIMIT,
@@ -136,20 +161,19 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
     }).finally(() => {
       if (controllerRef.current === controller) controllerRef.current = null
     })
-  }, [debouncedQuery, effectiveAccountId, invalidateVisibleResults, platform])
+  }, [cancelActiveLoad, debouncedSearch, effectiveAccountId, platform])
 
   useEffect(() => {
     startLoad('replace')
     return () => {
-      controllerRef.current?.abort()
-      controllerRef.current = null
+      cancelActiveLoad()
     }
-  }, [startLoad])
+  }, [cancelActiveLoad, startLoad])
 
   const handleQueryInputChange = useCallback((value: string) => {
-    if (value.trim() !== debouncedQuery) invalidateVisibleResults()
+    if (value.trim() !== debouncedSearch.query) invalidateVisibleResults()
     setQueryInput(value)
-  }, [debouncedQuery, invalidateVisibleResults])
+  }, [debouncedSearch.query, invalidateVisibleResults])
 
   const handlePlatformChange = useCallback((value: Platform | null) => {
     if (value === platform) return
