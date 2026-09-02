@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import { sendCurrentNativeDraft, shouldTranslateOnKeyDown } from './TranslationDock.js'
 
 describe('TranslationDock keyboard handling', () => {
@@ -34,8 +35,7 @@ describe('TranslationDock keyboard handling', () => {
     await expect(sendCurrentNativeDraft(
       context,
       { getDraft, send },
-      () => true,
-      () => 'attempt-stable',
+      { canContinue: () => true, resolveAttemptId: () => 'attempt-stable' },
     ))
       .resolves.toBe('chat-1:message-1')
     expect(order).toEqual(['getDraft', 'send'])
@@ -63,7 +63,7 @@ describe('TranslationDock keyboard handling', () => {
     await expect(sendCurrentNativeDraft(
       context,
       { getDraft: vi.fn(async () => 'employee edited text'), send },
-      () => false,
+      { canContinue: () => false },
     )).resolves.toBeNull()
     expect(send).not.toHaveBeenCalled()
   })
@@ -90,10 +90,10 @@ describe('TranslationDock keyboard handling', () => {
     }
 
     await expect(sendCurrentNativeDraft(
-      context, bridge, () => true, resolveAttemptId,
+      context, bridge, { canContinue: () => true, resolveAttemptId },
     )).rejects.toThrow('result unknown')
     await expect(sendCurrentNativeDraft(
-      context, bridge, () => true, resolveAttemptId,
+      context, bridge, { canContinue: () => true, resolveAttemptId },
     )).rejects.toThrow('result unknown')
     expect(attempts).toEqual(['attempt-stable', 'attempt-stable'])
   })
@@ -108,11 +108,108 @@ describe('TranslationDock keyboard handling', () => {
     await expect(sendCurrentNativeDraft(
       context,
       { getDraft, send },
-      () => true,
-      () => 'should-not-be-used',
-      'attempt-unknown',
+      {
+        canContinue: () => true,
+        resolveAttemptId: () => 'should-not-be-used',
+        existingAttempt: { attemptId: 'attempt-unknown' },
+      },
     )).resolves.toBe('chat-1:42')
     expect(getDraft).not.toHaveBeenCalled()
     expect(send).toHaveBeenCalledWith(context, 'attempt-unknown')
+  })
+
+  it('Signal 新 attempt 把最终原生正文指纹和当前 revision 一起发送', async () => {
+    const context = {
+      accountId: 'account-1', platformConversationId: 'u:peer', contextRevision: 9,
+    }
+    const send = vi.fn(async () => 'sender:123')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft: vi.fn(async () => 'employee edited text'), send },
+      {
+        bindDraftFingerprint: true,
+        resolveAttemptId: () => 'attempt-signal',
+      },
+    )).resolves.toBe('sender:123')
+
+    expect(send).toHaveBeenCalledWith(
+      context,
+      'attempt-signal',
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      9,
+    )
+  })
+
+  it('Signal 重启查询沿用 attempt 首次 revision，不改绑到当前 revision', async () => {
+    const context = {
+      accountId: 'account-1', platformConversationId: 'u:peer', contextRevision: 1,
+    }
+    const send = vi.fn(async () => 'sender:123')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft: vi.fn(async () => ''), send },
+      {
+        bindDraftFingerprint: true,
+        existingAttempt: {
+          attemptId: 'attempt-before-restart',
+          draftFingerprint: 'a'.repeat(64),
+          contextRevision: 7,
+        },
+      },
+    )).resolves.toBe('sender:123')
+
+    expect(send).toHaveBeenCalledWith(
+      context,
+      'attempt-before-restart',
+      'a'.repeat(64),
+      7,
+    )
+  })
+
+  it('WhatsApp 绑定员工最终改稿的 SHA-256 与 attempt 初始 revision', async () => {
+    const context = {
+      accountId: 'account-wa', platformConversationId: 'wa:555000111@c.us', contextRevision: 11,
+    }
+    const finalDraft = 'synthetic employee-edited outbound text'
+    const send = vi.fn(async () => 'wa-dom:true_555000111@c.us_FINAL')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft: vi.fn(async () => finalDraft), send },
+      {
+        bindDraftFingerprint: true,
+        resolveAttemptId: () => 'attempt-whatsapp',
+      },
+    )).resolves.toBe('wa-dom:true_555000111@c.us_FINAL')
+
+    expect(send).toHaveBeenCalledWith(
+      context,
+      'attempt-whatsapp',
+      await nativeDraftFingerprint(finalDraft),
+      11,
+    )
+  })
+
+  it('WhatsApp 计算正文指纹期间切会话时不调用 guest 发送', async () => {
+    const context = {
+      accountId: 'account-wa', platformConversationId: 'wa:555000111@c.us', contextRevision: 11,
+    }
+    let checks = 0
+    const send = vi.fn(async () => 'should-not-send')
+
+    await expect(sendCurrentNativeDraft(
+      context,
+      { getDraft: vi.fn(async () => 'synthetic outbound text'), send },
+      {
+        bindDraftFingerprint: true,
+        canContinue: () => {
+          checks += 1
+          return checks === 1
+        },
+      },
+    )).resolves.toBeNull()
+    expect(send).not.toHaveBeenCalled()
   })
 })

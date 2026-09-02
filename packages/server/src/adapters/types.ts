@@ -25,6 +25,8 @@ export interface AuthChallenge {
 export type MessageHandler = (msg: NormalizedMessage) => void
 export type StatusHandler = (accountId: string, status: AccountStatus) => void
 export type AuthChallengeHandler = (accountId: string, challenge: AuthChallenge) => void
+/** 已脱敏的鉴权失败；reason 不得包含二维码、验证码、密码或平台凭据。 */
+export type AuthFailureHandler = (accountId: string, reason: string) => void
 export type CredentialsHandler = (accountId: string, credentialsRef: string) => void
 export type PlatformIdentityHandler = (
   accountId: string,
@@ -45,11 +47,35 @@ export type MessageIdRemapHandler = (
   newPlatformMessageId: string,
 ) => void
 
+/** 平台确认一条消息已从当前账号视图删除时触发。 */
+export type MessageDeletedHandler = (
+  accountId: string,
+  platformMessageId: string,
+  deletedAt: Date,
+) => void
+
+export type CurrentMessageFetchResult = {
+  platformMessageId: string
+} & ({
+  status: 'found'
+  message: NormalizedMessage
+} | {
+  status: 'unavailable' | 'unsupported'
+})
+
 export interface PlatformAdapter {
   readonly platform: Platform
   connect(account: AdapterAccount): Promise<void>
   disconnect(accountId: string): Promise<void>
   sendMessage(accountId: string, conversationId: string, content: OutboundContent): Promise<string>
+  /**
+   * 精确读取当前平台快照；只允许最终服务端消息 id，不做无界历史遍历。
+   * 返回的 message 仍须由组合根以该适配器的真实来源进入 ingest/shadow。
+   */
+  fetchCurrentMessages?(
+    accountId: string,
+    platformMessageIds: string[],
+  ): Promise<CurrentMessageFetchResult[]>
   onMessage(handler: MessageHandler): void
   onStatusChange(handler: StatusHandler): void
 
@@ -59,6 +85,9 @@ export interface PlatformAdapter {
    * 不需要人工介入的平台注册了也永远不触发，这是可以的。
    */
   onAuthChallenge(handler: AuthChallengeHandler): void
+
+  /** 异步鉴权失败时显式结束前端等待；不实现的平台可省略。 */
+  onAuthFailure?(handler: AuthFailureHandler): void
 
   /**
    * 关联成功后平台产生的新凭据，供上层写回 accounts.credentials_ref。
@@ -71,6 +100,9 @@ export interface PlatformAdapter {
 
   /** 临时消息 id 被平台换成最终 id 时通知上层改写已落库的记录 */
   onMessageIdRemapped(handler: MessageIdRemapHandler): void
+
+  /** 服务端删除事件；纯本地缓存淘汰不能伪装成业务删除。 */
+  onMessageDeleted(handler: MessageDeletedHandler): void
 
   /**
    * 把人工输入的验证码或二次验证密码交回给正在等待的鉴权流程。

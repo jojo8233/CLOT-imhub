@@ -84,12 +84,23 @@ describe('MessageIngestor', () => {
     expect(repo.touchConversation).toHaveBeenCalledWith('conv-1', sample().sentAt)
   })
 
-  it('出向消息也入库，方向记为 out', async () => {
+  it('Telegram 出向消息也入库但不扩张既有翻译边界', async () => {
     const repo = fakeRepo()
     const queue = fakeQueue()
     await new MessageIngestor(repo as never, queue as never).ingest(sample({ direction: 'out' }))
     expect(repo.insertMessage.mock.calls[0]![0]).toMatchObject({ direction: 'out' })
     expect(queue.enqueueTranslate).not.toHaveBeenCalled()
+  })
+
+  it('Signal 纯文字出向消息入库后进入双语翻译队列', async () => {
+    const queue = fakeQueue()
+    await new MessageIngestor(fakeRepo() as never, queue as never).ingest(sample({
+      platform: 'signal', direction: 'out',
+      platformConversationId: 'u:peer', platformMessageId: 'self:123',
+    }))
+    expect(queue.enqueueTranslate).toHaveBeenCalledWith({
+      messageId: 'msg-1', conversationId: 'conv-1', revision: 'initial',
+    })
   })
 
   it('入库成功后更新会话的 last_message_at', async () => {
@@ -117,6 +128,19 @@ describe('MessageIngestor', () => {
       editVersion: null,
       sentAt: msg.sentAt,
       raw: { _: 'x' },
+    })
+  })
+
+  it('只在明确指定 shadow 来源时生成不含正文的 Telegram 观测', async () => {
+    const repo = fakeRepo()
+    await new MessageIngestor(repo as never, fakeQueue() as never)
+      .ingestDetailed(sample(), undefined, 'tdlib')
+
+    expect(repo.insertMessage.mock.calls[0]![0]).toMatchObject({
+      shadowObservation: {
+        accountId: 'acc-1', source: 'tdlib', eventType: 'upsert',
+        factKey: 'upsert:555:base', semanticHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
     })
   })
 

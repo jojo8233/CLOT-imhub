@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   type NativeGuestEvent,
@@ -11,6 +11,7 @@ import {
   NATIVE_TRANSLATE_BATCH_CHANNEL,
   NATIVE_TRANSLATE_DETECT_CHANNEL,
 } from '../native-control-ipc.js'
+import { startWhatsAppWebBridge } from './whatsapp-web-bridge.js'
 
 const COMMAND_CHANNEL = 'imhub:native-command'
 const MAX_EVENT_BYTES = 900_000
@@ -30,7 +31,7 @@ ipcRenderer.on(COMMAND_CHANNEL, (_event, command: NativeHostCommand) => {
  * 这份 typed bridge 只能发送声明过的事件、接收声明过的命令，并调用主进程提供的
  * 窄翻译代理；它不暴露外壳的 window.imHub、grant、JWT、ipcRenderer 或 Node.js。
  */
-contextBridge.exposeInMainWorld('imHubNativeBridge', {
+const bridgeApi = {
   protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
   emit(event: NativeGuestEvent): void {
     try {
@@ -70,4 +71,16 @@ contextBridge.exposeInMainWorld('imHubNativeBridge', {
       return undefined
     }
   },
-})
+}
+
+if (location.origin === 'https://web.whatsapp.com') {
+  startWhatsAppWebBridge({
+    ...bridgeApi,
+    // 只留在隔离 preload 内部，不向第三方页面暴露 Electron 编辑能力。
+    insertText(text: string): void {
+      webFrame.insertText(text)
+    },
+  })
+} else {
+  contextBridge.exposeInMainWorld('imHubNativeBridge', bridgeApi)
+}

@@ -4,10 +4,14 @@ import { NativeControlRegistry } from './native-control-registry.js'
 
 const now = Date.parse('2026-08-26T12:00:00.000Z')
 
-function verification(accountId: string, externalId = '778899') {
+function verification(
+  accountId: string,
+  externalId = '778899',
+  platform: 'telegram' | 'signal' | 'whatsapp' = 'telegram',
+) {
   return {
     accountId,
-    platform: 'telegram' as const,
+    platform,
     expectedPlatformAccountExternalId: externalId,
     expiresAt: '2026-08-26T12:05:00.000Z',
   }
@@ -75,6 +79,42 @@ describe('NativeControlRegistry', () => {
     expect(registry.requireGrant(11, 'account-1', now)).toBe('grant-1')
     expect(registry.requireGrant(22, 'account-2', now)).toBe('grant-2')
     expect(() => registry.requireGrant(11, 'account-2', now)).toThrow('尚未建立')
+  })
+
+  it('Signal WebContentsView 也必须在实际 ACI 与 grant 一致后才开放', () => {
+    const registry = new NativeControlRegistry()
+    registry.observeGuestEvent(31, 'signal-account', {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'account.identity',
+      platformAccountExternalId: 'signal-aci',
+    }, now)
+    const decision = registry.configure(
+      31,
+      'signal-account',
+      'signal-grant',
+      verification('signal-account', 'signal-aci', 'signal'),
+      now,
+    )
+    expect(decision.state).toMatchObject({ state: 'ready', message: null })
+    expect(registry.requireGrant(31, 'signal-account', now)).toBe('signal-grant')
+  })
+
+  it('WhatsApp Web partition 只在页面身份与 grant 一致后开放翻译代理', () => {
+    const registry = new NativeControlRegistry()
+    registry.observeGuestEvent(41, 'whatsapp-account', {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'account.identity',
+      platformAccountExternalId: '123456789@c.us',
+    }, now)
+    const decision = registry.configure(
+      41,
+      'whatsapp-account',
+      'whatsapp-grant',
+      verification('whatsapp-account', '123456789@c.us', 'whatsapp'),
+      now,
+    )
+    expect(decision.state).toMatchObject({ state: 'ready', message: null })
+    expect(registry.requireGrant(41, 'whatsapp-account', now)).toBe('whatsapp-grant')
   })
 
   it('guest 退出账号会立即撤销控制能力', () => {

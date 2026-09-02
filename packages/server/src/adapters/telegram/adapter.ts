@@ -4,6 +4,7 @@ import * as tdl from 'tdl'
 import { getTdjson } from 'prebuilt-tdlib'
 import type { Update } from 'tdlib-types'
 import {
+  parseTelegramMessageKey,
   telegramMessageKeyFromTdlib,
   type AccountStatus,
   type OutboundContent,
@@ -13,13 +14,15 @@ import type {
   AuthChallenge,
   AuthChallengeHandler,
   CredentialsHandler,
+  CurrentMessageFetchResult,
   MessageHandler,
+  MessageDeletedHandler,
   MessageIdRemapHandler,
   PlatformIdentityHandler,
   PlatformAdapter,
   StatusHandler,
 } from '../types.js'
-import { normalizeTelegramMessage } from './normalize.js'
+import { normalizeTelegramMessage, normalizeTelegramStoredMessage } from './normalize.js'
 
 tdl.configure({ tdjson: getTdjson() })
 
@@ -40,6 +43,8 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
   private readonly idRemapHandlers: MessageIdRemapHandler[] = []
+  private readonly messageDeletedHandlers: MessageDeletedHandler[] = []
+  private readonly currentFetches = new Set<string>()
 
   /**
    * 正在等人填验证码 / 二次验证密码的账号。
@@ -58,9 +63,23 @@ export class TelegramAdapter implements PlatformAdapter {
     this.platformIdentityHandlers.push(handler)
   }
   onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
+  onMessageDeleted(handler: MessageDeletedHandler): void { this.messageDeletedHandlers.push(handler) }
 
   private emitStatus(accountId: string, status: AccountStatus): void {
     for (const h of this.statusHandlers) h(accountId, status)
+  }
+
+  private emitMessage(message: Parameters<MessageHandler>[0]): void {
+    for (const handler of this.messageHandlers) {
+      // 一个 handler 抛出的异常绝不能让 tdl 把它当成 TDLib 层面的错误接住——
+      // tdl 会把 update 回调里未捕获的异常转成 client 的 'error' 事件，而我们的
+      // error 处理会把账号状态错误地标成 reconnecting。消息处理失败跟连接状态无关。
+      try {
+        handler(message)
+      } catch (err) {
+        console.error(`[telegram] 账号 ${message.accountId} 的消息 handler 出错:`, err)
+      }
+    }
   }
 
   /** 每个 handler 单独隔离：一个订阅方抛异常不能让其余订阅方收不到 */
@@ -120,9 +139,14 @@ export class TelegramAdapter implements PlatformAdapter {
       filesDirectory: path.join(this.opts.dataDir, account.id, 'files'),
     })
 
+    // tdl 的新 tdjson receive loop 会在 createClient() 返回后立刻启动。已有数据库
+    // 初始化很快时，首个 authorization update 可能在这里挂 listener 之前就被
+    // tdl 缓存；之后状态不再变化，我们就会永远停在 pending_auth。
+    let observedAuthorizationUpdate = false
     client.on('update', (update: unknown) => {
       const au = update as { _?: string; authorization_state?: { _: string; link?: string } }
       if (au._ === 'updateAuthorizationState' && au.authorization_state) {
+        observedAuthorizationUpdate = true
         // 不 await：鉴权要等人扫码/输密码，可能挂几分钟，绝不能卡住 update 分发
         void this.driveAuth(account.id, client, au.authorization_state)
       }
@@ -150,18 +174,61 @@ export class TelegramAdapter implements PlatformAdapter {
         }
       }
 
-      const msg = normalizeTelegramMessage(update, account.id)
-      if (!msg) return
-      for (const h of this.messageHandlers) {
-        // 一个 handler 抛出的异常绝不能让 tdl 把它当成 TDLib 层面的错误接住——
-        // tdl 会把 update 回调里未捕获的异常转成 client 的 'error' 事件，而我们的
-        // error 处理会把账号状态错误地标成 reconnecting。消息处理失败跟连接状态无关。
-        try {
-          h(msg)
-        } catch (err) {
-          console.error(`[telegram] 账号 ${account.id} 的消息 handler 出错:`, err)
+      const deletion = update as {
+        _?: string
+        chat_id?: number
+        message_ids?: number[]
+        from_cache?: boolean
+      }
+      // from_cache=true 只是 TDLib 淘汰本地缓存，消息以后可能重新载入，不能据此
+      // 把中央消息标为删除。服务端下发的账号内删除（包括“仅为我删除”）则是
+      // 当前账号视图的真实事实，需要进入 shadow 对账。
+      if (deletion._ === 'updateDeleteMessages' && deletion.from_cache !== true) {
+        const chatId = deletion.chat_id
+        const messageIds = deletion.message_ids
+        if (typeof chatId !== 'number' || !Number.isSafeInteger(chatId) || !Array.isArray(messageIds)) {
+          console.error(`[telegram] 账号 ${account.id} 收到无效删除事件，已忽略`)
+        } else {
+          const deletedAt = new Date()
+          for (const messageId of new Set(messageIds)) {
+            try {
+              const platformMessageId = telegramMessageKeyFromTdlib(chatId, messageId)
+              for (const handler of this.messageDeletedHandlers) {
+                try {
+                  handler(account.id, platformMessageId, deletedAt)
+                } catch (err) {
+                  console.error(`[telegram] 账号 ${account.id} 的删除处理器抛出异常，已隔离:`, err)
+                }
+              }
+            } catch {
+              console.error(`[telegram] 账号 ${account.id} 收到无效删除消息 id，已忽略`)
+            }
+          }
         }
       }
+
+      const contentChange = update as {
+        _?: string
+        chat_id?: number
+        message_id?: number
+      }
+      // TDLib 把编辑时间和正文拆成 updateMessageEdited / updateMessageContent。
+      // 后者到达时本地 message 已含最终正文与 edit_date，用 getMessage 补齐
+      // sender/date 等规范化所需字段；非编辑型内容变化会因 edit_date=0 被忽略。
+      if (contentChange._ === 'updateMessageContent') {
+        const chatId = contentChange.chat_id
+        const messageId = contentChange.message_id
+        if (typeof chatId !== 'number' || !Number.isSafeInteger(chatId)
+          || typeof messageId !== 'number' || !Number.isSafeInteger(messageId)) {
+          console.error(`[telegram] 账号 ${account.id} 收到无效消息内容更新，已忽略`)
+        } else {
+          void this.observeEditedMessage(account.id, client, chatId, messageId)
+        }
+      }
+
+      const msg = normalizeTelegramMessage(update, account.id)
+      if (!msg) return
+      this.emitMessage(msg)
     })
 
     client.on('error', (err) => {
@@ -172,6 +239,20 @@ export class TelegramAdapter implements PlatformAdapter {
     this.clients.set(account.id, client)
     this.emitStatus(account.id, 'pending_auth')
 
+    // 补读 tdl 缓存的当前状态，覆盖 listener 挂载前首个 update 已到达的竞态。
+    // 若 listener 已经看到任何 authorization update，以实时 update 为准，避免同一
+    // WaitPhoneNumber 被处理两次而旋转两份二维码 token。
+    void client.invoke({ _: 'getAuthorizationState' }).then((state) => {
+      if (this.clients.get(account.id) !== client || observedAuthorizationUpdate) return
+      return this.driveAuth(account.id, client, state)
+    }).catch((err: unknown) => {
+      // disconnect/relink 期间旧 client 的 pending invoke 会被拒绝；它已经不再是
+      // 当前实例时无需报错，更不能把新实例的状态覆盖回 pending_auth。
+      if (this.clients.get(account.id) !== client) return
+      console.error(`[telegram] 账号 ${account.id} 读取当前鉴权状态失败:`, err)
+      this.emitStatus(account.id, 'pending_auth')
+    })
+
     // 刻意不调 client.login()。它在 WaitPhoneNumber 里写死了发
     // setAuthenticationPhoneNumber，没有扫码入口；而且默认的 getPhoneNumber
     // 从真实 stdin 读，没有 TTY 时会永远挂起，既不超时也不报错。
@@ -181,6 +262,25 @@ export class TelegramAdapter implements PlatformAdapter {
     // createClient() 自身仍会处理 WaitTdlibParameters（tdl 把它放在 update
     // 分发里，不依赖 login()），所以跳过 login() 是安全的。
     await Promise.resolve()
+  }
+
+  private async observeEditedMessage(
+    accountId: string,
+    client: tdl.Client,
+    chatId: number,
+    messageId: number,
+  ): Promise<void> {
+    try {
+      const message = await client.invoke({ _: 'getMessage', chat_id: chatId, message_id: messageId })
+      // disconnect/relink 后旧 client 的异步结果不能写入新连接的消息流。
+      if (this.clients.get(accountId) !== client) return
+      const normalized = normalizeTelegramStoredMessage(message, accountId)
+      if (!normalized?.editedAt) return
+      this.emitMessage(normalized)
+    } catch (err) {
+      if (this.clients.get(accountId) !== client) return
+      console.error(`[telegram] 账号 ${accountId} 读取编辑后的消息失败:`, err)
+    }
   }
 
   /**
@@ -296,6 +396,62 @@ export class TelegramAdapter implements PlatformAdapter {
     this.emitStatus(accountId, 'disconnected')
   }
 
+  async fetchCurrentMessages(
+    accountId: string,
+    platformMessageIds: string[],
+  ): Promise<CurrentMessageFetchResult[]> {
+    const client = this.clients.get(accountId)
+    if (!client) throw new Error(`telegram account ${accountId} is not connected`)
+    if (platformMessageIds.length < 1 || platformMessageIds.length > 10) {
+      throw new Error('Telegram current message refresh requires between 1 and 10 ids')
+    }
+    if (this.currentFetches.has(accountId)) {
+      throw new Error(`telegram account ${accountId} already has a current message refresh in progress`)
+    }
+
+    const targets = [...new Set(platformMessageIds)].map(toTdlibMessageCoordinates)
+    this.currentFetches.add(accountId)
+    try {
+      const results: CurrentMessageFetchResult[] = []
+      for (const [index, target] of targets.entries()) {
+        if (this.clients.get(accountId) !== client) {
+          throw new Error(`telegram account ${accountId} disconnected during current message refresh`)
+        }
+        try {
+          const message = await withTimeout(client.invoke({
+            _: 'getMessage',
+            chat_id: target.chatId,
+            message_id: target.messageId,
+          }), 5_000)
+          if (this.clients.get(accountId) !== client) {
+            throw new Error('client changed during current message refresh')
+          }
+          const normalized = normalizeTelegramStoredMessage(message, accountId)
+          if (!normalized || normalized.platformMessageId !== target.platformMessageId) {
+            results.push({ platformMessageId: target.platformMessageId, status: 'unsupported' })
+            continue
+          }
+          results.push({
+            platformMessageId: target.platformMessageId,
+            status: 'found',
+            message: normalized,
+          })
+        } catch {
+          if (this.clients.get(accountId) !== client) {
+            throw new Error(`telegram account ${accountId} disconnected during current message refresh`)
+          }
+          console.warn(
+            `[telegram] 账号 ${accountId} 主动读取当前消息失败（${index + 1}/${targets.length}）`,
+          )
+          results.push({ platformMessageId: target.platformMessageId, status: 'unavailable' })
+        }
+      }
+      return results
+    } finally {
+      this.currentFetches.delete(accountId)
+    }
+  }
+
   async sendMessage(accountId: string, conversationId: string, content: OutboundContent): Promise<string> {
     const client = this.clients.get(accountId)
     if (!client) throw new Error(`telegram account ${accountId} is not connected`)
@@ -334,5 +490,38 @@ export class TelegramAdapter implements PlatformAdapter {
 
       client.on('update', handler)
     })
+  }
+}
+
+interface TdlibMessageCoordinates {
+  platformMessageId: string
+  chatId: number
+  messageId: number
+}
+
+function toTdlibMessageCoordinates(platformMessageId: string): TdlibMessageCoordinates {
+  const parsed = parseTelegramMessageKey(platformMessageId)
+  if (!parsed || parsed.kind !== 'server') {
+    throw new Error('Telegram current message refresh requires canonical server ids')
+  }
+  const chatId = Number(parsed.chatId)
+  const messageId = Number(BigInt(parsed.serverMessageId) << 20n)
+  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(messageId)) {
+    throw new Error('Telegram current message refresh id is outside the safe TDLib range')
+  }
+  return { platformMessageId, chatId, messageId }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Telegram current message refresh timed out')), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }

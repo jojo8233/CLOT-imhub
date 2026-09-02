@@ -1,7 +1,7 @@
 import type { MediaRef } from './message.js'
 import type { Direction } from './platform.js'
 
-export const NATIVE_BRIDGE_PROTOCOL_VERSION = 2 as const
+export const NATIVE_BRIDGE_PROTOCOL_VERSION = 3 as const
 export type NativeBridgeProtocolVersion = typeof NATIVE_BRIDGE_PROTOCOL_VERSION
 export const NATIVE_EDIT_VERSION_MAX = 2_147_483_647
 
@@ -39,6 +39,13 @@ export interface NativeSendCommand extends NativeCommandFrame {
   type: 'composer.send'
   /** 一次逻辑发送的稳定标识；结果未知后的重试必须沿用同一个值。 */
   attemptId: string
+  /** Signal/WhatsApp attempt 首次建立时的 revision；重启查询时仍保持原值。 */
+  attemptContextRevision?: number
+  /**
+   * 最终原生草稿的 SHA-256 十六进制指纹。Signal/WhatsApp 用它把正文与 attempt
+   * 绑定；Telegram v3 guest 不依赖该可选字段。
+   */
+  draftFingerprint?: string
 }
 
 export type NativeComposerCommand =
@@ -59,7 +66,50 @@ export interface NativeEventAckCommand extends NativeBridgeFrame {
   retryable: boolean
 }
 
-export type NativeHostCommand = NativeComposerCommand | NativeEventAckCommand | NativeRequestStateCommand
+/** Signal 最终消息结果已经由外壳提交后，才允许 guest 清理持久 attempt。 */
+export interface NativeSendAttemptAckCommand extends NativeBridgeFrame {
+  type: 'composer.ack-send'
+  attemptId: string
+  platformMessageId: string
+}
+
+/** 运维动作只操作 guest 当前已认证账号的持久队列，不向宿主暴露事件正文。 */
+export interface NativeOutboxRetryDeadLettersCommand extends NativeBridgeFrame {
+  type: 'outbox.retry-dead-letters'
+}
+
+export interface NativeOutboxDiscardDeadLettersCommand extends NativeBridgeFrame {
+  type: 'outbox.discard-dead-letters'
+}
+
+export type NativeOutboxOperationCommand =
+  | NativeOutboxRetryDeadLettersCommand
+  | NativeOutboxDiscardDeadLettersCommand
+
+export interface NativeMessageTranslation {
+  /** Signal 的 sender + sent_at 规范键；不得替换成本地数据库消息 id。 */
+  platformMessageId: string
+  translatedText: string
+  /** `initial` 或 Signal editMessageTimestamp 的 ISO 字符串。 */
+  revision: string
+}
+
+/**
+ * 中央译文快照批量回填给补丁客户端。批量而非逐条命令，避免每条消息都重新
+ * 请求一次短时 control grant 校验；guest 仍须逐条复核规范消息键与 revision。
+ */
+export interface NativeSetMessageTranslationsCommand extends NativeBridgeFrame {
+  type: 'message.set-translations'
+  translations: NativeMessageTranslation[]
+}
+
+export type NativeHostCommand =
+  | NativeComposerCommand
+  | NativeSendAttemptAckCommand
+  | NativeEventAckCommand
+  | NativeRequestStateCommand
+  | NativeOutboxOperationCommand
+  | NativeSetMessageTranslationsCommand
 
 export interface NativeBridgeReadyEvent extends NativeBridgeFrame {
   type: 'bridge.ready'
@@ -87,6 +137,15 @@ export interface NativeComposerStateEvent extends NativeBridgeFrame {
   platformConversationId: string
   draft: string
   canSend: boolean
+  /** Signal 进程或 WhatsApp 页面重启/结果丢失后，外壳可用同一 attempt 查询或续接。 */
+  sendAttempt?: {
+    attemptId: string
+    /** attempt 首次建立时的会话 revision；重启后的查询不能改写它。 */
+    contextRevision: number
+    draftFingerprint: string
+    /** 非 null 表示 guest 已确认最终消息 ID，但外壳尚未 ACK。 */
+    platformMessageId: string | null
+  }
 }
 
 export type NativeCommandName = NativeComposerCommand['type']
@@ -113,6 +172,15 @@ export interface NativeBridgeErrorEvent extends NativeBridgeFrame {
   code: string
   /** 已脱敏，不得包含 token、草稿正文、验证码或 2FA 密码。 */
   message: string
+}
+
+/** guest 持久事件队列的有界运行指标；不包含消息正文或账号凭据。 */
+export interface NativeOutboxStatusEvent extends NativeBridgeFrame {
+  type: 'outbox.status'
+  pendingCount: number
+  deadLetterCount: number
+  isSending: boolean
+  lastErrorCode: string | null
 }
 
 export interface NativeMessageSnapshot {
@@ -162,6 +230,18 @@ export interface NativeMessageIdRemappedEvent extends NativeMessageEventFrame {
   newPlatformMessageId: string
 }
 
+/**
+ * 平台侧某个参与者对消息的当前回应状态。emoji=null 是删除回应的墓碑；服务端按
+ * (account, target, reactor) 唯一保存，并只接受更晚的 reactedAt。
+ */
+export interface NativeMessageReactionEvent extends NativeMessageEventFrame {
+  type: 'message.reaction'
+  targetPlatformMessageId: string
+  reactorExternalId: string
+  emoji: string | null
+  reactedAt: string
+}
+
 export type NativeGuestEvent =
   | NativeBridgeReadyEvent
   | NativeAccountIdentityEvent
@@ -170,6 +250,8 @@ export type NativeGuestEvent =
   | NativeComposerStateEvent
   | NativeCommandResultEvent
   | NativeBridgeErrorEvent
+  | NativeOutboxStatusEvent
   | NativeMessageUpsertEvent
   | NativeMessageDeletedEvent
   | NativeMessageIdRemappedEvent
+  | NativeMessageReactionEvent

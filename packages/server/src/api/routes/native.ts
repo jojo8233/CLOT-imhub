@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type {
   NativeMessageDeletedEvent,
   NativeMessageIdRemappedEvent,
+  NativeMessageReactionEvent,
   NativeMessageUpsertEvent,
   NormalizedMessage,
   Platform,
@@ -10,12 +11,26 @@ import type {
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   NATIVE_EDIT_VERSION_MAX,
+  isSignalConversationId,
+  normalizeSignalPersonId,
   normalizeTelegramChatId,
+  parseSignalMessageKey,
   parseTelegramMessageKey,
+  signalDirectConversationId,
+  signalMessageKey,
 } from '@im-hub/shared'
 import { z } from 'zod'
 import type { MessageIngestor, UpsertConversationInput } from '../../ingest/ingestor.js'
-import type { MessageIdRemapResult, MessagePublicationSnapshot } from '../../ingest/repo.js'
+import type {
+  MessageIdRemapResult,
+  MessagePublicationSnapshot,
+  MessageReactionUpsertResult,
+} from '../../ingest/repo.js'
+import {
+  buildTelegramDeleteObservation,
+  buildTelegramRemapObservation,
+  type TelegramShadowObservation,
+} from '../../shadow/telegram.js'
 import { authorizeNativeControl } from '../native-control.js'
 
 const id = z.string().trim().min(1).max(512)
@@ -74,6 +89,15 @@ const eventSchema = z.discriminatedUnion('type', [
     oldPlatformMessageId: id,
     newPlatformMessageId: id,
   }),
+  z.object({
+    protocolVersion: z.literal(NATIVE_BRIDGE_PROTOCOL_VERSION),
+    type: z.literal('message.reaction'),
+    eventId: z.string().min(1).max(128),
+    targetPlatformMessageId: id,
+    reactorExternalId: id,
+    emoji: z.string().min(1).max(64).nullable(),
+    reactedAt: timestamp,
+  }),
 ])
 
 const contextBody = z.object({ accountId: z.string().uuid(), context: contextSchema })
@@ -89,12 +113,21 @@ interface NativeEventRepo {
     accountId: string,
     platformMessageId: string,
     deletedAt: Date,
+    shadowObservation?: TelegramShadowObservation,
   ): Promise<{ messageId: string; conversationId: string; changed: boolean } | null>
   remapMessageId(
     accountId: string,
     oldPlatformMessageId: string,
     newPlatformMessageId: string,
+    shadowObservation?: TelegramShadowObservation,
   ): Promise<MessageIdRemapResult | null>
+  upsertMessageReaction(
+    accountId: string,
+    platformMessageId: string,
+    reactorExternalId: string,
+    emoji: string | null,
+    reactedAt: Date,
+  ): Promise<MessageReactionUpsertResult>
 }
 
 export interface NativeRouteDeps {
@@ -113,6 +146,14 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     if (account.platform === 'telegram'
       && !isCanonicalTelegramChatId(parsed.data.context.platformConversationId)) {
       return reply.code(422).send({ error: 'invalid canonical Telegram chat id' })
+    }
+    if (account.platform === 'signal') {
+      const canonicalError = validateCanonicalSignalContext(parsed.data.context)
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
+    }
+    if (account.platform === 'whatsapp') {
+      const canonicalError = validateCanonicalWhatsAppContext(parsed.data.context)
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
     }
 
     const conversation = await deps.repo.upsertConversation({
@@ -135,6 +176,18 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     if (account.platform === 'telegram') {
       const canonicalError = validateCanonicalTelegramEvent(event)
       if (canonicalError) return reply.code(422).send({ error: canonicalError })
+    } else if (account.platform === 'signal') {
+      const canonicalError = validateCanonicalSignalEvent(
+        event,
+        account.expectedPlatformAccountExternalId,
+      )
+      if (canonicalError) return reply.code(422).send({ error: canonicalError })
+      if (event.type === 'message.reaction'
+        && event.reactorExternalId === account.expectedPlatformAccountExternalId) {
+        return reply.code(422).send({ error: 'Signal native bridge only accepts inbound reactions' })
+      }
+    } else if (event.type === 'message.reaction') {
+      return reply.code(422).send({ error: 'native message reactions are not supported for this platform' })
     }
     if (event.type === 'message.upsert') {
       const result = await ingestNativeMessage(
@@ -153,6 +206,7 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
               deps.publish(account.userId, {
                 type: 'message',
                 messageId: message.id,
+                platformMessageId: message.platformMessageId,
                 conversationId: message.conversationId,
                 accountId: message.accountId,
                 platform: message.platform,
@@ -182,8 +236,9 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
     }
 
     if (event.type === 'message.deleted') {
-      const result = await deleteNativeMessage(deps.repo, account.id, event)
-      if (!result) return reply.code(409).send({ error: 'message not found; retry event after upsert' })
+      const result = await deleteNativeMessage(deps.repo, account.id, account.platform, event)
+      // 删除是幂等的状态事实；中央库没有该消息时，目标状态已经成立。
+      if (!result) return { accepted: true, duplicate: true }
       if (result.changed) {
         deps.publish(account.userId, {
           type: 'message_deleted',
@@ -195,8 +250,21 @@ export async function nativeRoutes(app: FastifyInstance, deps: NativeRouteDeps):
       return { accepted: true, duplicate: !result.changed }
     }
 
-    const result = await remapNativeMessage(deps.repo, account.id, event)
-    if (!result) return reply.code(409).send({ error: 'message not found; retry event after upsert' })
+    if (event.type === 'message.reaction') {
+      const result = await deps.repo.upsertMessageReaction(
+        account.id,
+        event.targetPlatformMessageId,
+        event.reactorExternalId,
+        event.emoji,
+        new Date(event.reactedAt),
+      )
+      return { accepted: true, duplicate: !result.changed }
+    }
+
+    const result = await remapNativeMessage(deps.repo, account.id, account.platform, event)
+    // outbox 保证同一消息的 temp upsert 先于 remap。两端都不存在说明没有待合并行，
+    // 后续 final upsert 可直接以规范键落库，因此该重放是已完成的 no-op。
+    if (!result) return { accepted: true, duplicate: true }
     if (result.integrityViolation === 'cross_conversation') {
       return reply.code(422).send({ error: 'message remap crosses conversations' })
     }
@@ -244,15 +312,48 @@ async function ingestNativeMessage(
     sentAt: new Date(event.message.sentAt),
     raw: event.message.raw,
   }
-  return ingestor.ingestDetailed(message, onStored)
+  return ingestor.ingestDetailed(
+    message,
+    onStored,
+    platform === 'telegram' ? 'telegram-tt' : undefined,
+  )
 }
 
-function deleteNativeMessage(repo: NativeEventRepo, accountId: string, event: NativeMessageDeletedEvent) {
-  return repo.markMessageDeleted(accountId, event.platformMessageId, new Date(event.deletedAt))
+function deleteNativeMessage(
+  repo: NativeEventRepo,
+  accountId: string,
+  platform: Platform,
+  event: NativeMessageDeletedEvent,
+) {
+  return repo.markMessageDeleted(
+    accountId,
+    event.platformMessageId,
+    new Date(event.deletedAt),
+    platform === 'telegram'
+      ? buildTelegramDeleteObservation(accountId, 'telegram-tt', event.platformMessageId)
+      : undefined,
+  )
 }
 
-function remapNativeMessage(repo: NativeEventRepo, accountId: string, event: NativeMessageIdRemappedEvent) {
-  return repo.remapMessageId(accountId, event.oldPlatformMessageId, event.newPlatformMessageId)
+function remapNativeMessage(
+  repo: NativeEventRepo,
+  accountId: string,
+  platform: Platform,
+  event: NativeMessageIdRemappedEvent,
+) {
+  return repo.remapMessageId(
+    accountId,
+    event.oldPlatformMessageId,
+    event.newPlatformMessageId,
+    platform === 'telegram'
+      ? buildTelegramRemapObservation(
+          accountId,
+          'telegram-tt',
+          event.oldPlatformMessageId,
+          event.newPlatformMessageId,
+        )
+      : undefined,
+  )
 }
 
 function isCanonicalTelegramChatId(chatId: string): boolean {
@@ -263,9 +364,45 @@ function isCanonicalTelegramChatId(chatId: string): boolean {
   }
 }
 
+function validateCanonicalSignalContext(context: z.infer<typeof contextSchema>): string | null {
+  if (!isSignalConversationId(context.platformConversationId)) {
+    return 'invalid canonical Signal conversation id'
+  }
+  if (context.platformConversationId.startsWith('g:')) {
+    return context.contactExternalId === context.platformConversationId
+      ? null
+      : 'Signal group context contact does not match conversation id'
+  }
+  try {
+    return signalDirectConversationId(context.contactExternalId) === context.platformConversationId
+      ? null
+      : 'Signal direct context contact does not match conversation id'
+  } catch {
+    return 'invalid canonical Signal context contact id'
+  }
+}
+
+function validateCanonicalWhatsAppContext(context: z.infer<typeof contextSchema>): string | null {
+  if (/^wa:[0-9]{5,20}@(c\.us|g\.us|lid)$/.test(context.platformConversationId)) {
+    return context.contactExternalId === context.platformConversationId.slice(3)
+      ? null
+      : 'WhatsApp contact does not match conversation id'
+  }
+  if (/^wa-title:[a-f0-9]{32}$/.test(context.platformConversationId)) {
+    return context.contactExternalId === context.platformConversationId
+      ? null
+      : 'WhatsApp fallback contact does not match conversation id'
+  }
+  return 'invalid canonical WhatsApp conversation id'
+}
+
 function validateCanonicalTelegramEvent(
-  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent | NativeMessageIdRemappedEvent,
+  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent
+    | NativeMessageIdRemappedEvent | NativeMessageReactionEvent,
 ): string | null {
+  if (event.type === 'message.reaction') {
+    return 'Telegram native reactions are not supported'
+  }
   if (event.type === 'message.upsert') {
     if (!isCanonicalTelegramChatId(event.message.platformConversationId)) {
       return 'invalid canonical Telegram chat id'
@@ -308,4 +445,73 @@ function sameEditRevision(
     && message.editedAt !== null
     && event.message.editedAt !== null
     && message.editedAt.toISOString() === new Date(event.message.editedAt).toISOString()
+}
+
+function validateCanonicalSignalEvent(
+  event: NativeMessageUpsertEvent | NativeMessageDeletedEvent
+    | NativeMessageIdRemappedEvent | NativeMessageReactionEvent,
+  expectedAccountExternalId: string,
+): string | null {
+  if (event.type === 'message.id-remapped') {
+    return 'Signal message ids cannot be remapped'
+  }
+  if (event.type === 'message.deleted') {
+    return parseSignalMessageKey(event.platformMessageId)
+      ? null
+      : 'invalid canonical Signal message id'
+  }
+  if (event.type === 'message.reaction') {
+    if (!parseSignalMessageKey(event.targetPlatformMessageId)) {
+      return 'invalid canonical Signal reaction target id'
+    }
+    try {
+      return normalizeSignalPersonId(event.reactorExternalId) === event.reactorExternalId
+        ? null
+        : 'invalid canonical Signal reactor id'
+    } catch {
+      return 'invalid canonical Signal reactor id'
+    }
+  }
+
+  const { message } = event
+  if (!isSignalConversationId(message.platformConversationId)) {
+    return 'invalid canonical Signal conversation id'
+  }
+  let expectedMessageId: string
+  try {
+    expectedMessageId = signalMessageKey(
+      message.senderExternalId,
+      new Date(message.sentAt).getTime(),
+    )
+  } catch {
+    return 'invalid canonical Signal message id'
+  }
+  if (message.platformMessageId !== expectedMessageId) {
+    return 'Signal message id does not match sender and sent time'
+  }
+  const parsedMessageId = parseSignalMessageKey(message.platformMessageId)
+  if (!parsedMessageId || parsedMessageId.senderId !== message.senderExternalId) {
+    return 'Signal message sender is not canonical'
+  }
+  if (message.direction === 'out') {
+    let expectedSender: string
+    try {
+      expectedSender = normalizeSignalPersonId(expectedAccountExternalId)
+    } catch {
+      return 'invalid canonical Signal account id'
+    }
+    if (message.senderExternalId !== expectedSender) {
+      return 'Signal outbound sender does not match account identity'
+    }
+  }
+  if (message.platformConversationId.startsWith('u:')
+    && message.direction === 'in'
+    && message.platformConversationId !== signalDirectConversationId(message.senderExternalId)) {
+    return 'Signal direct conversation does not match inbound sender'
+  }
+  if (message.replyToPlatformMessageId
+    && !parseSignalMessageKey(message.replyToPlatformMessageId)) {
+    return 'invalid canonical Signal reply id'
+  }
+  return null
 }

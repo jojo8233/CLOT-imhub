@@ -7,7 +7,9 @@
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx src/db/seed.ts",
     "preflight": "tsx src/db/preflight.ts",
-    "reset-account": "tsx src/db/reset-account.ts"
+    "reset-account": "tsx src/db/reset-account.ts",
+    "shadow-report": "tsx src/shadow/report.ts",
+    "shadow-coverage": "tsx src/shadow/coverage-report.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.33.1",

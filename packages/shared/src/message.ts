@@ -2,7 +2,7 @@ import type { Direction, Platform } from './platform.js'
 
 export interface MediaRef {
   kind: 'image' | 'video' | 'audio' | 'file' | 'sticker'
-  /** 平台侧的文件标识，用于回源下载；不是 URL，也不是内容哈希 */
+  /** 平台或受控 guest 内的稳定文件引用；不是 URL，也不保证服务端已实现二进制回源。 */
   remoteId: string
   fileName?: string
   mimeType?: string

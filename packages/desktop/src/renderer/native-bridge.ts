@@ -3,6 +3,10 @@ import {
   type NativeCommandName,
   type NativeComposerCommand,
   type NativeCommandResultEvent,
+  type NativeOutboxOperationCommand,
+  type NativeMessageTranslation,
+  type NativeSetMessageTranslationsCommand,
+  type NativeSendAttemptAckCommand,
 } from '@im-hub/shared'
 export { parseNativeGuestEvent } from '../native-bridge-runtime.js'
 
@@ -52,6 +56,55 @@ export function registerNativeCommandTarget(accountId: string, target: CommandTa
       pending.delete(requestId)
     }
   }
+}
+
+async function sendOutboxOperation(
+  accountId: string,
+  type: NativeOutboxOperationCommand['type'],
+): Promise<void> {
+  const target = targets.get(accountId)
+  if (!target) throw new NativeBridgeCommandError('原生客户端桥接尚未连接', 'bridge_disconnected')
+  await target.send(NATIVE_COMMAND_CHANNEL, {
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type,
+  } satisfies NativeOutboxOperationCommand)
+}
+
+export const nativeOutboxBridge = {
+  retryDeadLetters: (accountId: string): Promise<void> =>
+    sendOutboxOperation(accountId, 'outbox.retry-dead-letters'),
+  discardDeadLetters: (accountId: string): Promise<void> =>
+    sendOutboxOperation(accountId, 'outbox.discard-dead-letters'),
+}
+
+export const nativeMessageTranslationBridge = {
+  async sync(accountId: string, translations: NativeMessageTranslation[]): Promise<void> {
+    if (translations.length === 0) return
+    const target = targets.get(accountId)
+    if (!target) {
+      throw new NativeBridgeCommandError('原生客户端桥接尚未连接', 'bridge_disconnected')
+    }
+    await target.send(NATIVE_COMMAND_CHANNEL, {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'message.set-translations',
+      translations,
+    } satisfies NativeSetMessageTranslationsCommand)
+  },
+}
+
+export function nativeMessageTranslationsFromRows(rows: Array<{
+  platform_message_id: string
+  direction: 'in' | 'out'
+  translated_text: string | null
+  edited_at: string | null
+}>): NativeMessageTranslation[] {
+  return rows.flatMap(row => row.translated_text
+    ? [{
+        platformMessageId: row.platform_message_id,
+        translatedText: row.translated_text,
+        revision: row.edited_at ?? 'initial',
+      }]
+    : [])
 }
 
 export function handleNativeCommandResult(accountId: string, event: NativeCommandResultEvent): boolean {
@@ -153,16 +206,40 @@ export const nativeComposerBridge = {
     return result.draft
   },
 
-  async send(context: NativeCommandContext, attemptId: string = crypto.randomUUID()): Promise<string> {
+  async send(
+    context: NativeCommandContext,
+    attemptId: string = crypto.randomUUID(),
+    draftFingerprint?: string,
+    attemptContextRevision?: number,
+  ): Promise<string> {
     if (attemptId.trim() === '' || attemptId.length > 128) {
       throw new NativeBridgeCommandError('发送 attemptId 无效', 'invalid_attempt')
     }
     const result = await sendCommand(context, {
-      ...baseCommand(context), type: 'composer.send', attemptId,
+      ...baseCommand(context),
+      type: 'composer.send',
+      attemptId,
+      ...(draftFingerprint !== undefined ? { draftFingerprint } : {}),
+      ...(attemptContextRevision !== undefined ? { attemptContextRevision } : {}),
     })
     if (!result.platformMessageId) {
       throw new NativeBridgeCommandError('原生客户端没有返回最终消息 ID', 'missing_message_id')
     }
     return result.platformMessageId
+  },
+
+  async acknowledgeSend(
+    accountId: string,
+    attemptId: string,
+    platformMessageId: string,
+  ): Promise<void> {
+    const target = targets.get(accountId)
+    if (!target) throw new NativeBridgeCommandError('原生客户端桥接尚未连接', 'bridge_disconnected')
+    await target.send(NATIVE_COMMAND_CHANNEL, {
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'composer.ack-send',
+      attemptId,
+      platformMessageId,
+    } satisfies NativeSendAttemptAckCommand)
   },
 }

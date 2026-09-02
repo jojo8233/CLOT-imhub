@@ -6,6 +6,7 @@ import {
 } from '@im-hub/shared'
 
 const MAX_EVENT_BYTES = 900_000
+const MAX_OUTBOX_EVENT_COUNT = 1_000
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -17,6 +18,10 @@ function string(value: unknown, max = 1_000_000): value is string {
 
 function nonEmptyString(value: unknown, max: number): value is string {
   return string(value, max) && value.trim().length > 0
+}
+
+function sha256Fingerprint(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
 function nullableString(value: unknown, max = 4_096): boolean {
@@ -77,7 +82,14 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
       if (!Number.isSafeInteger(value.contextRevision)
         || !string(value.platformConversationId, 512)
         || !string(value.draft)
-        || typeof value.canSend !== 'boolean') return null
+        || typeof value.canSend !== 'boolean'
+        || (value.sendAttempt !== undefined && (!record(value.sendAttempt)
+          || !nonEmptyString(value.sendAttempt.attemptId, 128)
+          || !Number.isSafeInteger(value.sendAttempt.contextRevision)
+          || (value.sendAttempt.contextRevision as number) < 0
+          || !sha256Fingerprint(value.sendAttempt.draftFingerprint)
+          || (value.sendAttempt.platformMessageId !== null
+            && !nonEmptyString(value.sendAttempt.platformMessageId, 512))))) return null
       return value as unknown as NativeGuestEvent
     case 'command.result':
       if (!string(value.requestId, 128)
@@ -95,6 +107,16 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
       return value as unknown as NativeGuestEvent
     case 'bridge.error':
       if (!nonEmptyString(value.code, 128) || !string(value.message, 2_048)) return null
+      return value as unknown as NativeGuestEvent
+    case 'outbox.status':
+      if (!Number.isSafeInteger(value.pendingCount)
+        || (value.pendingCount as number) < 0
+        || (value.pendingCount as number) > MAX_OUTBOX_EVENT_COUNT
+        || !Number.isSafeInteger(value.deadLetterCount)
+        || (value.deadLetterCount as number) < 0
+        || (value.deadLetterCount as number) > MAX_OUTBOX_EVENT_COUNT
+        || typeof value.isSending !== 'boolean'
+        || !nullableString(value.lastErrorCode, 128)) return null
       return value as unknown as NativeGuestEvent
     case 'message.upsert': {
       if (!nonEmptyString(value.eventId, 128) || !record(value.message)) return null
@@ -129,6 +151,13 @@ export function parseNativeGuestEvent(value: unknown): NativeGuestEvent | null {
         || !nonEmptyString(value.oldPlatformMessageId, 512)
         || !nonEmptyString(value.newPlatformMessageId, 512)) return null
       return value as unknown as NativeGuestEvent
+    case 'message.reaction':
+      if (!nonEmptyString(value.eventId, 128)
+        || !nonEmptyString(value.targetPlatformMessageId, 512)
+        || !nonEmptyString(value.reactorExternalId, 512)
+        || (value.emoji !== null && !nonEmptyString(value.emoji, 64))
+        || !string(value.reactedAt, 64)) return null
+      return value as unknown as NativeGuestEvent
   }
   return null
 }
@@ -146,12 +175,36 @@ export function parseNativeHostCommand(value: unknown): NativeHostCommand | null
       : null
   }
   if (value.type === 'bridge.request-state') return value as unknown as NativeHostCommand
+  if (value.type === 'composer.ack-send') {
+    return nonEmptyString(value.attemptId, 128)
+      && nonEmptyString(value.platformMessageId, 512)
+      ? value as unknown as NativeHostCommand
+      : null
+  }
+  if (value.type === 'outbox.retry-dead-letters'
+    || value.type === 'outbox.discard-dead-letters') return value as unknown as NativeHostCommand
+  if (value.type === 'message.set-translations') {
+    if (!Array.isArray(value.translations)
+      || value.translations.length < 1
+      || value.translations.length > 500
+      || !value.translations.every(translation => record(translation)
+        && nonEmptyString(translation.platformMessageId, 512)
+        && string(translation.translatedText, 100_000)
+        && translation.translatedText.trim() !== ''
+        && nonEmptyString(translation.revision, 64))) return null
+    return value as unknown as NativeHostCommand
+  }
   if (!['composer.set-draft', 'composer.get-draft', 'composer.send'].includes(value.type)
     || !nonEmptyString(value.requestId, 128)
     || !Number.isSafeInteger(value.contextRevision)
     || (value.contextRevision as number) < 0
     || !nonEmptyString(value.platformConversationId, 512)
     || (value.type === 'composer.set-draft' && !string(value.text))
-    || (value.type === 'composer.send' && !nonEmptyString(value.attemptId, 128))) return null
+    || (value.type === 'composer.send' && (!nonEmptyString(value.attemptId, 128)
+      || (value.attemptContextRevision !== undefined
+        && (!Number.isSafeInteger(value.attemptContextRevision)
+          || (value.attemptContextRevision as number) < 0))
+      || (value.draftFingerprint !== undefined
+        && !sha256Fingerprint(value.draftFingerprint))))) return null
   return value as unknown as NativeHostCommand
 }

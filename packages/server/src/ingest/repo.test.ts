@@ -3,6 +3,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import pg from 'pg'
 import type { Database } from '../db/types.js'
 import { testDatabaseUrl } from '../db/test-db.js'
+import { buildTelegramDeleteObservation } from '../shadow/telegram.js'
 import { KyselyMessageRepo } from './repo.js'
 
 const db = new Kysely<Database>({
@@ -18,6 +19,7 @@ let ownerUserId: string
 beforeEach(async () => {
   // 每个用例从干净状态开始；顺序按外键依赖倒序
   await db.deleteFrom('message_translations').execute()
+  await db.deleteFrom('message_reactions').execute()
   await db.deleteFrom('messages').execute()
   await db.deleteFrom('conversations').execute()
   await db.deleteFrom('accounts').execute()
@@ -98,6 +100,59 @@ describe('KyselyMessageRepo.upsertConversation', () => {
   })
 })
 
+describe('KyselyMessageRepo.upsertMessageReaction', () => {
+  it('目标消息未到也保存唯一回应，并拒绝同时间或更旧的乱序覆盖', async () => {
+    const target = 'sender:1700000000000'
+    const reactor = 'reactor'
+    const firstAt = new Date('2026-08-30T01:00:00.000Z')
+    const removedAt = new Date('2026-08-30T01:01:00.000Z')
+
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '👍', firstAt,
+    )).resolves.toEqual({ changed: true })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '❤️', firstAt,
+    )).resolves.toEqual({ changed: false })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, null, firstAt,
+    )).resolves.toEqual({ changed: true })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '👍', firstAt,
+    )).resolves.toEqual({ changed: false })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, null, removedAt,
+    )).resolves.toEqual({ changed: true })
+    await expect(repo.upsertMessageReaction(
+      accountId, target, reactor, '👍', new Date('2026-08-30T01:00:30.000Z'),
+    )).resolves.toEqual({ changed: false })
+
+    const row = await db.selectFrom('message_reactions')
+      .select(['emoji', 'reacted_at'])
+      .where('account_id', '=', accountId)
+      .where('platform_message_id', '=', target)
+      .where('reactor_external_id', '=', reactor)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ emoji: null, reacted_at: removedAt })
+  })
+
+  it('同一目标的不同回应者各自保留一行', async () => {
+    const target = 'sender:1700000000000'
+    const reactedAt = new Date('2026-08-30T01:00:00.000Z')
+    await repo.upsertMessageReaction(accountId, target, 'reactor-1', '👍', reactedAt)
+    await repo.upsertMessageReaction(accountId, target, 'reactor-2', '❤️', reactedAt)
+    const rows = await db.selectFrom('message_reactions')
+      .select('reactor_external_id')
+      .where('account_id', '=', accountId)
+      .where('platform_message_id', '=', target)
+      .orderBy('reactor_external_id')
+      .execute()
+    expect(rows).toEqual([
+      { reactor_external_id: 'reactor-1' },
+      { reactor_external_id: 'reactor-2' },
+    ])
+  })
+})
+
 describe('KyselyMessageRepo.insertMessage', () => {
   it('首次插入 isNew 为 true', async () => {
     const { id: conversationId } = await repo.upsertConversation({
@@ -138,6 +193,44 @@ describe('KyselyMessageRepo.insertMessage', () => {
     const rows = await db.selectFrom('messages').select('id')
       .where('platform_message_id', '=', '555').execute()
     expect(rows).toHaveLength(1)
+  })
+
+  it('消息与 shadow 来源观测在同一入库事务中收敛', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await repo.insertMessage(msg({
+      conversationId,
+      shadowObservation: {
+        accountId, source: 'tdlib', eventType: 'upsert',
+        factKey: 'upsert:555:base', semanticHash: 'a'.repeat(64),
+      },
+    }))
+
+    const observation = await db.selectFrom('telegram_shadow_observations')
+      .select(['source', 'fact_key', 'observation_count'])
+      .where('account_id', '=', accountId)
+      .executeTakeFirstOrThrow()
+    expect(observation).toEqual({
+      source: 'tdlib', fact_key: 'upsert:555:base', observation_count: 1,
+    })
+  })
+
+  it('拒绝把 shadow 观测记到其他账号，且不留半条消息', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await expect(repo.insertMessage(msg({
+      conversationId,
+      shadowObservation: {
+        accountId: '00000000-0000-0000-0000-000000000000',
+        source: 'tdlib', eventType: 'upsert',
+        factKey: 'upsert:555:base', semanticHash: 'a'.repeat(64),
+      },
+    }))).rejects.toThrow('shadow observation account does not match message account')
+
+    const rows = await db.selectFrom('messages').select('id').execute()
+    expect(rows).toHaveLength(0)
   })
 
   it('带较新 editedAt 的事件更新正文并使旧译文失效', async () => {
@@ -469,6 +562,33 @@ describe('KyselyMessageRepo.insertMessage', () => {
     const row = await db.selectFrom('messages').select('deleted_at').where('id', '=', first.id)
       .executeTakeFirstOrThrow()
     expect(row.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+  })
+
+  it('删除状态与 TDLib shadow 观测在同一事务中落库', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({ conversationId }))
+    const deletedAt = new Date('2026-08-24T02:00:00Z')
+
+    expect(await repo.markMessageDeleted(
+      accountId,
+      '555',
+      deletedAt,
+      buildTelegramDeleteObservation(accountId, 'tdlib', '555'),
+    )).toMatchObject({ changed: true })
+
+    const message = await db.selectFrom('messages').select('deleted_at').where('id', '=', first.id)
+      .executeTakeFirstOrThrow()
+    const observation = await db.selectFrom('telegram_shadow_observations')
+      .select(['source', 'event_type', 'fact_key', 'observation_count'])
+      .where('account_id', '=', accountId)
+      .where('fact_key', '=', 'delete:555')
+      .executeTakeFirstOrThrow()
+    expect(message.deleted_at?.toISOString()).toBe(deletedAt.toISOString())
+    expect(observation).toEqual({
+      source: 'tdlib', event_type: 'delete', fact_key: 'delete:555', observation_count: 1,
+    })
   })
 })
 

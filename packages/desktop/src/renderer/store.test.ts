@@ -10,6 +10,11 @@ function account(id: string, platform: string): AccountRow {
     display_name: id,
     status: 'connected',
     history_available_from: null,
+    connection_mode: platform === 'signal'
+      ? 'native_desktop'
+      : platform === 'whatsapp'
+        ? 'web_shell'
+        : 'adapter',
   }
 }
 
@@ -43,7 +48,7 @@ describe('platform-scoped Zustand navigation', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setActiveAccount('tg-2')
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'hello', sent_at: '2026-08-26T00:00:00Z',
+      id: 'm1', platform_message_id: 'platform-m1', direction: 'in', body: 'hello', sent_at: '2026-08-26T00:00:00Z',
       edited_at: null, translated_text: null,
     }])
 
@@ -116,6 +121,37 @@ describe('platform-scoped Zustand navigation', () => {
     })
   })
 
+  it('outbox 指标按账号保存且不改变 Composer 控制状态', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeOutboxStatus('tg-1', {
+      pendingCount: 4,
+      deadLetterCount: 1,
+      isSending: true,
+      lastErrorCode: 'permanent_rejection',
+    })
+    useStore.getState().setNativeAccountIdentity('tg-1', '123456')
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']).toMatchObject({
+      connection: 'ready',
+      platformAccountExternalId: '123456',
+      outbox: { pendingCount: 4, deadLetterCount: 1, isSending: true },
+    })
+    expect(useStore.getState().nativeBridgeByAccount['tg-2']?.outbox).toBeUndefined()
+  })
+
+  it('消息级提示不被身份心跳清除，只在显式成功后恢复', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    useStore.getState().setNativeBridgeNotice('tg-1', '当前媒体尚未支持')
+    useStore.getState().setNativeAccountIdentity('tg-1', '123456')
+    useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.notice)
+      .toBe('当前媒体尚未支持')
+
+    useStore.getState().setNativeBridgeNotice('tg-1', null)
+    expect(useStore.getState().nativeBridgeByAccount['tg-1']?.notice).toBeNull()
+  })
+
   it('只接受当前会话 revision 的 composer 状态，并以原生框可发送性为准', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
@@ -159,6 +195,95 @@ describe('platform-scoped Zustand navigation', () => {
     expect(useStore.getState().nativeDrafts['tg-1:conv-1']).toBeUndefined()
   })
 
+  it('Signal 自动发送启用后按原生 canSend=false 关闭草稿发送门禁', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('sig-1', 'ready')
+    useStore.getState().setNativeContext('sig-1', {
+      platformConversationId: 'u:peer', contactExternalId: 'peer', contactDisplayName: null,
+      contextRevision: 1, conversationId: 'sig-conv-1',
+    })
+    useStore.getState().updateNativeDraft('sig-1:sig-conv-1', {
+      sourceText: '你好', translatedText: 'hello', status: 'ready', error: null,
+    })
+
+    useStore.getState().applyNativeComposerState('sig-1', 1, 'u:peer', 'hello', false)
+
+    expect(useStore.getState()).toMatchObject({
+      nativeBridgeByAccount: { 'sig-1': { composerCanSend: false } },
+      nativeDrafts: {
+        'sig-1:sig-conv-1': { status: 'ready', error: '原生输入框当前不可发送' },
+      },
+    })
+  })
+
+  it('Signal 进程重启后恢复原 attemptId、正文指纹与首次 context revision', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('sig-1', 'ready')
+    useStore.getState().setNativeContext('sig-1', {
+      platformConversationId: 'u:peer', contactExternalId: 'peer', contactDisplayName: null,
+      contextRevision: 1, conversationId: 'sig-conv-1',
+    })
+
+    useStore.getState().applyNativeComposerState('sig-1', 1, 'u:peer', '', false, {
+      attemptId: 'attempt-before-restart',
+      contextRevision: 4,
+      draftFingerprint: 'a'.repeat(64),
+      platformMessageId: 'sender:123',
+    })
+
+    expect(useStore.getState().nativeDrafts['sig-1:sig-conv-1']).toMatchObject({
+      status: 'failed',
+      sendAttemptId: 'attempt-before-restart',
+      sendAttemptFingerprint: 'a'.repeat(64),
+      sendAttemptContextRevision: 4,
+      sendAttemptConfirmed: true,
+    })
+
+    useStore.getState().applyNativeComposerState('sig-1', 1, 'u:peer', '', false)
+
+    expect(useStore.getState().nativeDrafts['sig-1:sig-conv-1']).toMatchObject({
+      status: 'idle',
+      error: null,
+      sendAttemptId: null,
+      sendAttemptConfirmed: false,
+    })
+  })
+
+  it('WhatsApp 页面进程重启后恢复原 attempt 绑定与最终 DOM id 状态', () => {
+    useStore.getState().setAccounts(accounts)
+    useStore.getState().setNativeBridgeConnection('wa-1', 'ready')
+    useStore.getState().setNativeContext('wa-1', {
+      platformConversationId: 'wa:555000111@c.us',
+      contactExternalId: '555000111@c.us',
+      contactDisplayName: null,
+      contextRevision: 1,
+      conversationId: 'wa-conv-1',
+    })
+
+    useStore.getState().applyNativeComposerState(
+      'wa-1',
+      1,
+      'wa:555000111@c.us',
+      '',
+      false,
+      {
+        attemptId: 'attempt-before-restart',
+        contextRevision: 9,
+        draftFingerprint: 'b'.repeat(64),
+        platformMessageId: 'wa-dom:true_555000111@c.us_FINAL',
+      },
+    )
+
+    expect(useStore.getState().nativeDrafts['wa-1:wa-conv-1']).toMatchObject({
+      status: 'failed',
+      error: '上次 WhatsApp 发送已确认，点击发送完成结果恢复',
+      sendAttemptId: 'attempt-before-restart',
+      sendAttemptFingerprint: 'b'.repeat(64),
+      sendAttemptContextRevision: 9,
+      sendAttemptConfirmed: true,
+    })
+  })
+
   it('改变回复语言后，原生框旧译文不能自行重建 ready 状态', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeBridgeConnection('tg-1', 'ready')
@@ -177,7 +302,7 @@ describe('platform-scoped Zustand navigation', () => {
 
   it('只把译文应用到同一正文 revision', () => {
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'edited', sent_at: '2026-08-26T00:00:00Z',
+      id: 'm1', platform_message_id: 'platform-m1', direction: 'in', body: 'edited', sent_at: '2026-08-26T00:00:00Z',
       edited_at: '2026-08-26T01:00:00.000Z', translated_text: null,
     }])
     useStore.getState().applyTranslation('m1', '旧译文', 'initial')
@@ -188,7 +313,7 @@ describe('platform-scoped Zustand navigation', () => {
 
   it('编辑更新原子带入已有译文，且迟到旧 revision 不能回退正文', () => {
     useStore.getState().setMessages([{
-      id: 'm1', direction: 'in', body: 'v2', sent_at: '2026-08-26T00:00:00Z',
+      id: 'm1', platform_message_id: 'platform-m1', direction: 'in', body: 'v2', sent_at: '2026-08-26T00:00:00Z',
       edited_at: '2026-08-26T02:00:00.000Z', translated_text: '译文 v2',
     }])
     useStore.getState().updateMessage(

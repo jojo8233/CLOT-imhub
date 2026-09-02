@@ -1,4 +1,9 @@
 import type { Direction, MediaRef, NormalizedMessage, Platform } from '@im-hub/shared'
+import {
+  buildTelegramUpsertObservation,
+  type TelegramShadowObservation,
+  type TelegramShadowSource,
+} from '../shadow/telegram.js'
 
 export interface UpsertConversationInput {
   accountId: string
@@ -22,6 +27,7 @@ export interface InsertMessageInput {
   editVersion: number | null
   sentAt: Date
   raw: unknown
+  shadowObservation?: TelegramShadowObservation
 }
 
 export interface InsertMessageResult {
@@ -73,6 +79,7 @@ export class MessageIngestor {
     msg: NormalizedMessage,
     /** 在翻译任务可被 worker 消费前发布 message/message_updated，避免译文事件先到。 */
     onStored?: (result: IngestMessageResult) => void | Promise<void>,
+    shadowSource?: TelegramShadowSource,
   ): Promise<IngestMessageResult> {
     // 出向消息的 sender 是我方账号，不是客户。拿它更新联系人会把会话的对方身份
     // 覆盖成我们自己——员工主动发起的会话更是从第一条起就错。
@@ -103,6 +110,9 @@ export class MessageIngestor {
       editVersion: msg.editVersion ?? null,
       sentAt: msg.sentAt,
       raw: msg.raw,
+      shadowObservation: shadowSource && msg.platform === 'telegram'
+        ? buildTelegramUpsertObservation(shadowSource, msg)
+        : undefined,
     })
 
     // repo 用 greatest 保证时间只前进。重复推送也 touch，既不会把旧会话顶上来，
@@ -116,7 +126,8 @@ export class MessageIngestor {
     // 队列故障导致首次派发失败时，平台的重复推送或调用方的重试能把它补回来。
     // 代价可控——BullMQ 用 messageId 作 jobId 去重，且相同文本会命中翻译缓存。
     // 纯媒体消息没有可翻译文本。空正文仍然正常存档，但不制造必然失败的翻译任务。
-    if (isInbound && msg.body.trim() !== '') {
+    const shouldTranslate = isInbound || (msg.platform === 'signal' && msg.direction === 'out')
+    if (shouldTranslate && msg.body.trim() !== '') {
       await this.queue.enqueueTranslate({
         messageId,
         conversationId,

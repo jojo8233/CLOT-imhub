@@ -1,11 +1,13 @@
-import type { KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { api, getCurrentUser } from '../api/client.js'
 import {
   nativeComposerBridge,
   NativeBridgeCommandError,
+  nativeOutboxBridge,
   type NativeCommandContext,
 } from '../native-bridge.js'
 import { useStore, type NativeDraftStatus } from '../store.js'
+import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip } from './ui.js'
 import { nativeAccountControllable } from './NativeClient.js'
@@ -26,29 +28,63 @@ export function nativeDraftKey(accountId: string, conversationId: string): strin
 }
 
 /** 发送事实始终取自原生输入框；外壳缓存的 translatedText 只用于门禁。 */
+interface SendCurrentNativeDraftOptions {
+  canContinue?: () => boolean
+  bindDraftFingerprint?: boolean
+  resolveAttemptId?: (finalDraft: string, draftFingerprint: string | undefined) => string
+  existingAttempt?: {
+    attemptId: string
+    draftFingerprint?: string
+    contextRevision?: number
+  }
+}
+
 export async function sendCurrentNativeDraft(
   context: NativeCommandContext,
   bridge: Pick<typeof nativeComposerBridge, 'getDraft' | 'send'> = nativeComposerBridge,
-  canContinue: () => boolean = () => true,
-  resolveAttemptId: (finalDraft: string) => string = () => crypto.randomUUID(),
-  existingAttemptId?: string,
+  options: SendCurrentNativeDraftOptions = {},
 ): Promise<string | null> {
+  const canContinue = options.canContinue ?? (() => true)
   // 上一次已进入 guest 但 host 未在超时内拿到结论时，原生 Composer 通常已经
   // 清空输入框。此时直接用同一 attempt 查询结果，不能先用空草稿把重试挡掉。
-  if (existingAttemptId) {
+  if (options.existingAttempt) {
     if (!canContinue()) return null
-    return bridge.send(context, existingAttemptId)
+    if (options.bindDraftFingerprint
+      && (!options.existingAttempt.draftFingerprint
+        || options.existingAttempt.contextRevision === undefined)) {
+      throw new NativeBridgeCommandError(
+        '待恢复发送缺少正文指纹',
+        'attempt_context_mismatch',
+      )
+    }
+    return options.existingAttempt.draftFingerprint
+      ? bridge.send(
+          context,
+          options.existingAttempt.attemptId,
+          options.existingAttempt.draftFingerprint,
+          options.existingAttempt.contextRevision,
+        )
+      : bridge.send(context, options.existingAttempt.attemptId)
   }
   const finalDraft = await bridge.getDraft(context)
   if (!finalDraft.trim()) throw new Error('原生输入框为空，未发送')
   // getDraft 等待期间用户可能已经切到另一个账号/会话。必须在真正发送前
   // 再验证一次，不能因为旧请求终于返回就把当前原生框发出去。
   if (!canContinue()) return null
-  return bridge.send(context, resolveAttemptId(finalDraft))
+  const draftFingerprint = options.bindDraftFingerprint
+    ? await nativeDraftFingerprint(finalDraft)
+    : undefined
+  if (!canContinue()) return null
+  const attemptId = options.resolveAttemptId?.(finalDraft, draftFingerprint) ?? crypto.randomUUID()
+  return draftFingerprint
+    ? bridge.send(context, attemptId, draftFingerprint, context.contextRevision)
+    : bridge.send(context, attemptId)
 }
 
 /** 固定在原生客户端下方、通过 NativeComposerBridge 控制平台原生输入框。 */
 export function TranslationDock() {
+  const [outboxBusy, setOutboxBusy] = useState(false)
+  const [outboxActionError, setOutboxActionError] = useState<string | null>(null)
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const activeAccountId = useStore(s => s.activeAccountId)
@@ -87,12 +123,53 @@ export function TranslationDock() {
     || draft?.status === 'translating'
     || draft?.status === 'sending'
   const canUse = unavailableReason === null && key !== null && context !== null && activeAccountId !== null
-  const canResolveUnknownAttempt = draft?.status === 'failed' && Boolean(draft.sendAttemptId)
+  const canResolveUnknownAttempt = draft?.status === 'failed'
+    && Boolean(draft.sendAttemptId)
+    && (active?.platform !== 'signal' && active?.platform !== 'whatsapp'
+      || (Boolean(draft.sendAttemptFingerprint)
+        && draft.sendAttemptContextRevision !== null))
   const canSend = canUse
     && !busy
-    && Boolean(draft?.translatedText)
-    && (Boolean(native?.composerCanSend) || canResolveUnknownAttempt)
+    && ((Boolean(draft?.translatedText) && Boolean(native?.composerCanSend))
+      || canResolveUnknownAttempt)
   const targetLang = conversation?.target_lang ?? null
+  const outboxNotice = native?.outbox?.deadLetterCount
+    ? `消息回传有 ${native.outbox.deadLetterCount} 条永久失败事件`
+    : native?.outbox?.pendingCount
+      ? `消息回传队列待处理 ${native.outbox.pendingCount} 条`
+      : native?.outbox?.lastErrorCode
+        ? '消息回传持久队列暂时不可用'
+        : null
+
+  async function retryDeadLetters(): Promise<void> {
+    if (!activeAccountId || outboxBusy) return
+    setOutboxBusy(true)
+    setOutboxActionError(null)
+    try {
+      await nativeOutboxBridge.retryDeadLetters(activeAccountId)
+    } catch (error) {
+      setOutboxActionError(error instanceof Error ? error.message : '永久失败事件重试失败')
+    } finally {
+      setOutboxBusy(false)
+    }
+  }
+
+  async function discardDeadLetters(): Promise<void> {
+    if (!activeAccountId || outboxBusy) return
+    const count = native?.outbox?.deadLetterCount ?? 0
+    if (!window.confirm(
+      `将永久清除 ${count} 条回传失败事件。清除后这些事件无法恢复，且不会自动补入 im-hub。仅在人工核对后继续。`,
+    )) return
+    setOutboxBusy(true)
+    setOutboxActionError(null)
+    try {
+      await nativeOutboxBridge.discardDeadLetters(activeAccountId)
+    } catch (error) {
+      setOutboxActionError(error instanceof Error ? error.message : '永久失败事件清除失败')
+    } finally {
+      setOutboxBusy(false)
+    }
+  }
 
   function commandContext(): NativeCommandContext | null {
     if (!canUse || !activeAccountId || !context) return null
@@ -138,6 +215,9 @@ export function TranslationDock() {
         error: null,
         sendAttemptId: null,
         sendAttemptDraft: null,
+        sendAttemptFingerprint: null,
+        sendAttemptContextRevision: null,
+        sendAttemptConfirmed: false,
       })
     } catch (error) {
       if (!continueOrReset(command, key)) return
@@ -158,24 +238,58 @@ export function TranslationDock() {
       const platformMessageId = await sendCurrentNativeDraft(
         command,
         nativeComposerBridge,
-        () => continueOrReset(command, key),
-        (finalDraft) => {
-          const current = useStore.getState().nativeDrafts[key]
-          const attemptId = current?.sendAttemptId && current.sendAttemptDraft === finalDraft
-            ? current.sendAttemptId
-            : crypto.randomUUID()
-          updateDraft(key, { sendAttemptId: attemptId, sendAttemptDraft: finalDraft })
-          return attemptId
+        {
+          canContinue: () => continueOrReset(command, key),
+          bindDraftFingerprint: active?.platform === 'signal' || active?.platform === 'whatsapp',
+          resolveAttemptId: (finalDraft, draftFingerprint) => {
+            const current = useStore.getState().nativeDrafts[key]
+            const attemptId = current?.sendAttemptId && current.sendAttemptDraft === finalDraft
+              ? current.sendAttemptId
+              : crypto.randomUUID()
+            updateDraft(key, {
+              sendAttemptId: attemptId,
+              sendAttemptDraft: finalDraft,
+              sendAttemptFingerprint: draftFingerprint ?? null,
+              sendAttemptContextRevision: draftFingerprint ? command.contextRevision : null,
+              sendAttemptConfirmed: false,
+            })
+            return attemptId
+          },
+          ...(draft?.sendAttemptId ? {
+            existingAttempt: {
+              attemptId: draft.sendAttemptId,
+              ...(draft.sendAttemptFingerprint
+                ? { draftFingerprint: draft.sendAttemptFingerprint }
+                : {}),
+              ...(draft.sendAttemptContextRevision !== null
+                ? { contextRevision: draft.sendAttemptContextRevision }
+                : {}),
+            },
+          } : {}),
         },
-        draft?.sendAttemptId ?? undefined,
       )
       if (platformMessageId === null) return
       if (!continueOrReset(command, key)) return
+      const confirmedAttemptId = useStore.getState().nativeDrafts[key]?.sendAttemptId ?? null
       clearDraft(key)
+      if ((active?.platform === 'signal' || active?.platform === 'whatsapp') && confirmedAttemptId) {
+        try {
+          await nativeComposerBridge.acknowledgeSend(
+            command.accountId,
+            confirmedAttemptId,
+            platformMessageId,
+          )
+        } catch {
+          useStore.getState().setNativeBridgeNotice(
+            command.accountId,
+            `${PLATFORM_LABEL[active.platform]} 已确认发送，但 attempt ACK 暂时未完成；下次启动会继续核对`,
+          )
+        }
+      }
     } catch (error) {
       if (!continueOrReset(command, key)) return
       const isResultUnknown = error instanceof NativeBridgeCommandError
-        && [
+        && ([
           'result_unknown',
           'attempt_context_mismatch',
           'partial_send_failed',
@@ -183,7 +297,10 @@ export function TranslationDock() {
           'attempt_mismatch',
           'missing_message_id',
           'bridge_disconnected',
+          'whatsapp_send_result_unknown',
         ].includes(error.code)
+          || error.code.startsWith('signal_send_')
+          || error.code.startsWith('whatsapp_send_'))
       updateDraft(key, {
         status: 'failed',
         error: error instanceof Error ? error.message : '原生发送失败',
@@ -193,6 +310,15 @@ export function TranslationDock() {
         sendAttemptDraft: isResultUnknown
           ? useStore.getState().nativeDrafts[key]?.sendAttemptDraft ?? null
           : null,
+        sendAttemptFingerprint: isResultUnknown
+          ? useStore.getState().nativeDrafts[key]?.sendAttemptFingerprint ?? null
+          : null,
+        sendAttemptContextRevision: isResultUnknown
+          ? useStore.getState().nativeDrafts[key]?.sendAttemptContextRevision ?? null
+          : null,
+        sendAttemptConfirmed: isResultUnknown
+          ? useStore.getState().nativeDrafts[key]?.sendAttemptConfirmed ?? false
+          : false,
       })
     }
   }
@@ -213,6 +339,9 @@ export function TranslationDock() {
         error: null,
         sendAttemptId: null,
         sendAttemptDraft: null,
+        sendAttemptFingerprint: null,
+        sendAttemptContextRevision: null,
+        sendAttemptConfirmed: false,
       })
     } catch (error) {
       if (!continueOrReset(command, key)) return
@@ -244,6 +373,36 @@ export function TranslationDock() {
         border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.xl,
         background: theme.color.card, boxShadow: theme.shadow.md,
       }}>
+        {outboxNotice && (
+          <div style={{
+            marginBottom: theme.space.sm,
+            fontSize: theme.font.size.xs,
+            color: native?.outbox?.deadLetterCount || native?.outbox?.lastErrorCode
+              ? theme.color.danger
+              : theme.color.textFaint,
+          }}>
+            {outboxNotice}
+            {native?.outbox?.deadLetterCount ? (
+              <span style={{ display: 'inline-flex', gap: 6, marginLeft: theme.space.sm }}>
+                <button
+                  className="ih-btn"
+                  disabled={outboxBusy || native.connection !== 'ready'}
+                  onClick={() => void retryDeadLetters()}
+                >
+                  重试
+                </button>
+                <button
+                  className="ih-btn"
+                  disabled={outboxBusy || native.connection !== 'ready'}
+                  onClick={() => void discardDeadLetters()}
+                >
+                  清除记录
+                </button>
+              </span>
+            ) : null}
+            {outboxActionError ? <span style={{ marginLeft: theme.space.sm }}>{outboxActionError}</span> : null}
+          </div>
+        )}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: theme.space.md, marginBottom: 6,
@@ -274,7 +433,8 @@ export function TranslationDock() {
             updateDraft(key, {
               sourceText: event.target.value,
               translatedText: '', backTranslated: null, status: 'idle', error: null,
-              sendAttemptId: null, sendAttemptDraft: null,
+              sendAttemptId: null, sendAttemptDraft: null, sendAttemptFingerprint: null,
+              sendAttemptContextRevision: null, sendAttemptConfirmed: false,
             })
           }}
           onKeyDown={handleKeyDown}

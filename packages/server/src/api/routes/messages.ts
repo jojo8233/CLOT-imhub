@@ -5,14 +5,22 @@ import type { ScopedDb } from '../../rbac/scoped-db.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
 import { resolveTargetLang } from '../../translation/target-lang.js'
+import { bilingualTranslationTarget } from '../../translation/incoming-target.js'
+import { WhatsAppGraphError } from '../../whatsapp-cloud/graph-client.js'
+import {
+  WhatsAppCloudAttemptError,
+  type WhatsAppCloudService,
+} from '../../whatsapp-cloud/service.js'
 
 const sendBody = z.object({
   conversationId: z.string().uuid(),
-  body: z.string().trim().min(1, '消息内容不能为空白'),
+  body: z.string().trim().min(1, '消息内容不能为空白').max(4096, '消息内容最长 4096 字符'),
   /** true 表示 body 已经是目标语言（员工在预览里看过并确认过的文本），原样发出，绝不再翻译一次。 */
   preTranslated: z.boolean().default(false),
   /** 不传时由 resolveTargetLang 按会话锁定/客户语言/兜底解析 */
   targetLang: z.string().min(2).optional(),
+  /** Cloud API 重试必须沿用同一 id；其他平台暂时忽略。 */
+  attemptId: z.string().uuid().optional(),
 })
 
 const previewBody = z.object({
@@ -23,6 +31,7 @@ const previewBody = z.object({
 export interface MessageRouteDeps {
   adapters: AdapterManager
   gateway: TranslationGateway
+  whatsappCloud?: Pick<WhatsAppCloudService, 'sendText'>
 }
 
 /** 在 scope 内查一个会话，查不到就是无权访问。所有会话相关操作都先过它。 */
@@ -33,6 +42,9 @@ async function findVisibleConversation(scoped: ScopedDb, conversationId: string)
       'conversations.platform_conversation_id as platform_conversation_id',
       'conversations.target_lang as target_lang',
       'accounts.id as account_id',
+      'accounts.platform as platform',
+      'accounts.connection_mode as connection_mode',
+      'conversations.contact_external_id as contact_external_id',
     ])
     .where('conversations.id', '=', conversationId)
     .executeTakeFirst()
@@ -75,20 +87,38 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
     // 也不需要额外一次往返——上面的 findVisibleConversation 只用来产出 404。
     const messages = await req.scoped.accountsJoinedWithConversations()
       .innerJoin('messages', 'messages.conversation_id', 'conversations.id')
-      .leftJoin('message_translations', j => j
-        .onRef('message_translations.message_id', '=', 'messages.id')
-        .on('message_translations.target_lang', '=', 'zh'))
+      .leftJoin('message_translations as translation_en', join => join
+        .onRef('translation_en.message_id', '=', 'messages.id')
+        .on('translation_en.target_lang', '=', 'en'))
+      .leftJoin('message_translations as translation_zh', join => join
+        .onRef('translation_zh.message_id', '=', 'messages.id')
+        .on('translation_zh.target_lang', '=', 'zh'))
       .select([
-        'messages.id as id', 'messages.direction as direction', 'messages.body as body',
+        'messages.id as id', 'messages.platform_message_id as platform_message_id',
+        'messages.direction as direction', 'messages.body as body',
+        'messages.body_lang as body_lang',
         'messages.sent_at as sent_at', 'messages.edited_at as edited_at',
-        'message_translations.translated_text as translated_text',
+        'translation_en.translated_text as translated_text_en',
+        'translation_zh.translated_text as translated_text_zh',
       ])
       .where('conversations.id', '=', id)
       .where('messages.deleted_at', 'is', null)
       .orderBy('messages.sent_at', 'asc')
       .limit(500)
       .execute()
-    return { messages }
+    return {
+      messages: messages.map(({
+        translated_text_en: translatedTextEn,
+        translated_text_zh: translatedTextZh,
+        body_lang: bodyLang,
+        ...message
+      }) => ({
+        ...message,
+        translated_text: bilingualTranslationTarget(bodyLang) === 'en'
+          ? translatedTextEn
+          : translatedTextZh,
+      })),
+    }
   })
 
   /**
@@ -166,11 +196,47 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
       provider = translated.provider
     }
 
-    const platformMessageId = await deps.adapters.send(
-      conv.account_id,
-      conv.platform_conversation_id,
-      { body: sentText },
-    )
+    let platformMessageId: string
+    if (conv.platform === 'whatsapp' && conv.connection_mode === 'cloud_api') {
+      if (!deps.whatsappCloud) {
+        return reply.code(503).send({ error: 'WhatsApp Cloud API 服务尚未配置' })
+      }
+      if (!parsed.data.attemptId) {
+        return reply.code(400).send({ error: 'WhatsApp Cloud API 发送必须提供 attemptId' })
+      }
+      try {
+        platformMessageId = await deps.whatsappCloud.sendText({
+          attemptId: parsed.data.attemptId,
+          accountId: conv.account_id,
+          conversationId: parsed.data.conversationId,
+          actorUserId: req.actor.userId,
+          targetExternalId: conv.contact_external_id,
+          body: sentText,
+        })
+      } catch (error) {
+        if (error instanceof WhatsAppCloudAttemptError) {
+          return reply.code(409).send({ error: error.message, code: error.code })
+        }
+        if (error instanceof WhatsAppGraphError) {
+          const code = error.kind === 'unknown'
+            ? 'whatsapp_result_unknown'
+            : 'whatsapp_graph_rejected'
+          return reply.code(502).send({
+            error: error.kind === 'unknown'
+              ? 'Meta 返回结果未知，禁止自动重发，请人工对账'
+              : 'Meta 明确拒绝了本次发送',
+            code,
+          })
+        }
+        throw error
+      }
+    } else {
+      platformMessageId = await deps.adapters.send(
+        conv.account_id,
+        conv.platform_conversation_id,
+        { body: sentText },
+      )
+    }
 
     return { platformMessageId, sentText, provider }
   })

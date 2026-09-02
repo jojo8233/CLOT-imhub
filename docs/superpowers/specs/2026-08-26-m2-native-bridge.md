@@ -19,14 +19,18 @@ M2 只建立平台无关基础，不宣称任何一个平台已经完成原生�
 Telegram fork 在 M3 实现协议适配并做真实多开、媒体、发送和存档验收。现有 TDLib
 与 signal-cli 适配器继续保留为后台归档/回退链路，不能因通用入口已经存在就退出。
 用户界面已经只有原生会话入口，不存在“自绘工作台与原生客户端同时给用户使用”的
-双 UI；telegram-tt 当前也尚未发消息事件，因此此刻没有双路回传造成的重复消息。
+双 UI。M3-4 已让 telegram-tt 发消息事件；TDLib 与原生链路现在可能形成双来源，服务端按
+canonical key 幂等处理，但真实 fixture/shadow 对账尚未完成，不能提前宣称没有重复风险。
 
 ## 2. 协议
 
-协议定义集中在 `packages/shared/src/native-bridge.ts`。M2 初始版本为 1；M3-1 已升级到
-版本 2，canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调
-  `editVersion` 的详细规则见 `2026-08-26-m3-telegram-message-identity.md`。M3-2 新增的
-  `account.signed-out`、短时控制授权和身份状态机见 `2026-08-26-m3-account-control.md`。
+协议定义集中在 `packages/shared/src/native-bridge.ts`。M2 初始版本为 1；M3-1 升级到版本 2，
+引入 canonical Telegram ID、`account.identity`、发送 `attemptId` 与单调 `editVersion`。
+M3-4 当前版本为 3，新增 `outbox.status` 的非敏感队列指标；详细规则分别见
+`2026-08-26-m3-telegram-message-identity.md`、`2026-08-26-m3-account-control.md` 与
+`2026-08-27-m3-telegram-outbox.md`。M5 在版本 3 上向后兼容地增加 `message.reaction`；没有
+改变既有 frame 语义，也没有提升协议号，避免正在运行的 Telegram v3 guest 因 Signal 增量事件
+被迫同步升级。
 
 guest → host：
 
@@ -37,9 +41,11 @@ guest → host：
 - `composer.state`
 - `command.result`
 - `bridge.error`
+- `outbox.status`（v3）
 - `message.upsert`
 - `message.deleted`
 - `message.id-remapped`
+- `message.reaction`（M5；`emoji=null` 表示删除回应的墓碑）
 
 host → guest：
 
@@ -82,7 +88,8 @@ host 按事件所属常驻 webview 绑定 accountId，guest 只上报 `platformC
 - 新受控 preload 只新增 `window.imHubNativeBridge`，不通过该接口暴露 `ipcRenderer`、
   Node.js、外壳 `window.imHub`、用户 JWT 或 control grant。
 - guest 上报不包含 `accountId`。主进程根据事件来自哪个常驻 webview 绑定账号，并用
-  服务端签发的五分钟 grant 实时复核 owner、账号撤销版本与 Telegram self user id。
+  服务端签发的五分钟 grant 实时复核 owner、账号撤销版本，以及 Telegram self user id 或
+  Signal ACI。
 - manager/auditor 的“可见”范围不等于可操控平台账号。当前桥接只接受实际账号归属人。
 - 非白名单主框架导航被阻止；新窗口只允许交给系统打开 http/https 链接。
 
@@ -94,7 +101,7 @@ M3-2 已删除 Telegram fork 的 `window.__IM_HUB__` 和 `executeJavaScript` JWT
 ## 4. 服务端入口与存储
 
 - `POST /api/native/context`：把平台会话解析/upsert 成内部会话 UUID
-- `POST /api/native/events`：接收消息 upsert、删除和 id remap
+- `POST /api/native/events`：接收消息 upsert、删除、id remap 和回应状态
 
 服务端从已校验账号行取得真实 platform，不接受客户端自报 platform。新增 migration
 `0004_native_bridge_message_events`：
@@ -112,8 +119,14 @@ transaction advisory lock 覆盖多实例；发布前在行锁内重读规范消
 事件覆盖新编辑。纯媒体消息存档但不派发空正文翻译。
 
 v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只接受更大的版本；旧适配器
-仍可传 null 并回退到 `editedAt`。telegram-tt outbox 尚未实际产生该序号，所以真实快速
-连续编辑仍要在 M3-4/M3-5 验收后才能宣称闭环。
+仍可传 null 并回退到 `editedAt`。M3-4 已把 Telegram edit update 的 MTProto `pts` 写入
+telegram-tt outbox；真实快速连续编辑仍要在 M3-4 故障矩阵和 M3-5 对账后才能宣称闭环。
+
+M5 migration `0009_message_reactions` 以
+`(account_id, platform_message_id, reactor_external_id)` 保存回应当前态；`emoji=null` 是删除
+回应的墓碑。该表只外键到账号，不外键到 `messages`，因此回应先于目标消息抵达时也不会丢失。
+同一唯一键只接受更晚的 `reacted_at`，相同或更旧的 outbox 重放是幂等 no-op，不能在删除后
+把迟到旧回应复活。当前只开放 Signal 入站回应，Telegram v3 回应事件继续永久拒绝。
 
 ## 5. 输入坞状态与隔离
 
@@ -142,16 +155,42 @@ v2 消息事件已增加单调 `editVersion`，数据库和翻译 revision 只�
 
 ## 7. M3 接线清单
 
-Telegram fork 需要：
+Telegram fork 接线状态：
 
 - M3-3 已在 chat/topic 变化时发送 `context.changed`，并以单调 revision 拒绝旧命令
 - M3-3 已把原生 rich editor/handleSend 映射到三个 composer 命令
-- 收发、编辑、删除和最终 id 事件进入带重试的 outbox
-- 收到 `event.ack` 后才能从 outbox 移除事件
+- M3-4 已让收发、编辑、删除和最终 id 事件进入 IndexedDB 持久 outbox；详细语义见
+  `2026-08-27-m3-telegram-outbox.md`
+- M3-4 只有收到 `event.ack` 后才从 pending outbox 移除事件，永久拒绝进入 dead-letter
 - M3-3 已删除 fork 内部旧 `ImHubComposer`，TranslationDock 是唯一翻译入口
 - M3-1 已统一 TDLib/fork 的 `chatId:serverMessageId` 规范键并提供历史迁移；开始
   shadow 前仍要用真实 fixture 和账号验证同一消息只落一行，再决定旧后台链路退出时机
-- M3-3 已用稳定 attempt id 和最终 Telegram update 解决 Composer 发送幂等；message outbox
-  的同账号 single-flight/限流仍待后续实现
+- M3-3 已用稳定 attempt id 和最终 Telegram update 解决 Composer 发送幂等；M3-4 的 message
+  outbox 按 Telegram self user id 单飞并有界限流
 - M3-2 已完成短时 account-control grant、实际平台账号身份绑定与 guest JWT 移除
 - M3-2 已完成 Telegram 退出/账号删除时对应本地 partition 与 bridge 能力清理
+
+## 8. M5 Signal 入站消息接线
+
+Signal Desktop 不能复用 `<webview>` attach 流程；补丁版 Signal 主进程把原生 renderer 放在
+同窗口 `WebContentsView` 后，显式将其 webContents 注册进同一个 `NativeControlHost`。guest
+仍不自报 im-hub `accountId`，只上报实际 Signal ACI；服务端 owner-only grant 首次绑定
+`native_desktop` 账号的实际 ACI，registry 必须同时匹配注册的 WebContents、账号和 ACI 才转发。
+
+普通消息从 Signal 自身持久化后的 `ConversationModel.onNewMessage` 产生入站文字、图片和贴纸
+`message.upsert`。编辑在 `saveEditedMessage` 后以上一次发送者与原 `sent_at` 复用相同消息键，
+并用 `editMessageTimestamp` 推进 `editedAt`；删除在 Signal 自身删除持久化后产生
+`message.deleted`；回应数据库和消息缓存保存后产生 `message.reaction`。图片读取
+`attachments[]`，贴纸读取独立 `sticker` 字段；桥内只保留类型、
+文件名、MIME、大小和由本地消息 id + 槽位生成的稳定 `remoteId`，不读取或导出本机路径、附件
+密钥、pack key 或二进制。视频、音频和文件尚未接入，包含这些附件的消息整条拒绝，不能只落
+caption。单条消息归一化错误只产生可见的非致命提示，下一条成功事件继续正常处理。
+
+Signal Desktop 与 signal-cli 共用 `u:` / `g:` 会话键和
+`<normalized-sender>:<sent-at-ms>` 消息键，服务端拒绝非规范键并沿用数据库唯一约束。事件用
+稳定 `eventId` 先写入专用 IndexedDB，再严格顺序重试到 `event.ack`；接受后删除，永久拒绝进入
+有界 dead-letter，存储和容量故障经非敏感 UI 提示。自动化已覆盖 outbox 对象重建后的同键重放，
+真实 Signal 进程重启后的未 ACK 恢复也已通过隔离 503 故障取证。图片/贴纸结构化元数据代码、
+自动化和真实唯一落库均已完成。编辑/删除/回应的补丁锚点、归一化、持久 outbox、服务端校验、
+回应墓碑表及乱序自动化已经完成，真实客户端矩阵仍待续验；附件二进制、其他媒体、
+context/composer 和翻译仍未接线。

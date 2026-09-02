@@ -29,6 +29,18 @@ const STORAGE_KEY = 'im-hub.layout.v1'
 /** 功能中心的两档宽度。它不参与拖拽分配，但窄屏时会被强制收成图标栏 */
 export const FUNCTION_CENTER = { open: 250, collapsed: 62 } as const
 
+/** 三个平台的补丁客户端都通过同一固定翻译坞驱动各自原生输入框。 */
+export function showsNativeTranslationDock(_platform: string): boolean {
+  return true
+}
+
+export function usesCloudConversationWorkspace(account: {
+  platform: string
+  connection_mode: string
+} | undefined): boolean {
+  return account?.platform === 'whatsapp' && account.connection_mode === 'cloud_api'
+}
+
 /**
  * 窗口窄到放不下"展开的功能中心 + 会话列表 + 聊天区"时，先把功能中心收成
  * 图标栏。它是这一排里最不常用又最占地方的一栏，比收掉会话列表划算得多。

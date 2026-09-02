@@ -1,0 +1,491 @@
+import { ipcRenderer } from 'electron'
+import {
+  NATIVE_BRIDGE_PROTOCOL_VERSION,
+  type NativeComposerCommand,
+  type NativeCommandResultEvent,
+  type NativeGuestEvent,
+  type NativeHostCommand,
+} from '@im-hub/shared'
+import { NATIVE_GUEST_EVENT_CHANNEL } from '../native-control-ipc.js'
+import {
+  normalizeSignalDesktopDelete,
+  normalizeSignalDesktopEdit,
+  normalizeSignalDesktopInbound,
+  normalizeSignalDesktopOutgoing,
+  normalizeSignalDesktopReaction,
+  readSignalDesktopAci,
+  SignalDesktopInboundError,
+  type SignalDesktopModelLike,
+} from '../signal-desktop-message.js'
+import {
+  readSignalDesktopComposerSnapshot,
+  SignalDesktopComposerError,
+  signalComposerSnapshotMatches,
+  writeSignalDesktopDraft,
+  type SignalDesktopComposerSnapshot,
+  type SignalDesktopComposerWindowLike,
+  type SignalDesktopReduxStoreLike,
+} from '../signal-desktop-composer.js'
+import {
+  createIndexedDbSignalSendAttemptStorage,
+  createSignalDesktopSendLedger,
+  SignalDesktopSendError,
+  type SignalOutgoingMessageLike,
+} from '../signal-desktop-send.js'
+import {
+  createIndexedDbSignalOutboxStorage,
+  createSignalDesktopOutbox,
+  type SignalOutboxEvent,
+} from '../signal-desktop-outbox.js'
+import { SignalDesktopTranslationStore } from '../signal-desktop-translation.js'
+
+const COMMAND_CHANNEL = 'imhub:native-command'
+const BOOTSTRAP_CHANNEL = 'imhub:signal-bridge-bootstrap'
+const IDENTITY_INTERVAL_MS = 2_000
+const IDENTITY_GRACE_MS = 15_000
+const COMPOSER_WATCH_INTERVAL_MS = 250
+const OUTGOING_HISTORY_LIMIT = 200
+
+interface SignalBridgeWindow extends SignalDesktopComposerWindowLike {
+  __imHubSignalResolveMessageForTranslation?(
+    senderExternalId: string,
+    sentAtMs: number,
+  ): Promise<SignalDesktopModelLike | null | undefined>
+  __imHubSignalListMessagesForTranslation?(
+    localConversationId: string,
+    limit: number,
+  ): Promise<SignalDesktopModelLike[] | null | undefined>
+  __imHubSignalBridge?: {
+    onNewMessage(
+      conversation: SignalDesktopModelLike,
+      message: SignalDesktopModelLike,
+      senderConversation: SignalDesktopModelLike | null,
+    ): Promise<void>
+    onMessageEdited(
+      conversation: SignalDesktopModelLike,
+      message: SignalDesktopModelLike,
+      senderConversation: SignalDesktopModelLike | null,
+    ): Promise<void>
+    onMessageDeleted(message: SignalDesktopModelLike, deleteDetails: unknown): Promise<void>
+    onReaction(
+      targetMessage: SignalDesktopModelLike,
+      reaction: unknown,
+      reactorConversation: SignalDesktopModelLike | null,
+    ): Promise<void>
+    onOutgoingMessagePrepared(message: SignalOutgoingMessageLike): Promise<void>
+    onOutgoingMessagePersisted(message: SignalOutgoingMessageLike): Promise<void>
+  }
+}
+
+function emit(event: NativeGuestEvent): void {
+  ipcRenderer.send(NATIVE_GUEST_EVENT_CHANNEL, event)
+}
+
+/**
+ * 运行在 Signal 自带 preload 的隔离世界中。Signal 不接触 accountId、用户 JWT 或
+ * control grant；这些都由主进程按实际 WebContentsView 绑定和复核。
+ */
+export function installSignalPreloadBridge(signalWindow: SignalBridgeWindow): void {
+  if (signalWindow.__imHubSignalBridge) return
+  console.info('[signal-bridge] preload installed')
+  const outbox = createSignalDesktopOutbox(
+    createIndexedDbSignalOutboxStorage(globalThis.indexedDB),
+  )
+  const sendLedger = createSignalDesktopSendLedger(
+    createIndexedDbSignalSendAttemptStorage(globalThis.indexedDB),
+    signalWindow,
+  )
+  const translations = new SignalDesktopTranslationStore(signalWindow)
+  let lastIdentity: string | null = null
+  let composerStore: SignalDesktopReduxStoreLike | null = null
+  let unsubscribeComposer: (() => void) | null = null
+  let currentComposer: SignalDesktopComposerSnapshot | null = null
+  let contextRevision = 0
+  let lastPlatformConversationId: string | null | undefined
+  let lastComposerSignature: string | undefined
+  let composerEmissionGeneration = 0
+  const outgoingHistorySynced = new Set<string>()
+  const outgoingHistoryInFlight = new Set<string>()
+
+  const accountIdentity = (): string => {
+    const accountExternalId = lastIdentity ?? readSignalDesktopAci(signalWindow)
+    if (!accountExternalId) throw new Error('Signal identity unavailable')
+    if (lastIdentity !== accountExternalId) {
+      lastIdentity = accountExternalId
+      outbox.activate(accountExternalId, emit)
+      sendLedger.activate(accountExternalId)
+    }
+    return accountExternalId
+  }
+
+  const enqueue = async (event: SignalOutboxEvent | null): Promise<boolean> => {
+    if (!event) return false
+    const queued = await outbox.enqueue(accountIdentity(), event)
+    if (queued) console.info('[signal-bridge] message event persisted')
+    return queued
+  }
+
+  const reportMessageError = (error: unknown): void => {
+    const inboundError = error instanceof SignalDesktopInboundError ? error : null
+    emit({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'bridge.error',
+      code: inboundError?.code ?? 'invalid_signal_inbound',
+      message: inboundError?.safeMessage ?? 'Signal 消息事件无法安全归一化，已拒绝回传',
+    })
+  }
+
+  const reportIdentity = (): boolean => {
+    const normalized = readSignalDesktopAci(signalWindow)
+    if (!normalized) return false
+    const identityChanged = lastIdentity !== normalized
+    lastIdentity = normalized
+    if (identityChanged) {
+      console.info('[signal-bridge] identity ready')
+      outbox.activate(normalized, emit)
+      sendLedger.activate(normalized)
+    }
+    emit({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'account.identity',
+      platformAccountExternalId: normalized,
+    })
+    return true
+  }
+
+  const emitComposerState = (
+    snapshot: SignalDesktopComposerSnapshot,
+    force: boolean,
+  ): void => {
+    const generation = ++composerEmissionGeneration
+    const capturedRevision = contextRevision
+    void sendLedger.recover(snapshot.context.platformConversationId).then(sendAttempt => {
+      if (generation !== composerEmissionGeneration
+        || capturedRevision !== contextRevision
+        || currentComposer?.localConversationId !== snapshot.localConversationId
+        || currentComposer.context.platformConversationId
+          !== snapshot.context.platformConversationId) return
+      const signature = JSON.stringify({
+        draft: snapshot.draft,
+        canSend: snapshot.canSendPlainText,
+        sendAttempt,
+      })
+      if (!force && lastComposerSignature === signature) return
+      lastComposerSignature = signature
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'composer.state',
+        contextRevision,
+        platformConversationId: snapshot.context.platformConversationId,
+        draft: snapshot.draft,
+        canSend: snapshot.canSendPlainText,
+        ...(sendAttempt ? { sendAttempt } : {}),
+      })
+    }).catch(() => {
+      if (generation !== composerEmissionGeneration || capturedRevision !== contextRevision) return
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'composer.state',
+        contextRevision,
+        platformConversationId: snapshot.context.platformConversationId,
+        draft: snapshot.draft,
+        canSend: false,
+      })
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'bridge.error',
+        code: 'signal_send_ledger_unavailable',
+        message: 'Signal 发送 attempt 持久账本暂时不可用；自动发送已关闭',
+      })
+    })
+  }
+
+  const refreshComposer = (force = false): SignalDesktopComposerSnapshot | null => {
+    let snapshot: SignalDesktopComposerSnapshot | null
+    try {
+      snapshot = readSignalDesktopComposerSnapshot(signalWindow)
+    } catch (error) {
+      const composerError = error instanceof SignalDesktopComposerError ? error : null
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'bridge.error',
+        code: composerError?.code ?? 'signal_composer_state_unavailable',
+        message: composerError?.safeMessage ?? 'Signal 原生输入框状态暂时不可用',
+      })
+      currentComposer = null
+      return null
+    }
+
+    const platformConversationId = snapshot?.context.platformConversationId ?? null
+    const contextChanged = lastPlatformConversationId === undefined
+      || platformConversationId !== lastPlatformConversationId
+    if (contextChanged) {
+      contextRevision += 1
+      lastPlatformConversationId = platformConversationId
+      lastComposerSignature = undefined
+    }
+    currentComposer = snapshot
+    if (contextChanged || force) {
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'context.changed',
+        contextRevision,
+        context: snapshot?.context ?? null,
+      })
+    }
+    if (snapshot) {
+      emitComposerState(snapshot, contextChanged || force)
+      if (contextChanged || force) void syncOutgoingHistory(snapshot, contextRevision)
+    }
+    return snapshot
+  }
+
+  async function syncOutgoingHistory(
+    snapshot: SignalDesktopComposerSnapshot,
+    capturedRevision: number,
+  ): Promise<void> {
+    const listMessages = signalWindow.__imHubSignalListMessagesForTranslation
+    const conversation = signalWindow.ConversationController?.get?.(snapshot.localConversationId)
+    if (!listMessages || !conversation) return
+    let accountExternalId: string
+    try {
+      accountExternalId = accountIdentity()
+    } catch {
+      return
+    }
+    // 本机 conversation id 只作为 guest 内存去重键，不进入事件、日志或持久账本。
+    const syncKey = `${accountExternalId}:${snapshot.localConversationId}`
+    if (outgoingHistorySynced.has(syncKey) || outgoingHistoryInFlight.has(syncKey)) return
+    outgoingHistoryInFlight.add(syncKey)
+    try {
+      const messages = await listMessages(snapshot.localConversationId, OUTGOING_HISTORY_LIMIT)
+      if (!Array.isArray(messages) || messages.length > OUTGOING_HISTORY_LIMIT) return
+      if (capturedRevision !== contextRevision
+        || currentComposer?.localConversationId !== snapshot.localConversationId) return
+      for (const message of messages) {
+        try {
+          const event = normalizeSignalDesktopOutgoing(
+            conversation, message, accountExternalId,
+          )
+          if (event) await enqueue(event)
+        } catch (error) {
+          reportMessageError(error)
+        }
+      }
+      outgoingHistorySynced.add(syncKey)
+    } catch {
+      emit({
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'bridge.error',
+        code: 'signal_outgoing_history_unavailable',
+        message: 'Signal 历史出站消息暂时无法回填；切换会话后将重试',
+      })
+    } finally {
+      outgoingHistoryInFlight.delete(syncKey)
+    }
+  }
+
+  const ensureComposerWatcher = (): boolean => {
+    const store = signalWindow.reduxStore
+    if (!store) return false
+    if (composerStore === store && unsubscribeComposer) return true
+    unsubscribeComposer?.()
+    composerStore = store
+    unsubscribeComposer = store.subscribe(() => { refreshComposer() })
+    return true
+  }
+
+  const commandResult = (
+    command: NativeComposerCommand,
+    ok: boolean,
+    value?: { draft?: string; platformMessageId?: string; code?: string; message?: string },
+  ): NativeCommandResultEvent => ({
+    protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+    type: 'command.result',
+    requestId: command.requestId,
+    command: command.type,
+    contextRevision: command.contextRevision,
+    ok,
+    ...(command.type === 'composer.send' ? { attemptId: command.attemptId } : {}),
+    ...(value?.draft !== undefined ? { draft: value.draft } : {}),
+    ...(value?.platformMessageId !== undefined
+      ? { platformMessageId: value.platformMessageId }
+      : {}),
+    ...(!ok ? {
+      error: {
+        code: value?.code ?? 'signal_composer_command_failed',
+        message: value?.message ?? 'Signal 原生输入框命令执行失败',
+      },
+    } : {}),
+  })
+
+  const handleComposerCommand = async (command: NativeComposerCommand): Promise<void> => {
+    const snapshot = refreshComposer()
+    if (command.contextRevision !== contextRevision
+      || !signalComposerSnapshotMatches(snapshot, command.platformConversationId)) {
+      emit(commandResult(command, false, {
+        code: 'stale_signal_context',
+        message: 'Signal 当前会话已经变化，请重新翻译',
+      }))
+      return
+    }
+    if (command.type === 'composer.send') {
+      try {
+        const platformMessageId = await sendLedger.send(command, snapshot)
+        emit(commandResult(command, true, { platformMessageId }))
+        const updated = refreshComposer()
+        if (updated) emitComposerState(updated, true)
+        ipcRenderer.send(BOOTSTRAP_CHANNEL, 'composer-send-confirmed')
+      } catch (error) {
+        const sendError = error instanceof SignalDesktopSendError ? error : null
+        emit(commandResult(command, false, {
+          code: sendError?.code ?? 'signal_send_result_unknown',
+          message: sendError?.safeMessage ?? 'Signal 自动发送结果暂时无法确认',
+        }))
+      }
+      return
+    }
+    if (command.type === 'composer.get-draft') {
+      emit(commandResult(command, true, { draft: snapshot.draft }))
+      return
+    }
+    try {
+      const updated = await writeSignalDesktopDraft(signalWindow, snapshot, command.text)
+      currentComposer = updated
+      emit(commandResult(command, true, { draft: updated.draft }))
+      emitComposerState(updated, true)
+      ipcRenderer.send(BOOTSTRAP_CHANNEL, 'composer-draft-written')
+    } catch (error) {
+      const composerError = error instanceof SignalDesktopComposerError ? error : null
+      emit(commandResult(command, false, {
+        code: composerError?.code ?? 'signal_draft_write_failed',
+        message: composerError?.safeMessage ?? 'Signal 原生输入框未确认草稿写入，请重试',
+      }))
+    }
+  }
+
+  signalWindow.__imHubSignalBridge = {
+    async onNewMessage(conversation, message, senderConversation): Promise<void> {
+      try {
+        await enqueue(normalizeSignalDesktopInbound(conversation, message, senderConversation))
+      } catch (error) {
+        reportMessageError(error)
+      }
+    },
+    async onMessageEdited(conversation, message, senderConversation): Promise<void> {
+      translations.clear(message)
+      try {
+        await enqueue(normalizeSignalDesktopEdit(conversation, message, senderConversation))
+      } catch (error) {
+        reportMessageError(error)
+      }
+    },
+    async onMessageDeleted(message, deleteDetails): Promise<void> {
+      translations.clear(message)
+      try {
+        await enqueue(normalizeSignalDesktopDelete(message, deleteDetails))
+      } catch (error) {
+        reportMessageError(error)
+      }
+    },
+    async onReaction(targetMessage, reaction, reactorConversation): Promise<void> {
+      try {
+        const identity = accountIdentity()
+        const event = normalizeSignalDesktopReaction(
+          targetMessage, reaction, reactorConversation, identity,
+        )
+        if (!event) return
+        if (await enqueue(event)) {
+          ipcRenderer.send(
+            BOOTSTRAP_CHANNEL,
+            event.emoji === null ? 'reaction-remove-persisted' : 'reaction-add-persisted',
+          )
+        }
+      } catch (error) {
+        reportMessageError(error)
+      }
+    },
+    async onOutgoingMessagePrepared(message): Promise<void> {
+      await sendLedger.onOutgoingMessagePrepared(message)
+    },
+    async onOutgoingMessagePersisted(message): Promise<void> {
+      await sendLedger.onOutgoingMessagePersisted(message)
+      try {
+        const localConversationId = message.get?.('conversationId')
+          ?? message.attributes?.conversationId
+        const conversation = typeof localConversationId === 'string'
+          ? signalWindow.ConversationController?.get?.(localConversationId)
+          : undefined
+        if (!conversation) return
+        await enqueue(normalizeSignalDesktopOutgoing(
+          conversation, message, accountIdentity(),
+        ))
+      } catch (error) {
+        reportMessageError(error)
+      }
+    },
+  }
+
+  ipcRenderer.on(COMMAND_CHANNEL, (_event, command: NativeHostCommand) => {
+    if (command.type === 'bridge.request-state') {
+      emit({ protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION, type: 'bridge.ready' })
+      lastIdentity = null
+      reportIdentity()
+      ensureComposerWatcher()
+      refreshComposer(true)
+      outbox.replay()
+      return
+    }
+    if (command.type === 'event.ack') {
+      void outbox.acknowledge(command.eventId, command.accepted, command.retryable)
+      return
+    }
+    if (command.type === 'outbox.retry-dead-letters') {
+      void outbox.retryDeadLetters()
+      return
+    }
+    if (command.type === 'outbox.discard-dead-letters') void outbox.discardDeadLetters()
+    if (command.type === 'message.set-translations') {
+      void translations.applyBatch(command.translations)
+      return
+    }
+    if (command.type === 'composer.ack-send') {
+      void sendLedger.acknowledge(command.attemptId, command.platformMessageId)
+        .then(() => {
+          const snapshot = refreshComposer()
+          if (snapshot) emitComposerState(snapshot, true)
+        })
+        .catch(() => {
+          emit({
+            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+            type: 'bridge.error',
+            code: 'signal_send_ack_failed',
+            message: 'Signal 已确认发送结果，但 attempt ACK 暂时无法清理',
+          })
+        })
+      return
+    }
+    if (command.type === 'composer.set-draft'
+      || command.type === 'composer.get-draft'
+      || command.type === 'composer.send') {
+      void handleComposerCommand(command)
+    }
+  })
+
+  emit({ protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION, type: 'bridge.ready' })
+  reportIdentity()
+  setInterval(reportIdentity, IDENTITY_INTERVAL_MS)
+  setInterval(() => {
+    if (ensureComposerWatcher()) refreshComposer()
+  }, COMPOSER_WATCH_INTERVAL_MS)
+  setTimeout(() => {
+    if (lastIdentity || reportIdentity()) return
+    console.error('[signal-bridge] identity unavailable after grace period')
+    emit({
+      protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+      type: 'bridge.error',
+      code: 'signal_identity_unavailable',
+      message: 'Signal 登录身份在等待期内仍不可用；请确认已关联账号并重新打开测试包',
+    })
+  }, IDENTITY_GRACE_MS)
+}

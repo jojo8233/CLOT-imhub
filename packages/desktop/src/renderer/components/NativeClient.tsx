@@ -4,8 +4,10 @@ import type {
   NativeControlStateUpdate,
   NativeGuestEvent,
   NativeHostCommand,
+  NativeOutboxStatusEvent,
 } from '@im-hub/shared'
 import { NATIVE_BRIDGE_PROTOCOL_VERSION } from '@im-hub/shared'
+import type { SignalDesktopState } from '../../signal-desktop-ipc.js'
 import {
   api,
   getCurrentUser,
@@ -14,8 +16,11 @@ import {
 } from '../api/client.js'
 import {
   handleNativeCommandResult,
+  nativeMessageTranslationBridge,
+  nativeMessageTranslationsFromRows,
   registerNativeCommandTarget,
 } from '../native-bridge.js'
+import { nativeControlGrantIsUsable } from '../native-control-grant.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { EmptyHint, IconButton } from './ui.js'
@@ -26,7 +31,8 @@ import { EmptyHint, IconButton } from './ui.js'
  * 每个平台账号一个 <webview>，各自带独立的 partition——登录态就是靠 partition
  * 隔离的，这也是"多开"在这条路线下的实现方式。
  *
- * 关键取舍：webview 一旦创建就**不卸载**，只用 display 切换显示。
+ * 关键取舍：恢复宿主会话后，当前 owner 的已支持账号 webview 会全部创建，
+ * 之后**不卸载**，只用 display 切换显示。
  * Telegram Web 重新加载一次要重连、重拉会话列表、丢掉滚动位置，来回切账号
  * 时会明显卡顿闪烁。常驻的代价是内存，但切换体验是这条路线的核心价值。
  *
@@ -38,16 +44,24 @@ import { EmptyHint, IconButton } from './ui.js'
 /**
  * 各平台加载哪份客户端。
  *
- * 指向**我们自己构建的补丁版**，不是官方地址：补丁版里翻译改走 im-hub 的
- * 网关，并且去掉了 Telegram 的 Premium 门禁。扒官方页面的 DOM 是行不通的
- * ——那份代码混淆过，选择器一改版就失效，而且失效时不报错、只是悄悄不翻译。
+ * Telegram 指向我们自己构建的补丁版；WhatsApp 则按用户确认的 TranGPT 式模式
+ * 加载官方 Web 页面，并由受控 preload 使用多锚点 DOM 兼容层。后者不是稳定协议，
+ * 页面选择器改版时必须显式报错并跟进修补。
  *
  * 开发期指向 telegram-tt 的 Vite 服务器；打包后会换成随应用分发的静态产物。
  */
-const WEB_CLIENT: Record<string, string> = {
+interface WebClientDefinition {
+  src: string
+  bridgeEnabled: boolean
+}
+
+const WEB_CLIENT: Record<string, WebClientDefinition> = {
   // 开发期指向 telegram-tt 的 Vite 服务器（代码/telegram-tt，npm run dev）。
   // 打包时这里要换成随应用分发的静态产物地址，见 native-client-pivot 设计文档。
-  telegram: 'http://localhost:1234/',
+  telegram: { src: 'http://localhost:1234/', bridgeEnabled: true },
+  // 用户明确选择 TranGPT 式补丁模式：仍使用 owner-only 独立 partition，但给
+  // 精确 WhatsApp origin 注入窄 bridge，用于气泡双语、草稿与最终 DOM 消息 ID 确认。
+  whatsapp: { src: 'https://web.whatsapp.com/', bridgeEnabled: true },
 }
 
 const PLATFORM_PHASE: Record<string, string> = {
@@ -60,6 +74,20 @@ export function nativeClientSupported(platform: string): boolean {
   return platform in WEB_CLIENT
 }
 
+export function nativeWebviewNeedsComposerFocus(
+  platform: string,
+  command: Pick<NativeHostCommand, 'type'>,
+): boolean {
+  return platform === 'whatsapp' && command.type === 'composer.send'
+}
+
+export function browserCompatibleUserAgent(userAgent: string): string {
+  const platform = /\(([^)]+)\)/.exec(userAgent)?.[1]
+  const chrome = /Chrome\/[\d.]+/.exec(userAgent)?.[0]
+  if (!platform || !chrome) return userAgent.replace(/\sElectron\/[\d.]+/g, '')
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`
+}
+
 export function nativeAccountControllable(
   account: Pick<AccountRow, 'owner_user_id'> | null,
   user: Pick<SessionUser, 'id' | 'role'> | null,
@@ -67,6 +95,69 @@ export function nativeAccountControllable(
   return account !== null && user !== null
     && account.owner_user_id === user.id
     && user.role !== 'auditor'
+}
+
+/**
+ * 消息 outbox 是账号级后台观测链路，不能把“用户点过这个 tab”当成
+ * 正确性前置条件。宿主恢复会话后预挂载当前 owner 的所有已支持账号，
+ * 隐藏 pane 继续用各自 partition 接收平台 update 并清空 outbox。
+ */
+export function nativeAccountIdsToMount(
+  accounts: ReadonlyArray<Pick<AccountRow,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
+  user: Pick<SessionUser, 'id' | 'role'> | null,
+  supportsWebview: boolean,
+): string[] {
+  if (!supportsWebview) return []
+  return accounts
+    .filter(account => nativeClientSupported(account.platform)
+      && (account.platform !== 'whatsapp'
+        || account.connection_mode === 'adapter'
+        || account.connection_mode === 'web_shell')
+      && nativeAccountControllable(account, user))
+    .map(account => account.id)
+}
+
+export function signalDesktopAccountIdsToMount(
+  accounts: ReadonlyArray<Pick<AccountRow,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
+  user: Pick<SessionUser, 'id' | 'role'> | null,
+  supportsSignalDesktop: boolean,
+): string[] {
+  if (!supportsSignalDesktop) return []
+  return accounts
+    .filter(account => account.platform === 'signal'
+      && account.connection_mode === 'native_desktop'
+      && nativeAccountControllable(account, user))
+    .map(account => account.id)
+}
+
+export function signalOutboxStatusError(
+  status: Pick<NativeOutboxStatusEvent,
+    'pendingCount' | 'deadLetterCount' | 'lastErrorCode'>,
+): string | null {
+  if (status.lastErrorCode === 'outbox_storage_failed') return '持久消息队列不可用'
+  if (status.deadLetterCount > 0) return `${status.deadLetterCount} 条事件永久失败，等待人工处理`
+  if (status.lastErrorCode === 'outbox_capacity'
+    || status.lastErrorCode === 'dead_letter_capacity') return '持久消息队列容量已满'
+  if (status.lastErrorCode && status.pendingCount > 0) return '持久消息队列暂时失败，正在重试'
+  return null
+}
+
+/** 单条入站消息归一化失败不影响账号授权，也不能阻断后续消息继续回传。 */
+export function signalInboundErrorIsNonfatal(code: string): boolean {
+  return code === 'invalid_signal_inbound'
+    || code === 'invalid_signal_outgoing'
+    || code === 'invalid_signal_media'
+    || code === 'unsupported_signal_media'
+    || code === 'invalid_signal_edit'
+    || code === 'invalid_signal_delete'
+    || code === 'invalid_signal_reaction'
+    || code === 'signal_outgoing_history_unavailable'
+    || code === 'signal_composer_state_unavailable'
+    || code === 'signal_draft_too_large'
+    || code === 'signal_send_ledger_unavailable'
+    || code === 'signal_send_ack_failed'
 }
 
 interface NativeWebviewLoadProbe {
@@ -80,13 +171,31 @@ interface NativeWebviewLoadProbe {
  * 这时 webview 已经可用，不能继续等到二十秒超时。
  */
 export function nativeWebviewAlreadyLoaded(webview: NativeWebviewLoadProbe, src: string): boolean {
+  return nativeWebviewAtExpectedOrigin(webview, src) && !webview.isLoading()
+}
+
+/**
+ * WhatsApp Web 登录后可能让 Electron 的全局 isLoading 长时间保持 true，即使文档已经
+ * complete。宿主只用这项检查恢复已经附着的精确白名单 origin；preload 内部仍独立等待
+ * 页面身份、当前会话和 composer，不能把附着本身当成桥接就绪。
+ */
+export function nativeWebviewAtExpectedOrigin(webview: NativeWebviewLoadProbe, src: string): boolean {
   try {
     return webview.getWebContentsId() > 0
-      && !webview.isLoading()
       && new URL(webview.getURL()).origin === new URL(src).origin
   } catch {
     return false
   }
+}
+
+export function recoveredNativeBridgeConnection(
+  platform: string,
+  hasUsableGrant: boolean,
+  observedIdentity: string | null,
+): 'ready' | 'waiting' {
+  return hasUsableGrant && (platform !== 'whatsapp' || observedIdentity !== null)
+    ? 'ready'
+    : 'waiting'
 }
 
 /**
@@ -131,21 +240,19 @@ export function NativeClient() {
     : null)
   const setActiveConversation = useStore(s => s.setActiveConversation)
 
-  // 已经建过 webview 的账号。建过就一直留着，只切显隐
-  const [mounted, setMounted] = useState<string[]>([])
-
   const active = accounts.find(a => a.id === activeAccountId) ?? null
   const currentUser = getCurrentUser()
   const activeOwnedByCurrentUser = nativeAccountControllable(active, currentUser)
   const supportsWebview = webviewSupported()
-
-  useEffect(() => {
-    if (!active
-      || !activeOwnedByCurrentUser
-      || !supportsWebview
-      || !nativeClientSupported(active.platform)) return
-    setMounted(prev => prev.includes(active.id) ? prev : [...prev, active.id])
-  }, [active, activeOwnedByCurrentUser, supportsWebview])
+  const supportsSignalDesktop = window.imHub?.signalDesktop !== undefined
+  // 不只挂载 active 账号：否则宿主刷新后从未点开的账号会错过
+  // Telegram delete/edit update，之后打开只能看到最终状态，无法补出已丢的事件。
+  const mounted = nativeAccountIdsToMount(accounts, currentUser, supportsWebview)
+  const mountedSignalDesktop = signalDesktopAccountIdsToMount(
+    accounts,
+    currentUser,
+    supportsSignalDesktop,
+  )
 
   // 每个常驻 webview 都记住自己的当前会话。切回某账号时恢复它的服务端会话，
   // 不能继续显示上一个账号的客户资料，也不该要求平台再次发 context.changed。
@@ -156,7 +263,29 @@ export function NativeClient() {
   let overlay: ReactNode = null
   if (!active) {
     overlay = <EmptyHint>从顶栏选一个账号<br />这里会打开它的原生界面</EmptyHint>
-  } else if (!nativeClientSupported(active.platform)) {
+  } else if (active.platform === 'signal' && active.connection_mode !== 'native_desktop') {
+    overlay = (
+      <EmptyHint>
+        这是服务端后台适配器账号，不会打开 Signal Desktop。<br />
+        请从顶栏“+”添加一个 Signal 原生桌面账号。
+      </EmptyHint>
+    )
+  } else if (active.platform === 'signal' && !supportsSignalDesktop) {
+    overlay = (
+      <EmptyHint>
+        Signal Desktop 宿主桥接不可用。<br />请重新启动 im-hub 桌面开发进程。
+      </EmptyHint>
+    )
+  } else if (active.platform === 'whatsapp'
+    && active.connection_mode !== 'adapter'
+    && active.connection_mode !== 'web_shell') {
+    overlay = (
+      <EmptyHint>
+        这个账号不是 WhatsApp 官方网页壳，不会加载 web.whatsapp.com。<br />
+        Business Platform 需要单独完成 Cloud API 授权与 Webhook 配置。
+      </EmptyHint>
+    )
+  } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform)) {
     overlay = (
       <EmptyHint>
         {PLATFORM_LABEL[active.platform] ?? active.platform} 原生客户端尚未接入。
@@ -170,7 +299,7 @@ export function NativeClient() {
         <br />管理与审计角色只能读取已回传的存档，不能操控账号或发送消息。
       </EmptyHint>
     )
-  } else if (!supportsWebview) {
+  } else if (active.platform !== 'signal' && !supportsWebview) {
     overlay = (
       <EmptyHint>
         原生界面只能在桌面客户端里打开。<br />
@@ -184,15 +313,33 @@ export function NativeClient() {
 
   return (
     <div style={{ flex: 1, minWidth: 0, position: 'relative', background: theme.color.chat }}>
+      {mountedSignalDesktop.map(accountId => (
+        <SignalDesktopPane
+          key={accountId}
+          accountId={accountId}
+          visible={accountId === active?.id && active.platform === 'signal'}
+        />
+      ))}
       {mounted.map(id => {
         const acc = accounts.find(a => a.id === id)
-        // mounted 是历史记忆，不是授权事实。owner/角色变化后必须立即卸载
-        // 已失权的隐藏 pane，避免它继续注入 token、保持 command target。
+        // mounted 每次都从当前账号和授权事实派生。owner/角色变化后会立即
+        // 卸载已失权的隐藏 pane，避免它继续保持 control grant 和 command target。
         if (!acc
           || !nativeClientSupported(acc.platform)
           || !nativeAccountControllable(acc, currentUser)) return null
+        const client = WEB_CLIENT[acc.platform]!
         return (
-          <WebviewPane key={id} accountId={id} src={WEB_CLIENT[acc.platform]!} visible={id === active?.id} />
+          <WebviewPane
+            key={id}
+            accountId={id}
+            platform={acc.platform}
+            src={client.src}
+            bridgeEnabled={client.bridgeEnabled}
+            userAgent={acc.platform === 'whatsapp'
+              ? browserCompatibleUserAgent(navigator.userAgent)
+              : undefined}
+            visible={id === active?.id}
+          />
         )
       })}
       {overlay && (
@@ -208,6 +355,412 @@ export function NativeClient() {
   )
 }
 
+function SignalDesktopPane({ accountId, visible }: { accountId: string; visible: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const lastContextRevisionRef = useRef(-1)
+  const [state, setState] = useState<SignalDesktopState>('idle')
+  const [message, setMessage] = useState<string | null>(null)
+  const [guestWebContentsId, setGuestWebContentsId] = useState<number | null>(null)
+  const [controlError, setControlError] = useState<string | null>(null)
+  const [outboxError, setOutboxError] = useState<string | null>(null)
+  const bridge = window.imHub?.signalDesktop
+
+  useEffect(() => {
+    if (!bridge) return
+    return bridge.onState(update => {
+      if (update.accountId !== accountId) return
+      setState(update.state)
+      setMessage(update.message)
+    })
+  }, [accountId, bridge])
+
+  useEffect(() => {
+    if (!bridge) return
+    let disposed = false
+    let animationFrame: number | null = null
+    const element = ref.current
+    if (!element) return
+
+    const sync = (): void => {
+      if (disposed) return
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = null
+        if (disposed) return
+        const rect = element.getBoundingClientRect()
+        const actuallyVisible = visible && rect.width >= 1 && rect.height >= 1
+        void bridge.sync(accountId, {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        }, actuallyVisible).then(update => {
+          if (disposed || update.accountId !== accountId) return
+          setState(update.state)
+          setMessage(update.message)
+          setGuestWebContentsId(update.guestWebContentsId)
+        }).catch(() => {
+          if (disposed) return
+          setState('failed')
+          setMessage('Signal Desktop 宿主同步失败')
+        })
+      })
+    }
+
+    const observer = new ResizeObserver(sync)
+    observer.observe(element)
+    window.addEventListener('resize', sync)
+    window.addEventListener('scroll', sync, true)
+    sync()
+    return () => {
+      disposed = true
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      observer.disconnect()
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('scroll', sync, true)
+      const rect = element.getBoundingClientRect()
+      void bridge.sync(accountId, {
+        x: rect.x,
+        y: rect.y,
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
+      }, false).catch(() => {})
+    }
+  }, [accountId, bridge, visible])
+
+  useEffect(() => {
+    if (!bridge) return
+    return () => { void bridge.release(accountId).catch(() => {}) }
+  }, [accountId, bridge])
+
+  useEffect(() => {
+    const nativeControl = window.imHub?.nativeControl
+    if (!nativeControl || guestWebContentsId === null) return
+    const target = { accountId, guestWebContentsId }
+    lastContextRevisionRef.current = -1
+    let disposed = false
+    let grantRefreshTimer: ReturnType<typeof setTimeout> | null = null
+    let provisionGeneration = 0
+    let hasUsableGrant = false
+    let observedIdentity: string | null = null
+    let activeProvision: Promise<void> | null = null
+
+    const syncVisibleTranslations = (): void => {
+      const current = useStore.getState()
+      if (current.activeAccountId !== accountId || !current.activeConversationId) return
+      const conversation = current.conversations.find(
+        item => item.id === current.activeConversationId && item.account_id === accountId,
+      )
+      if (!conversation) return
+      void nativeMessageTranslationBridge.sync(
+        accountId,
+        nativeMessageTranslationsFromRows(current.messages),
+      ).catch(() => {})
+    }
+
+    const applyControlState = (control: NativeControlStateUpdate): void => {
+      if (disposed || control.accountId !== accountId) return
+      hasUsableGrant = nativeControlGrantIsUsable(control, Date.now())
+      if (control.state === 'ready') {
+        setControlError(null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        syncVisibleTranslations()
+        return
+      }
+      const detail = control.message ?? 'Signal 入站桥接尚未就绪'
+      setControlError(control.state === 'blocked' ? detail : null)
+      useStore.getState().setNativeBridgeConnection(
+        accountId,
+        control.state === 'blocked' ? 'failed' : 'waiting',
+        detail,
+      )
+    }
+
+    const scheduleGrantRefresh = (expiresAt: string): void => {
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      const delay = Math.max(
+        MIN_GRANT_REFRESH_MS,
+        Date.parse(expiresAt) - Date.now() - GRANT_REFRESH_MARGIN_MS,
+      )
+      grantRefreshTimer = setTimeout(() => { void provisionControl() }, delay)
+    }
+
+    const provisionControl = (): Promise<void> => {
+      if (activeProvision) return activeProvision
+      const operation = (async (): Promise<void> => {
+        if (disposed || !observedIdentity) return
+        const generation = ++provisionGeneration
+        try {
+          const grant = await api.createNativeControlGrant(accountId, observedIdentity)
+          if (disposed || generation !== provisionGeneration) return
+          const control = await nativeControl.configure(target, grant)
+          if (disposed || generation !== provisionGeneration) return
+          applyControlState(control)
+          scheduleGrantRefresh(grant.expiresAt)
+        } catch {
+          if (disposed || generation !== provisionGeneration) return
+          hasUsableGrant = false
+          setControlError('Signal 账号身份绑定或短时授权建立失败')
+          useStore.getState().setNativeBridgeConnection(
+            accountId,
+            'failed',
+            'Signal 账号身份绑定或短时授权建立失败',
+          )
+        }
+      })().finally(() => {
+        if (activeProvision === operation) activeProvision = null
+      })
+      activeProvision = operation
+      return operation
+    }
+
+    const sendEventAck = (eventId: string, accepted: boolean, retryable: boolean): void => {
+      void nativeControl.sendCommand(target, {
+        protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+        type: 'event.ack',
+        eventId,
+        accepted,
+        retryable,
+      }).catch(() => {
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Signal 入站 ACK 桥接已断开')
+      })
+    }
+
+    const onGuestEvent = (event: NativeGuestEvent): void => {
+      if (disposed) return
+      if (event.type === 'bridge.ready') {
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在核对 Signal 登录身份')
+        return
+      }
+      if (event.type === 'account.identity') {
+        const changed = observedIdentity !== event.platformAccountExternalId
+        observedIdentity = event.platformAccountExternalId
+        useStore.getState().setNativeAccountIdentity(accountId, observedIdentity)
+        if (changed || !hasUsableGrant) void provisionControl()
+        return
+      }
+      if (event.type === 'account.signed-out') {
+        observedIdentity = null
+        hasUsableGrant = false
+        useStore.getState().setNativeAccountIdentity(accountId, null)
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        setControlError('Signal 账号已退出')
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Signal 账号已退出')
+        return
+      }
+      if (event.type === 'command.result') {
+        handleNativeCommandResult(accountId, event as NativeCommandResultEvent)
+        return
+      }
+      if (event.type === 'bridge.error') {
+        if (signalInboundErrorIsNonfatal(event.code)) {
+          useStore.getState().setNativeBridgeNotice(accountId, event.message)
+          return
+        }
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        setControlError(event.message)
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
+        return
+      }
+      if (event.type === 'outbox.status') {
+        setOutboxError(signalOutboxStatusError(event))
+        useStore.getState().setNativeOutboxStatus(accountId, {
+          pendingCount: event.pendingCount,
+          deadLetterCount: event.deadLetterCount,
+          isSending: event.isSending,
+          lastErrorCode: event.lastErrorCode,
+        })
+        return
+      }
+      if (event.type === 'context.changed') {
+        const currentContext = useStore.getState().nativeBridgeByAccount[accountId]?.context
+        if (event.contextRevision < lastContextRevisionRef.current) return
+        if (event.contextRevision === lastContextRevisionRef.current) {
+          const incomingConversationId = event.context?.platformConversationId ?? null
+          const currentConversationId = currentContext?.platformConversationId ?? null
+          if (incomingConversationId !== currentConversationId) {
+            setControlError('Signal 原生客户端复用了当前会话 revision')
+            useStore.getState().setNativeBridgeConnection(
+              accountId,
+              'failed',
+              'Signal 原生客户端复用了当前会话 revision',
+            )
+          }
+          return
+        }
+        lastContextRevisionRef.current = event.contextRevision
+        if (!event.context) {
+          useStore.getState().setNativeContext(accountId, null)
+          return
+        }
+        const context = event.context
+        useStore.getState().setNativeContext(accountId, {
+          ...context,
+          contextRevision: event.contextRevision,
+          conversationId: null,
+        })
+        void nativeControl.syncContext(target, context).then(({ conversationId }) => {
+          if (disposed) return
+          useStore.getState().resolveNativeConversation(
+            accountId,
+            event.contextRevision,
+            context.platformConversationId,
+            conversationId,
+          )
+          // 初次 composer.state 可能先于服务端 conversation UUID 解析完成。
+          // 解析后要求 Signal 重放，确保进程重启留下的发送 attempt 不会丢在竞态里。
+          void nativeControl.sendCommand(target, {
+            protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
+            type: 'bridge.request-state',
+          }).catch(() => {
+            useStore.getState().setNativeBridgeNotice(accountId, 'Signal 发送状态重放失败，请重试')
+          })
+          void api.listConversations().then(({ conversations }) => {
+            if (!disposed) useStore.getState().setConversations(conversations)
+          }).catch(() => {})
+        }).catch(() => {
+          if (disposed) return
+          setControlError('Signal 当前会话同步到服务端失败')
+          useStore.getState().setNativeBridgeConnection(
+            accountId,
+            'failed',
+            'Signal 当前会话同步到服务端失败',
+          )
+        })
+        return
+      }
+      if (event.type === 'composer.state') {
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        useStore.getState().applyNativeComposerState(
+          accountId,
+          event.contextRevision,
+          event.platformConversationId,
+          event.draft,
+          event.canSend,
+          event.sendAttempt,
+        )
+        return
+      }
+      if (event.type !== 'message.upsert'
+        && event.type !== 'message.deleted'
+        && event.type !== 'message.id-remapped'
+        && event.type !== 'message.reaction') return
+
+      void nativeControl.reportEvent(target, event).then(() => {
+        if (disposed) return
+        setControlError(null)
+        useStore.getState().setNativeBridgeNotice(accountId, null)
+        useStore.getState().setNativeBridgeConnection(accountId, 'ready')
+        sendEventAck(event.eventId, true, false)
+        void api.listConversations().then(({ conversations }) => {
+          if (!disposed) useStore.getState().setConversations(conversations)
+        }).catch(() => {})
+      }).catch((error: unknown) => {
+        if (disposed) return
+        const status = nativeProxyStatus(error)
+        const retryable = status === null
+          || status === 408
+          || status === 409
+          || status === 425
+          || status === 429
+          || status >= 500
+        const detail = retryable ? 'Signal 入站回传失败，正在重试' : 'Signal 入站回传被服务端拒绝'
+        useStore.getState().setNativeBridgeNotice(accountId, detail)
+        sendEventAck(event.eventId, false, retryable)
+      })
+    }
+
+    const removeEventListener = nativeControl.onEvent(value => {
+      if (value.accountId === accountId) onGuestEvent(value.event)
+    })
+    const removeStateListener = nativeControl.onState(applyControlState)
+    const unregisterTarget = registerNativeCommandTarget(accountId, {
+      send: (_channel: string, command: unknown): Promise<void> =>
+        nativeControl.sendCommand(target, command as NativeHostCommand),
+    })
+    useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在等待 Signal 登录身份')
+
+    return () => {
+      disposed = true
+      provisionGeneration += 1
+      if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      removeEventListener()
+      removeStateListener()
+      unregisterTarget()
+      lastContextRevisionRef.current = -1
+      useStore.getState().setNativeContext(accountId, null)
+      void nativeControl.release(target).catch(() => {})
+    }
+  }, [accountId, guestWebContentsId])
+
+  const retry = (): void => {
+    const element = ref.current
+    if (!bridge || !element) return
+    const rect = element.getBoundingClientRect()
+    setState('starting')
+    setMessage('正在重新启动 Signal Desktop')
+    void bridge.release(accountId).then(() => bridge.sync(accountId, {
+      x: rect.x,
+      y: rect.y,
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+    }, visible && rect.width >= 1 && rect.height >= 1)).catch(() => {
+      setState('failed')
+      setMessage('Signal Desktop 重新启动失败')
+    })
+  }
+
+  const bridgeError = controlError ?? outboxError
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute', inset: 0,
+        display: visible ? 'block' : 'none',
+        background: theme.color.chat,
+      }}
+    >
+      {state !== 'ready' && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: theme.space.md,
+          color: state === 'failed' ? theme.color.danger : theme.color.textFaint,
+          fontSize: theme.font.size.sm,
+        }}>
+          <span className={state === 'failed' ? undefined : 'ih-pulse'}>
+            {message ?? '正在打开 Signal Desktop…'}
+          </span>
+          {state === 'failed' && (
+            <button
+              className="ih-btn"
+              onClick={retry}
+              style={{
+                padding: '8px 16px', borderRadius: theme.radius.pill,
+                border: `1px solid ${theme.color.borderStrong}`,
+                background: theme.color.white, color: theme.color.text,
+              }}
+            >
+              重试
+            </button>
+          )}
+        </div>
+      )}
+      {bridgeError && state === 'ready' && (
+        <div style={{
+          position: 'absolute', left: 16, right: 16, top: 12, zIndex: 3,
+          padding: '9px 12px', borderRadius: theme.radius.md,
+          background: theme.color.dangerSoft, color: theme.color.danger,
+          fontSize: theme.font.size.sm, pointerEvents: 'none',
+        }}>
+          Signal 入站桥接：{bridgeError}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const GRANT_REFRESH_MARGIN_MS = 60_000
 const MIN_GRANT_REFRESH_MS = 30_000
 
@@ -217,9 +770,12 @@ function nativeProxyStatus(error: unknown): number | null {
   return match ? Number(match[1]) : null
 }
 
-function WebviewPane({ accountId, src, visible }: {
+function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visible }: {
   accountId: string
+  platform: string
   src: string
+  bridgeEnabled: boolean
+  userAgent?: string
   visible: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
@@ -236,7 +792,7 @@ function WebviewPane({ accountId, src, visible }: {
       console.error(`[native-client:${accountId.slice(0, 8)}] 原生客户端页面加载超时`)
       setState('failed')
       setDetail(import.meta.env.DEV
-        ? '等了 20 秒还没加载出来。确认 telegram-tt 的开发服务器在跑（代码/telegram-tt 目录下 npm run dev），然后点右下角 ⌘ 看控制台'
+        ? '等了 20 秒还没加载出来。确认对应平台客户端和网络可用，然后点右下角 ⌘ 看控制台'
         : '等了 20 秒还没加载出来。检查网络或代理后重新打开应用')
       useStore.getState().setNativeBridgeConnection(accountId, 'failed', '原生客户端页面加载超时')
     }, READY_TIMEOUT_MS)
@@ -245,8 +801,79 @@ function WebviewPane({ accountId, src, visible }: {
 
   useEffect(() => {
     const el = ref.current
+    if (!el) return
+
+    if (!bridgeEnabled) {
+      let readyHandled = false
+      let originProbeTimer: ReturnType<typeof setInterval> | null = null
+      const onStartLoading = (): void => {
+        if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) {
+          setState('ready')
+          return
+        }
+        readyHandled = false
+        setState('loading')
+        setDetail('')
+        setControlError(null)
+      }
+      const onReady = (): void => {
+        if (readyHandled) return
+        const webview = el as unknown as NativeWebviewLoadProbe
+        try {
+          if (new URL(webview.getURL()).origin !== new URL(src).origin) {
+            throw new Error('unexpected origin')
+          }
+        } catch {
+          console.error(`[native-client:${accountId.slice(0, 8)}] 官方客户端来源校验失败`)
+          setState('failed')
+          setDetail('平台客户端跳转到了未授权页面，已停止加载')
+          return
+        }
+        readyHandled = true
+        if (originProbeTimer) clearInterval(originProbeTimer)
+        setState('ready')
+      }
+      const onFail = (e: Event): void => {
+        const err = e as Event & { errorCode?: number; errorDescription?: string; isMainFrame?: boolean }
+        if (err.isMainFrame === false) return
+        console.error(
+          `[native-client:${accountId.slice(0, 8)}] 官方客户端主页面加载失败，错误码 ${String(err.errorCode ?? 'unknown')}`,
+        )
+        setState('failed')
+        setDetail(`${err.errorDescription ?? '未知错误'}（${String(err.errorCode ?? '')}）`)
+      }
+      const onConsole = (e: Event): void => {
+        const message = e as Event & { level?: number }
+        if ((message.level ?? 0) >= 2) {
+          console.error(
+            `[native-client:${accountId.slice(0, 8)}]`,
+            'guest 报告 warning/error；请在开发构建中检查隔离控制台',
+          )
+        }
+      }
+      el.addEventListener('did-start-loading', onStartLoading)
+      el.addEventListener('dom-ready', onReady)
+      el.addEventListener('did-stop-loading', onReady)
+      el.addEventListener('did-fail-load', onFail)
+      el.addEventListener('console-message', onConsole)
+      // React effect 可能晚于 dom-ready，而 WhatsApp 的 isLoading 又可能长期不归零。
+      // 短轮询只负责 webContents + 精确 origin；DOM 兼容逻辑全部留在窄 preload。
+      originProbeTimer = setInterval(() => {
+        if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      }, 250)
+      if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      return () => {
+        if (originProbeTimer) clearInterval(originProbeTimer)
+        el.removeEventListener('did-start-loading', onStartLoading)
+        el.removeEventListener('dom-ready', onReady)
+        el.removeEventListener('did-stop-loading', onReady)
+        el.removeEventListener('did-fail-load', onFail)
+        el.removeEventListener('console-message', onConsole)
+      }
+    }
+
     const nativeControl = window.imHub?.nativeControl
-    if (!el || !nativeControl) {
+    if (!nativeControl) {
       setControlError('主进程账号控制桥接不可用')
       useStore.getState().setNativeBridgeConnection(accountId, 'failed', '主进程账号控制桥接不可用')
       return
@@ -256,6 +883,8 @@ function WebviewPane({ accountId, src, visible }: {
     let provisionGeneration = 0
     let readyHandled = false
     let hasUsableGrant = false
+    let observedIdentity: string | null = null
+    let originProbeTimer: ReturnType<typeof setInterval> | null = null
 
     const currentTarget = () => {
       const guestWebContentsId = guestWebContentsIdRef.current
@@ -264,7 +893,7 @@ function WebviewPane({ accountId, src, visible }: {
 
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
-      hasUsableGrant = control.expiresAt !== null && control.state !== 'blocked'
+      hasUsableGrant = nativeControlGrantIsUsable(control, Date.now())
       if (control.state === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
@@ -290,10 +919,13 @@ function WebviewPane({ accountId, src, visible }: {
 
     const provisionControl = createSingleFlight(async (): Promise<void> => {
       const target = currentTarget()
-      if (!target || disposed) return
+      if (!target || disposed || (platform === 'whatsapp' && !observedIdentity)) return
       const generation = ++provisionGeneration
       try {
-        const grant = await api.createNativeControlGrant(accountId)
+        const grant = await api.createNativeControlGrant(
+          accountId,
+          platform === 'whatsapp' ? observedIdentity ?? undefined : undefined,
+        )
         if (disposed || generation !== provisionGeneration) return
         const control = await nativeControl.configure(target, grant)
         if (disposed || generation !== provisionGeneration) return
@@ -321,6 +953,7 @@ function WebviewPane({ accountId, src, visible }: {
       setDetail('')
       setControlError(null)
       hasUsableGrant = false
+      observedIdentity = null
       lastContextRevisionRef.current = -1
       useStore.getState().setNativeAccountIdentity(accountId, null)
       useStore.getState().setNativeContext(accountId, null)
@@ -359,7 +992,7 @@ function WebviewPane({ accountId, src, visible }: {
     const onConsole = (e: Event): void => {
       const message = e as Event & { level?: number }
       if ((message.level ?? 0) >= 2) {
-        console.error(`[tg:${accountId.slice(0, 8)}]`, 'guest 报告 warning/error；请在开发构建中检查隔离控制台')
+        console.error(`[native-client:${accountId.slice(0, 8)}]`, 'guest 报告 warning/error；请在开发构建中检查隔离控制台')
       }
     }
 
@@ -374,17 +1007,26 @@ function WebviewPane({ accountId, src, visible }: {
     const handleEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
-        useStore.getState().setNativeBridgeConnection(accountId, 'waiting', '正在核对 Telegram 登录身份')
+        const connection = recoveredNativeBridgeConnection(platform, hasUsableGrant, observedIdentity)
+        useStore.getState().setNativeBridgeConnection(accountId, connection, connection === 'waiting'
+          ? `正在核对 ${PLATFORM_LABEL[platform] ?? platform} 登录身份`
+          : null)
         return
       }
       if (event.type === 'account.identity') {
+        observedIdentity = event.platformAccountExternalId
         useStore.getState().setNativeAccountIdentity(accountId, event.platformAccountExternalId)
         if (!hasUsableGrant) void provisionControl()
         return
       }
       if (event.type === 'account.signed-out') {
+        observedIdentity = null
         useStore.getState().setNativeAccountIdentity(accountId, null)
-        useStore.getState().setNativeBridgeConnection(accountId, 'failed', 'Telegram 账号已退出')
+        useStore.getState().setNativeBridgeConnection(
+          accountId,
+          'failed',
+          `${PLATFORM_LABEL[platform] ?? platform} 账号已退出`,
+        )
         return
       }
       if (event.type === 'command.result') {
@@ -393,6 +1035,15 @@ function WebviewPane({ accountId, src, visible }: {
       }
       if (event.type === 'bridge.error') {
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
+        return
+      }
+      if (event.type === 'outbox.status') {
+        useStore.getState().setNativeOutboxStatus(accountId, {
+          pendingCount: event.pendingCount,
+          deadLetterCount: event.deadLetterCount,
+          isSending: event.isSending,
+          lastErrorCode: event.lastErrorCode,
+        })
         return
       }
       if (event.type === 'context.changed') {
@@ -443,6 +1094,7 @@ function WebviewPane({ accountId, src, visible }: {
           event.platformConversationId,
           event.draft,
           event.canSend,
+          event.sendAttempt,
         )
         return
       }
@@ -490,7 +1142,12 @@ function WebviewPane({ accountId, src, visible }: {
       send: (_channel: string, command: unknown): Promise<void> => {
         const target = currentTarget()
         if (!target) return Promise.reject(new Error('原生客户端尚未登记'))
-        return nativeControl.sendCommand(target, command as NativeHostCommand)
+        const hostCommand = command as NativeHostCommand
+        // TranslationDock 位于宿主 renderer；用户点击按钮后原生焦点也停在宿主。
+        // 先聚焦当前 WhatsApp webview，再跨 IPC 交给主进程做第二次 focus 与授权校验。
+        // 这段 IPC 往返给 Chromium 留出提交 guest 原生焦点事件的时间。
+        if (nativeWebviewNeedsComposerFocus(platform, hostCommand)) el.focus()
+        return nativeControl.sendCommand(target, hostCommand)
       },
     }
     const unregisterTarget = registerNativeCommandTarget(accountId, commandTarget)
@@ -499,11 +1156,19 @@ function WebviewPane({ accountId, src, visible }: {
     el.addEventListener('did-stop-loading', onReady)
     el.addEventListener('did-fail-load', onFail)
     el.addEventListener('console-message', onConsole)
-    if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+    if (platform === 'whatsapp') {
+      originProbeTimer = setInterval(() => {
+        if (nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src)) onReady()
+      }, 250)
+    }
+    if (nativeWebviewAlreadyLoaded(el as unknown as NativeWebviewLoadProbe, src)
+      || (platform === 'whatsapp'
+        && nativeWebviewAtExpectedOrigin(el as unknown as NativeWebviewLoadProbe, src))) onReady()
     return () => {
       disposed = true
       provisionGeneration += 1
       if (grantRefreshTimer) clearTimeout(grantRefreshTimer)
+      if (originProbeTimer) clearInterval(originProbeTimer)
       const target = currentTarget()
       if (target) void nativeControl.release(target).catch(() => {})
       unregisterTarget()
@@ -515,7 +1180,7 @@ function WebviewPane({ accountId, src, visible }: {
       el.removeEventListener('did-fail-load', onFail)
       el.removeEventListener('console-message', onConsole)
     }
-  }, [accountId, src])
+  }, [accountId, bridgeEnabled, platform, src])
 
   function openDevTools(): void {
     const el = ref.current as unknown as { openDevTools?(): void } | null
@@ -564,7 +1229,8 @@ function WebviewPane({ accountId, src, visible }: {
         ref={ref as never}
         src={src}
         partition={`persist:native-${accountId}`}
-        preload={nativePreload}
+        preload={bridgeEnabled ? nativePreload : undefined}
+        useragent={userAgent}
         allowpopups
         style={{ width: '100%', height: '100%', border: 'none', display: 'inline-flex' }}
       />

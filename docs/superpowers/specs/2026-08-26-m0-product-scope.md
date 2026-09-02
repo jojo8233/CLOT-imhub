@@ -57,8 +57,10 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 1. 一级为平台：Telegram、Signal、WhatsApp；Zoom 未来出现。
 2. 二级只显示当前平台的账号。
 
-每个平台单独记住最后一次激活的账号。切换平台时恢复该平台上次使用的账号；账号
-进程或 webview 已建立后尽量常驻，只切换显示状态，避免反复登录、重载和丢失滚动位置。
+每个平台单独记住最后一次激活的账号。切换平台时恢复该平台上次使用的账号。对依赖原生页面
+观测平台 update 的路线，宿主恢复会话后必须预挂载当前 owner 的所有已支持账号；
+之后进程或 webview 常驻，只切换显示状态，避免未点开账号丢 update，也避免反复登录、
+重载和丢失滚动位置。这不放宽 owner/auditor 边界，权限收回时隐藏账号也必须立即卸载。
 
 平台账号的登录态、缓存目录、浏览器 partition 或客户端 profile 必须物理隔离，不能
 只依赖界面状态区分账号。
@@ -67,9 +69,9 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 
 | 平台 | 目标路线 | 当前基线 | 计划阶段 |
 |---|---|---|---|
-| Telegram | 补丁版 `telegram-tt` + Electron webview | 原生 webview 骨架与翻译补丁已有；消息回传未完成 | M3 |
-| Signal | 补丁版 Signal Desktop，以独立 profile 多开 | `signal-cli` 适配器可用；原生交付路线尚未完成 | M5 |
-| WhatsApp | 补丁版或受控网页客户端，以独立 partition 多开 | 只有平台类型预留 | M6 |
+| Telegram | 补丁版 `telegram-tt` + Electron webview | bridge/composer/outbox 与约定范围真实故障矩阵已完成；shadow 账本已接线，真实对账和切换门槛待完成 | M3 |
+| Signal | 补丁版 Signal Desktop，以独立 profile 多开 | `signal-cli` 适配器与统一会话 UI 作为首检点；真实关联/收发待验，原生交付路线尚未完成 | M5（与 M6 并行） |
+| WhatsApp | 官方 Web `web_shell` 仅保留原生页面；统一消息使用 Business Platform `cloud_api` | owner-only 隔离壳、登录与页面内原生收发首检已完成；Cloud API 仅预留模式，尚无授权、Webhook、翻译或中央回传 | M6（与 M5 并行） |
 | Zoom | 后续单独评估 Team Chat 官方能力 | 只有平台类型预留 | M8 |
 
 `packages/server/src/adapters/` 的现有适配器路线暂时保留。只有当对应原生客户端的
@@ -100,8 +102,8 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 | M2 | 原生客户端宿主、消息回传和当前会话桥接 |
 | M3 | Telegram 多开、翻译、媒体、回传和存档完整闭环 |
 | M4 | 团队、客户档案、关键词告警、审计日志和管理后台 |
-| M5 | Signal 原生多开与完整闭环 |
-| M6 | WhatsApp 原生多开与完整闭环 |
+| M5 | Signal 首检点与原生多开完整闭环；与 M6 并行推进 |
+| M6 | WhatsApp 官方 Web 隔离壳；另以 Business Platform Cloud API 完成统一消息闭环；与 M5 并行推进 |
 | M7 | 集成测试、安装包、更新、部署和正式交付 |
 | M8 | Zoom 未来接入 |
 

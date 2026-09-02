@@ -10,8 +10,9 @@
 - **pnpm**（本机验证用的是 10.x；没有的话 `corepack enable` 或 `npm i -g pnpm`）
 - **PostgreSQL 16**
 - **Redis**（BullMQ 翻译队列、翻译结果缓存都依赖它）
-- **signal-cli**（仅在验证现有 Signal 适配器时需要；命令位置可用
-  `SIGNAL_CLI_BINARY` 配置）
+- **Signal Desktop 8.25.0**（M5 当前用户可见入口；必须从官方 `.app` 生成独立的 im-hub
+  开发包，不能原地修改日常使用的 Signal）。`signal-cli 0.14.7 + Java 25` 只在验证后台
+  回退适配器时需要，不再负责桌面扫码、会话、图片或贴纸。
 
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
@@ -152,6 +153,145 @@ pnpm dev:desktop
 
 客户端有登录页（`components/LoginPage.tsx`），用第 4 节的任一演示账号登录即可；登录态经 Electron `safeStorage` 加密存盘，下次启动自动恢复。以 `agent@example.com` 登录看到的是 seed 建的那 1 个"TG 组内号"账号。桌面端连的服务端地址默认是 `http://localhost:4000`（见 `packages/desktop/src/preload/index.ts`，可用环境变量 `IM_HUB_SERVER_URL` 覆盖）。
 
+若桌面外壳先于服务端启动，bootstrap 会显示“正在自动重连”，并按 1/2/4/8 秒退避（此后保持
+8 秒）重新拉取会话、账号和会话列表；同一时刻只有一个重试。服务端恢复后不需要退出客户端。
+登出、用户切换或页面卸载会取消旧登录态的定时器，成功后退避归零。若持续失败，再检查 4000
+监听与 CORS；不要用反复重启平台客户端代替服务端诊断。
+
+Signal Desktop 首检点先准备独立开发包：
+
+```bash
+pnpm --filter @im-hub/desktop prepare:signal -- \
+  --source /Applications/Signal.app \
+  --output /private/tmp/Signal-imhub.app
+
+open -na /private/tmp/Signal-imhub.app
+```
+
+准备脚本当前只接受 Signal Desktop 8.25.0；上游版本变化导致补丁锚点不匹配时会明确失败，
+必须重新审阅补丁，不能跳过版本检查。脚本生成新的 `.app`，重新打包 `app.asar`、同步
+完整性 hash 并做本机开发签名，不覆盖 source。该包以 Signal Desktop 的 Electron 43
+作为基座，在同一物理窗口中加载 im-hub 外壳与 Signal `WebContentsView`。Signal 验收不要
+使用 `pnpm dev:desktop`；该命令仍是 Electron 33 的 Telegram/WhatsApp 普通开发壳。进入
+会话后在手机 Signal 的
+“设置 → 已关联设备 → 关联新设备”扫描原生窗口二维码。当前原型只允许一个 Signal Desktop
+原生账号；不要读取、复制、提交或在日志中打印 profile 内容、二维码链接、
+验证码与账号凭据。
+
+以账号 owner 登录 im-hub 后，在顶栏切到 Signal，点“+”并选择“创建并打开”。该请求会把
+账号登记为 `connection_mode=native_desktop`，由 Signal 基座进程托管同窗口 view；服务端不会
+调用 signal-cli，也不会把原生 profile 伪装成 `credentials_ref`。后台 signal-cli 账号继续
+保留 `connection_mode=adapter`，两条路线重启、重关联和删除时均按该字段隔离。
+
+仅在续接已经关联且 profile 已由隔离开发包自身固定的本机 checkpoint 时，可把旧开发包作为
+不透明 profile 配置来源；脚本不会解析或打印资料位置：
+
+```bash
+pnpm --filter @im-hub/desktop prepare:signal -- \
+  --source /Applications/Signal.app \
+  --output /private/tmp/Signal-imhub-next.app \
+  --profile-source /private/tmp/Signal-imhub-previous.app
+```
+
+首次运行新签名测试包时，macOS 可能询问读取 `Signal Safe Storage`；仅在确认路径是本次生成的
+本机测试包后授权。该模式仍只允许一个 Signal 账号，不能作为多账号发布配置。
+
+验证 Signal 入站 bridge 时，先启动服务端，再打开同窗口开发包；文字与持久 outbox 已有真实
+证据，不要重复三平台切换、原生发送矩阵或未 ACK 故障矩阵。图片/贴纸续验只需由另一个 Signal
+联系人向当前已登录账号各发送一条新的图片和贴纸。当前 bridge 处理 Signal 自身已持久化的
+入站文字、图片和贴纸；图片/贴纸只回传结构化元数据和稳定引用，不复制本机文件、路径、密钥或
+二进制。视频、音频和文件尚未接入；含不支持附件的消息会整条拒绝并显示
+非致命提示，不会落成只有 caption 的半条消息，也不会阻断下一条支持的消息。事件先按实际 Signal ACI
+写入专用 IndexedDB，再以同一 `eventId` 严格顺序重试到服务端 ACK；pending 和 dead-letter
+分别最多 1000 项，永久拒绝必须经明确的重试或清理操作处理。核验数据库时只查询新增行数和
+`platform_message_id` 重复数，并按 `media_refs.kind` 聚合图片/贴纸数量；不要读取正文、具体
+媒体引用、`raw`、账号 ACI 或 profile。自动化已覆盖 outbox
+对象重建后的同键重放；2026-08-30 也已用仅对 Signal 生效的隔离 503 地址完成真实未 ACK 消息
+跨 Signal 进程退出/重开的续收证据。后续除非改动这条链路，不要重复该故障矩阵，也不能用启动时
+pending=0 替代回归证据。
+
+2026-08-30 a18 已完成一次入站图片与贴纸真实续验：补发前原生 Signal 聚合为 3 行、图片 0、
+贴纸 0，补发后为 5 行、图片 1、贴纸 1；超过 10 秒 ACK 窗口后计数不变，非规范键、重复键组、
+不稳定媒体引用及禁止媒体字段均为 0。核验只读聚合，未读取正文、联系人、ACI、具体消息键或
+媒体引用。除非修改图片/贴纸归一化、outbox 或 ACK 链路，不要重复该真实矩阵。
+
+Signal 入站编辑、为所有人删除和普通回应已经通过真实续验；除非修改对应归一化、outbox 或 ACK
+链路，不要重复。a23 已完成当前会话同步、`composer.get-draft` / `composer.set-draft` 和可见原生
+草稿写入的真实续验；除非修改会话、可见编辑器或草稿持久化边界，不要重复。
+
+a24 在上述边界上增加翻译坞纯文字自动发送。它只在可见 CompositionInput 与 ConversationModel
+草稿完全相同，且没有附件、编辑、引用或 view-once 状态时开放。正文 fingerprint、首次
+`contextRevision` 与 `attemptId` 在 Signal guest 的持久账本中绑定；命令超时或结果丢失时再次点击
+必须沿用同一 attempt，不能重新翻译或生成新 attempt。只有 Signal 自身完成 outgoing 消息和 send
+job 持久化、并确认最终平台消息 ID 后，外壳才能显示成功并 ACK 清理账本；输入框清空、submit
+被调用或没有立即报错都不算成功。切会话、用户改稿和旧 revision 必须拒绝。账本不保存正文。
+
+当前 a24 已完成唯一一条无敏感纯文字续验：接收端精确收到一条，最终 ID 主链成功，但 ACK 前的
+已确认 attempt 状态回放让翻译坞误显示“操作失败”。消息没有失败或重复。a25 已把该短暂状态显式
+标记，并在 ACK 后的无 attempt 状态到达时清理；相关自动化、构建和签名均通过。按单条上限不要
+再发消息复验。a26 在 a25 基础上另补外壳 bootstrap 自动重连，不修改 Signal 发送协议；当前修正版
+为 `/private/tmp/Signal-imhub-integrated-a26.app`。仍不得读取或打印联系人 ACI、本地
+ConversationModel id、草稿正文、最终消息键、profile 或 token，也不要重做其他矩阵。
+
+若要单独验证后台 `signal-cli` 回退，再确认 `java -version` / `signal-cli --version`，按
+`.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
+再生成 CLI 二维码。
+
+WhatsApp Web 补丁模式不需要 Meta/Cloud 凭据：owner 创建的账号登记为
+`connection_mode=web_shell`，会话区域加载精确 `https://web.whatsapp.com`，二维码仍在页面内
+扫描，每个账号使用独立 Electron partition。页面登录后，窄 preload 从 WhatsApp 本地状态取得
+当前账号标识；服务端只允许 owner 首次绑定，后续身份不一致会撤销短时 control grant。账号标识、
+正文和 DOM message id 都不得写日志。DOM 控制器只在 context-isolated preload 内使用窄 bridge；
+原始 bridge、JWT、grant、`ipcRenderer`、Node 和外壳 API 不暴露给 WhatsApp 页面脚本。
+
+control grant 就绪后，preload 用多组 `role` / `data-testid` / `.message-in` / `.message-out` 锚点扫描
+当前最多 300 个可见纯文字气泡，通过现有 im-hub 翻译网关按“中文译英文、其他语言译中文”插入
+译文。打开会话时会处理已存在的可见消息；滚动加载、收到新消息或正文变化会由
+`MutationObserver` 继续处理。单条失败显示“翻译暂不可用 · 点击重试”，不能静默丢失。正文只在
+页面内存和翻译请求中存在，WhatsApp Web attempt 账本不保存正文。
+
+固定翻译坞会把译文写进当前 WhatsApp contenteditable；写入前后都复核当前会话。发送前先在该
+partition 的独立 IndexedDB 保存 `attemptId`、首次 context revision、正文 SHA-256 和会话键，再
+点击页面原生发送按钮。只有观察到一条正文匹配、发送前不存在且带真实 `data-id` 的新出站 DOM
+消息后才报告成功；超时、结果丢失或进程重启后的 pending attempt 都禁止自动再点一次。成功由
+外壳 ACK 后删除账本记录。当前兼容层只提供可见纯文字双语和翻译坞发送，不把 DOM 消息回传为
+中央归档，也不承诺媒体、回应、删除或 WhatsApp 页面选择器的长期稳定性。历史
+`connection_mode=adapter` 账号保留原值，但页面身份绑定与补丁 bridge 按 `web_shell` 同等处理；
+不要为了启用补丁批量改写或删除账号。
+
+若页面没有出现，先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
+启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确
+WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽其他 guest 权限。若官方
+页面已经完整但 im-hub 显示自己的“等了 20 秒”遮罩，检查页面附着判定是否错误依赖
+`webview.isLoading()`；WhatsApp 登录后该标志可能长期为 `true`，应按已附着的精确 origin
+显示页面，同时由 preload 继续核对身份、会话与 composer，并用 `did-fail-load` 处理真实主框架错误。
+
+WhatsApp 统一消息链使用独立的 Business Platform `cloud_api` 路线。代码已接入 Meta Embedded
+Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 attempt/状态账本与 im-hub
+自有双语会话视图；默认仍关闭。`web_shell` 的 DOM 双语不等于 Cloud API 的可信 Webhook、中央归档
+和官方消息状态能力。启用 Cloud API 前按以下顺序准备：
+
+1. 在 Meta Business/Developer 中准备应用、业务资质与 Embedded Signup configuration；给服务端
+   准备一个公开 HTTPS origin。Webhook callback 固定为
+   `${WHATSAPP_PUBLIC_BASE_URL}/api/webhooks/whatsapp`，验证值使用私下配置的
+   `WHATSAPP_WEBHOOK_VERIFY_TOKEN`，并订阅 WhatsApp `messages` 字段。
+2. 只在服务器本机填写 `.env.example` 已列出的 `WHATSAPP_*` 变量；不要把值粘贴到工单、聊天、
+   日志或 renderer。`WHATSAPP_SECRET_MASTER_KEY` 用 `openssl rand -base64 32` 生成。确认 URL、应用
+   和 secret 均就绪后才设 `WHATSAPP_CLOUD_ENABLED=true`。
+3. 执行 `pnpm db:migrate` 后重启服务端。owner 在“添加 WhatsApp 账号”中选择 Cloud API；桌面端只
+   打开公开 HTTPS onboarding 页面，一次性 ticket 走 URL fragment 并立即清除，Meta code 在同源
+   服务端交换。access token 只以 AES-256-GCM 密文保存，账号行只存 secret reference。
+4. WABA id、phone-number id 会由服务端调用 Graph API 复核并订阅 Webhook。入站纯文字直接使用
+   Webhook `messages[].id` 进入中央消息/翻译管线；中文译英文，其余语言译中文，然后在 Cloud API
+   自有会话视图中显示原文与译文。媒体目前只做安全忽略和聚合告警，不能当成已接入。
+5. 出站必须带 `attemptId`，账本绑定账号、会话、员工、目标、正文 SHA-256 与授权 revision；只有
+   Graph API 返回最终 `messages[].id` 后才报告成功。超时、响应丢失、2xx 缺少最终 ID 或进程重启
+   后都不得自动换 attempt 重发，结果保持未知并等待人工对账；禁止套用 Telegram 或 Signal ID 算法。
+
+在真实 Meta 配置完成前不要重启当前服务端来“试开” Cloud API：缺少任何必需变量都会被配置
+校验明确拒绝。第一次真实续验最多使用一条无敏感纯文字，先验证签名 Webhook、唯一落库、双语
+显示和最终平台 ID，再另行扩大媒体或模板消息范围。
+
 ---
 
 ## 3. 日常命令
@@ -230,6 +370,9 @@ Telegram：
 > 适配器不再调 tdl 的 `login()`（它会从 stdin 读手机号，没有 TTY 时永久挂起），
 > 改成自己驱动鉴权状态机，二维码经 WebSocket 推给发起人。
 - [ ] 账号状态从 `pending_auth` 变成 `connected`（可以 `select status from accounts;` 确认）
+- [ ] 若「重新关联」一直停在“正在生成二维码”，先确认服务端已包含初始 authorization
+      state 补读修复，再重启服务端、刷新一次 im-hub 宿主并重新关联一次。不要通过删除账号、
+      清理 TDLib 数据目录或清理 native partition 来刷新二维码。
 - [ ] 找一个真实 Telegram 联系人发一条消息给这个号，确认消息出现在 `messages` 表里、且能在客户端会话列表里看到
 - [ ] 在客户端里回一条消息，确认对方 Telegram 能收到
 
@@ -240,6 +383,12 @@ Telegram：
 - [ ] 收到一条外语消息后，观察 BullMQ worker 日志里有没有报错
 - [ ] 确认 `message_translations` 表里出现了对应记录（`select * from message_translations order by created_at desc limit 5;`）
 - [ ] 客户端界面上"翻译中…"变成实际译文
+- [ ] Signal 收到英文文字时，同一原生气泡显示英文原文和中文译文；收到中文文字时显示中文原文和英文译文
+- [x] Signal 当前会话中本账号发出的纯文字也显示中英双语；重开或切入会话后最近 200 条历史纯文字出站可回填
+- [ ] 编辑入站文字后旧译文立即消失，只有新 revision 的译文可以重新出现；重开 Signal 后由中央快照恢复
+- [ ] WhatsApp `web_shell` 登录后，当前可见的既有及新纯文字气泡按中英文方向显示译文；滚动加载后也会补译，选择器失效必须出现可见错误
+- [ ] WhatsApp 翻译坞只在新出站 DOM `data-id` 确认后显示成功；制造结果未知时相同 attempt 不得重复点击发送
+- [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
 
 ---
@@ -258,8 +407,16 @@ Telegram：
 4. **完成剩余 M3 一致性门槛**：M3-1 已加入 TDLib/fork 统一 Telegram 消息键、Bridge v2
    与 `0005` 迁移；M3-2 已移除 guest JWT，加入五分钟 control grant、Telegram self id
    绑定及退出/删除分区清理；M3-3 已接通 chat/topic context、原生 Composer 和稳定发送
-   attempt。上线前仍要完成 message outbox，并用真实账号 fixture/shadow 对账确认迁移、媒体、
-   超时重试和多账号隔离。这些完成前仍不能作为生产闭环。
+   attempt；M3-4 已实现 IndexedDB message outbox、ACK/退避、dead-letter、运行指标，以及按当前
+   账号重试/明确清理 dead-letter 的恢复操作。刷新、进程终止、ACK 丢失、断网恢复、私密频道文本/
+   编辑/删除、图片、文件和满容量恢复已有分级证据；第一次真实回复暴露并修复了页面重启后 local id
+   复用造成的 temp remap 碰撞，第二次真实回复已完成冷启动平台与数据库闭环。两个真实账号的
+   partition 隔离也已通过现有真实消息的确定性 base upsert 重放覆盖：服务端停机时两边同时各为
+   `pending=1/dead=0`，恢复后各自收敛为 `0/0`，中央库无新增副本。语音按用户决定跳过；上线前仍要
+   取得正式 7 天观察与 canary 证据。M3-5 已增加 `tdlib` / `telegram-tt` 来源观测账本、
+   语义指纹和带静默窗口的对账报告；双真实账号的 base/delete/edit/media/reply、受限 coverage、
+   当前快照主动读取、逐账号 shadow-only 开关和精确回滚通道均已实现并完成当前开发态证据。
+   生产 7 天 active 观察与分级 canary 尚未执行；这些完成前仍不能作为生产闭环。
 
 ---
 
@@ -267,19 +424,182 @@ Telegram：
 
 P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的地方：
 
-- **两条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
+- **多条接入路线并存**：Telegram 的 TDLib 适配器与 Signal 的 signal-cli 适配器
   仍作为后台归档/回退链路；用户可见的会话界面只保留原生入口，Telegram webview
-  已进入开发态。Signal 原生路线计划 M5，WhatsApp
-  计划 M6，Zoom 延后到 M8。M3-3 已接通 Telegram context/composer 事件，但消息 outbox、
-  真实账号验收和安装包分发仍未完成，不能当成已上线能力。
-- **Composer 已接线、消息回传未完成**：telegram-tt 已发 `bridge.ready/account.identity`、
+  已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
+  同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站文字 bridge
+  已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
+  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp `web_shell` 已按用户确认的
+  TranGPT 式模式加入 owner-only 身份绑定、可见纯文字 DOM 双语、当前会话/草稿桥接和发送 attempt
+  账本；它仍不是稳定消息协议，也没有中央 DOM 消息归档。独立 `cloud_api` 已完成授权、Webhook、
+  纯文字收发账本和自有双语视图的代码与自动化，但尚未配置真实 Meta 应用和公开 HTTPS 回调。
+  Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
+  入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
+  通过真实客户端续验。纯文字自动发送的真实单条送达与最终 ID 主链已通过；a24 的成功态 UI 竞态
+  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp Cloud API 尚无真实授权、
+  Webhook 回调和单条消息证据，不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp
+  Business Platform 闭环仍待后续，Zoom
+  延后到 M8。
+  M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
+  约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。
+- **Composer 与消息回传已完成约定范围真实验收，生产闭环仍有后续门槛**：telegram-tt 已发
+  `bridge.ready/account.identity`、
   `context.changed`、`composer.state` 和 command result；TranslationDock 可驱动原生 rich editor
-  与发送 attempt。telegram-tt 仍不发 message upsert/edit/delete outbox，所以右栏长期存档与
-  shadow 对账仍依赖后续 M3，不是完整消息闭环。
-- **当前没有双路消息重复，canonical 基础已就位但 shadow 尚未开始**：telegram-tt
-  尚未回传事件，所以 TDLib 与原生链路还不会同时落库。M3-1 已统一
-  `chatId:serverMessageId`、临时命名空间和 `0005` 迁移；必须再完成真实 fixture 与
-  shadow 对账，才能确认历史数据和两条实时链路没有重复。
+  与发送 attempt。telegram-tt 也会把 upsert/edit/delete/remap 先写 IndexedDB，再按 ACK
+  可靠回传，并可按当前账号重试或经确认清除 dead-letter。断网、刷新、Electron 强制终止、ACK
+  丢失、私密频道文本/编辑/删除、图片和文件已有证据；第一次真实回复已定位为 telegram-tt 页面
+  重启后 local id 复用造成的 temp remap 碰撞，新 temp 键加入页面实例命名空间后，第二次真实回复
+  已从冷启动完成 final/reply preview、唯一落库和 outbox 无积压/错误提示闭环。语音按用户决定
+  跳过；服务端把中央库缺失的 delete/remap 生命周期重放作为幂等 no-op 接受，避免历史孤儿事件
+  永久阻塞账号 outbox。两个真实账号已用各自真实消息完成同时积压、恢复收敛和数据库无副本增长
+  的 partition 验收；完整生产闭环仍受后续 fixture/shadow 对账与安装包分发约束。
+  收尾出现的裸 `SESSION_REVOKED` 已定位为非主 DC 文件 sender 超时复用主会话错误文案，且普通
+  Error 没有进入只识别 `RPCError` 的清理/重试分支。telegram-tt `77788bd` 使用独立内部超时类型，
+  重试耗尽后收敛为 `USER_CANCELED`，真实主连接 broken 语义保持不变；修复后只读冷启动与旧 60 秒
+  窗口验证通过。旧媒体 exported sender 返回 `AUTH_KEY_UNREGISTERED` 时原先没有进入相同恢复集合，
+  会被开发态全局 error handler 显示成周期弹窗；telegram-tt `cc28648` 现在会有界清理并重新借用
+  sender，真正主连接的失效处理仍不变。主 DC 渐进媒体分片的 60 秒取消信号还可能经 method
+  response 漏到窗口级错误处理，形成 `USER_CANCELED undefined` 弹窗；telegram-tt `aebe8e1` 在
+  `requestPart` 媒体层精准收敛该取消信号，并以同一忽略集合为窗口全局处理兜底，其他错误继续
+  上报。类型检查、12 文件 134 tests 和双账户跨 60 秒/约 8 分钟媒体窗口均通过。
+- **双来源 base upsert 已有真实证据，完整 shadow 门槛仍未完成**：TDLib 与 telegram-tt 现在都可能
+  向同一账号落消息。M3-1 已统一 `chatId:serverMessageId`、临时命名空间和 `0005` 迁移，服务端
+  也按规范键幂等处理。`0007_telegram_shadow_observations` 对两条链路的 upsert/delete/remap
+  保存不含正文与 raw 的语义指纹，同源重放不会制造新事实。运行下列只读报告：
+
+  ```bash
+  pnpm --filter @im-hub/server shadow-report <account-uuid> 24 120
+  ```
+
+  最后两个参数分别是观察小时数和静默秒数。`total` 包含全部账本事实，
+  `comparableTotal` 排除客户端专属 temp upsert/remap；报告给出 `matched` / `mismatched` /
+  `tdlibOnly` / `telegramTtOnly` / `sourceLocal`、事件类型分组和有上限的 fact key 样本，
+  不输出正文或账号平台身份。最终数字消息 id 不能归为 `sourceLocal`。双真实账号上的
+  接收/发送最终 base upsert 已 matched，且 outbox 无 pending/dead。TDLib `updateDeleteMessages`
+  观测已接线，并忽略 `from_cache=true` 的纯缓存淘汰。真实三条 S2 delete 在发送
+  分区 matched，但接收账号的 webview 在删除时尚未创建，因此三条均为 TDLib-only；事后
+  打开只能加载最终状态，不伪造历史 delete。宿主现会在恢复会话后预挂载当前 owner
+  的全部已支持账号，隐藏 pane 继续使用独立 partition/control grant/outbox 接收 update。
+  单个 S3 shadow 专用探针已在接收 pane 保持隐藏时验证发送/接收的 base 与 delete
+  全部 matched，两个 outbox 均为 `0/0`。TDLib 编辑现从 `updateMessageContent` 后的完整
+  消息快照取得正文和 `edit_date`；shadow 编辑事实统一使用两 SDK 都有的 `editedAt`，
+  telegram-tt 的 `pts` 只保留作消息/翻译单调排序，不进入跨来源指纹。自动回归已通过，
+  单个 S4 真实探针已按“发送一次、编辑同一条一次”完成：两账号各一条中央消息，base/edit
+  均 matched，正式 120 秒报告无 mismatch 或同源冲突；接收侧三个 TDLib-only delete 仍是
+  S2 预挂载修复前的已解释历史缺口。用户切换两账号核对输入坞后均无 pending/dead-letter
+  非零提示，两个 outbox 为 `0/0`。TDLib 归一化现也覆盖基础图片/视频/音频/语音/文件/
+  贴纸及同会话回复；照片/贴纸不引入另一 SDK 缺失的大小，telegram-tt 依据远端 id 自动生成
+  的展示文件名不进入指纹，真实文件名仍比较。新口径的 24 小时报告为：发送端
+  `total=26 / comparableTotal=12 / matched=11 / telegramTtOnly=1 / sourceLocal=14`，唯一可比
+  单边事实是 TDLib 尚为 `pending_auth` 时的 S1 历史发送；接收端
+  `total=12 / comparableTotal=12 / matched=9 / tdlibOnly=3`，三项仍是 S2 预挂载前删除缺口。
+  两端均为 `mismatched=0 / unstable=0`。此后 S5 组合探针继续取得媒体+回复真实 shadow 证据。
+  S5 已只发送一次：回复保留的 S4，附一张图片并使用专用 caption。两账号中央库各一条
+  image/caption/reply 最终行；接收端 base 两来源同 hash。发送端两来源均到达但首次 hash
+  不同，字段级只读诊断唯一命中 telegram-tt 的 `sentAt` 比 TDLib 早 3 秒：前者定格开始上传
+  的本地时间，后者是平台接受媒体后的服务端时间。shadow 现只对出向媒体排除该上传耗时，
+  入向媒体和文本仍严格比较时间，`editedAt` 仍进入 revision/指纹。回归与全量测试已覆盖；
+  跨过 120 秒后的旧算法报告中，发送端该 base 是唯一新增 mismatch，接收端该 base matched；
+  无同源冲突。既有 base 不改写，作为算法发现证据保留。
+  用户随后只把同一条 S5 caption 编辑一次；两账号仍各一条 image+reply 消息，旧 caption
+  计数归零，新的 edited-at fact 均为两来源同 hash、无冲突。接收端 telegram-tt 在约 60 秒
+  后到达，仍在 120 秒静默窗口内正常收敛。正式报告中，发送端为
+  `total=30 / comparableTotal=14 / matched=12 / mismatched=1 / telegramTtOnly=1 /
+  sourceLocal=16 / unstable=0`，mismatch 仅是修正前 S5 base，单边仅是 S1 历史缺口；
+  接收端为 `total=14 / comparableTotal=14 / matched=11 / tdlibOnly=3 / mismatched=0 /
+  unstable=0`，三个单边仍是 S2 历史 delete。用户随后逐一切换两个账户，输入坞均无
+  pending/dead-letter 非零提示，对应两个 outbox `pending=0 / dead=0`。S5 的媒体+回复
+  checkpoint 已关闭；之后进入受限历史扫描、主动修复边界和观察周期。
+  受限历史 coverage dry-run 现使用：
+
+  ```bash
+  pnpm --filter @im-hub/server shadow-coverage \
+    <account-uuid> <sent-after-iso> <sent-before-iso> [limit] [conversation-uuid|-] [cursor]
+  ```
+
+  该命令只读中央消息与 shadow 账本，不拉 Telegram 历史、不启动额外 TDLib client，也不写
+  数据库。账号必填；可选会话 UUID 必须属于该账号；半开时间窗最多 31 天；单页 1～500，
+  下一页使用返回的 scope-bound keyset cursor。`preObservation` 表示事件早于该账号最早
+  shadow 观测，不是当前缺口；`coverageUnavailable` 表示账号没有可用基线；`sourceLocal`
+  表示 temp 生命周期；只有较新的无事实项才是 `missing`。`currentSnapshotFetchable` 只是
+  后续可重新读取当前平台快照的候选，不能拿中央库行伪造缺失来源；历史 delete 和已被 edit
+  覆盖的 base 不可恢复。双真实账号首次全窗 dry-run 均为 `missing=0`，其余差异与正式报告
+  中已解释的 S1/S2/S5 证据完全一致。
+
+  当前快照主动读取走 owner-only API，默认仍是 dry-run；单页上限收紧为 10：
+
+  ```text
+  POST /api/accounts/<account-uuid>/telegram-shadow-refresh
+  {
+    "mode": "refresh_tdlib",
+    "confirm": "REFRESH_TDLIB_SHADOW",
+    "sentAfter": "<ISO-time>",
+    "sentBefore": "<ISO-time>",
+    "limit": 10,
+    "conversationId": "<optional-conversation-uuid>",
+    "cursor": "<optional-cursor-from-dry-run>"
+  }
+  ```
+
+  执行前必须先用相同请求范围的 `mode=dry_run` 查看候选。服务端只会选
+  `telegramTtOnly`/`missing` 且 `currentSnapshotFetchable` 的最终消息，复用当前已连接 TDLib
+  client 精确调用 `getMessage`；不会遍历历史或启动第二 session。请求要求 owner、账号
+  connected、固定确认串；manager 不能操作下属账号，auditor 不能执行。单次最多 10 条、
+  单条 5 秒、同账号禁止并发。响应必须核对 before/after 和
+  `requested/found/recorded/unavailable/unsupported/failed`；任何 failed 都不能进入切换证据。
+  S1 的首次真实主动读取已从唯一 `telegramTtOnly` 收敛为 matched，中央 24 条消息及其
+  edit/delete/media/reply 聚合未变化；S5 旧算法 mismatch 仍保留。观察周期、切换和回滚门槛
+  已在下节固定；正式 7 天观察与 canary 证据仍未完成。
+
+### Telegram TDLib 逐账号 shadow-only 灰度与回滚
+
+默认不切换任何账号：
+
+```text
+TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS=
+```
+
+只有满足下述门槛后，才把一个内部 Telegram 账号 UUID 加入逗号分隔 allowlist 并重启服务。
+不要使用平台外部 id，不要一次加入全部账号。启动日志只报告灰度账号数量，不输出 UUID。灰度
+账号的 TDLib 仍保持 connected，并继续记录真实 upsert/edit/delete/remap shadow 事实；但中央
+消息投影只由 telegram-tt 更新。清空或移除 UUID 并重启即恢复该账号 TDLib 后续中央入库。
+
+进入 canary 前必须从当前版本发布时刻起连续观察 7 天，至少 2 个账号、累计至少 100 个可比
+事实，并自然覆盖 base/edit/delete/media/reply。每次报告等待 120 秒静默窗口，要求：
+
+- `matched/comparable=100%`；`mismatched/tdlibOnly/telegramTtOnly/unstable=0`；
+- coverage `missing=0 / coverageUnavailable=0`，TDLib refresh candidate 与 failed 均为 0；
+- telegram-tt outbox `dead=0`，没有超过 5 分钟的 pending；
+- 账号 connected，webview control grant 有效。
+
+`preObservation`、`sourceLocal` 和观察窗外已解释的历史事实不进分母。放量依次为：单账号
+24 小时、最多 10% 账号 72 小时、50% 账号 72 小时、100% 账号 7 天；每级重新计时。任一已
+静默单边/不一致、coverage 缺口、dead-letter、超时 pending、control grant 丢失或非 connected
+立即回滚 cohort。
+
+回滚步骤：
+
+1. 从 `TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS` 移除受影响 UUID并重启；先恢复 TDLib 后续中央入库。
+2. 固定灰度起止时间，运行正式 shadow report 和全页 coverage；不要发送新探针补历史。
+3. 只对报告中最终 canonical 的 `tdlib_only` upsert id 分批调用：
+
+   ```text
+   POST /api/accounts/<account-uuid>/telegram-shadow-refresh
+   {
+     "mode": "rollback_tdlib",
+     "confirm": "ROLLBACK_TDLIB_INGEST",
+     "platformMessageIds": ["<canonical-chat-id:message-id>"],
+     "sentAfter": "<canary-start-ISO>",
+     "sentBefore": "<rollback-ISO>",
+     "limit": 10
+   }
+   ```
+
+   请求仍要求 owner、connected Telegram 账号；每批 1～10 个去重后的最终 id，只精确
+   `getMessage`，不遍历历史。
+4. `unavailable/unsupported/failed` 任一非零立即停止。delete 或被覆盖的历史 edit/base 不可由
+   当前快照证明，不得倒填；转人工事件调查。恢复后另开新的 active 观察窗，旧事实保留。
+  在此之前不能退出 TDLib，也不能宣称双来源安全。
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。

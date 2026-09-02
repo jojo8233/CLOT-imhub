@@ -1,4 +1,10 @@
 import type { NormalizedMessage } from '@im-hub/shared'
+import {
+  normalizeSignalPersonId,
+  signalDirectConversationId,
+  signalGroupConversationId,
+  signalMessageKey,
+} from '@im-hub/shared'
 
 /**
  * signal-cli 的 receive 通知归一化。
@@ -63,17 +69,22 @@ export const DIRECT_PREFIX = 'u:'
 export const GROUP_PREFIX = 'g:'
 
 export function directConversationId(recipient: string): string {
-  return `${DIRECT_PREFIX}${recipient}`
+  return signalDirectConversationId(recipient)
 }
 
 export function groupConversationId(groupId: string): string {
-  return `${GROUP_PREFIX}${groupId}`
+  return signalGroupConversationId(groupId)
 }
 
 /** UUID 比号码稳定：Signal 允许隐藏手机号，号码可能缺失或改变，UUID 不会。 */
 function personId(uuid: string | null | undefined, number: string | null | undefined, fallback?: string): string | null {
   const id = uuid ?? number ?? fallback ?? null
-  return id !== null && id !== '' ? id : null
+  if (id === null || id === '') return null
+  try {
+    return normalizeSignalPersonId(id)
+  } catch {
+    return null
+  }
 }
 
 function mediaOf(attachments: SignalAttachment[] | undefined): NormalizedMessage['mediaRefs'] {
@@ -138,7 +149,7 @@ export function normalizeSignalMessage(
       platform: 'signal',
       accountId,
       platformConversationId: groupId ? groupConversationId(groupId) : directConversationId(target!),
-      platformMessageId: `${self}:${timestamp}`,
+      platformMessageId: signalMessageKey(self, timestamp),
       direction: 'out',
       senderExternalId: self,
       senderDisplayName: envelope.sourceName ?? null,
@@ -163,7 +174,7 @@ export function normalizeSignalMessage(
       platform: 'signal',
       accountId,
       platformConversationId: groupId ? groupConversationId(groupId) : directConversationId(senderExternalId),
-      platformMessageId: `${senderExternalId}:${timestamp}`,
+      platformMessageId: signalMessageKey(senderExternalId, timestamp),
       direction: 'in',
       senderExternalId,
       senderDisplayName: envelope.sourceName ?? null,

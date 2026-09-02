@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { MIN, clampWidths, defaultWidths, visiblePanels } from './layout.js'
+import {
+  MIN,
+  clampWidths,
+  defaultWidths,
+  showsNativeTranslationDock,
+  usesCloudConversationWorkspace,
+  visiblePanels,
+} from './layout.js'
 
 /** 三栏刚好都能按最小宽度放下的可用宽度 */
 const TIGHT = MIN.list + MIN.chat + MIN.customer
@@ -65,5 +72,22 @@ describe('visiblePanels', () => {
 
   it('连会话列表都放不下时两栏全收', () => {
     expect(visiblePanels(MIN.list + MIN.chat - 1)).toEqual({ list: false, customer: false })
+  })
+})
+
+describe('showsNativeTranslationDock', () => {
+  it('Telegram、Signal 与 WhatsApp Web 补丁客户端都显示翻译坞', () => {
+    expect(showsNativeTranslationDock('telegram')).toBe(true)
+    expect(showsNativeTranslationDock('signal')).toBe(true)
+    expect(showsNativeTranslationDock('whatsapp')).toBe(true)
+  })
+})
+
+describe('usesCloudConversationWorkspace', () => {
+  it('只有 WhatsApp cloud_api 使用 im-hub 自有双语会话视图', () => {
+    expect(usesCloudConversationWorkspace({ platform: 'whatsapp', connection_mode: 'cloud_api' })).toBe(true)
+    expect(usesCloudConversationWorkspace({ platform: 'whatsapp', connection_mode: 'web_shell' })).toBe(false)
+    expect(usesCloudConversationWorkspace({ platform: 'signal', connection_mode: 'native_desktop' })).toBe(false)
+    expect(usesCloudConversationWorkspace(undefined)).toBe(false)
   })
 })

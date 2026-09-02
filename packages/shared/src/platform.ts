@@ -8,4 +8,22 @@ export type AccountStatus =
   | 'disconnected'
   | 'degraded'
 
+/**
+ * 平台账号由哪条运行链路接管。
+ *
+ * adapter 是既有服务端适配器；native_desktop 是由 im-hub 桌面主进程托管的原生客户端；
+ * web_shell 承载 owner-only 的 WhatsApp Web partition；当前产品决策允许在精确 origin
+ * 注入受控 DOM/翻译 bridge。cloud_api 则是独立的 WhatsApp Business Platform 官方 API 路线。
+ *
+ * 这不能从 credentials_ref 推断：原生客户端 profile 与网页 partition 都不属于服务端凭据，
+ * Cloud API 也只能保存服务端 secret reference，不能把 token 放进这个字段。
+ */
+export const ACCOUNT_CONNECTION_MODES = [
+  'adapter',
+  'native_desktop',
+  'web_shell',
+  'cloud_api',
+] as const
+export type AccountConnectionMode = (typeof ACCOUNT_CONNECTION_MODES)[number]
+
 export type Direction = 'in' | 'out'

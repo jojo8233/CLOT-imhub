@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { api, NetworkError } from '../api/client.js'
+import { api, NetworkError, type WhatsAppOnboardingStatus } from '../api/client.js'
 import type { ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
@@ -9,11 +9,12 @@ import { Chip, PlatformIcon } from './ui.js'
 /** 各平台目前的接入程度。写在这里而不是散在文案里，将来接完一个改一行。 */
 const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
   { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
-  { key: 'signal', blurb: '关联为次要设备，手机仍是主设备', ready: true },
-  { key: 'whatsapp', blurb: '需要网页版壳 + 扫码登录', ready: false },
+  { key: 'signal', blurb: '使用 Signal Desktop 关联，图片和贴纸保持原生能力', ready: true },
+  { key: 'whatsapp', blurb: 'Web 补丁双语；Cloud API 统一会话', ready: true },
 ]
 
-type Step = 'pick' | 'linking'
+type Step = 'pick' | 'linking' | 'cloud'
+type WhatsAppMode = 'web_shell' | 'cloud_api'
 
 interface RelinkAccount {
   id: string
@@ -40,11 +41,18 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   const [linkingPlatform, setLinkingPlatform] = useState<ChatPlatform>(initialPlatform)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [whatsAppMode, setWhatsAppMode] = useState<WhatsAppMode>('web_shell')
+  const [cloudSessionId, setCloudSessionId] = useState<string | null>(null)
+  const [cloudExpiresAt, setCloudExpiresAt] = useState<string | null>(null)
+  const [cloudStatus, setCloudStatus] = useState<WhatsAppOnboardingStatus['state']>('pending')
+  const [cloudAvailable, setCloudAvailable] = useState<boolean | null>(null)
 
   const challenge = useStore(s => s.authChallenge)
   const done = useStore(s => s.authDone)
   const clearAuth = useStore(s => s.clearAuth)
   const setAccounts = useStore(s => s.setAccounts)
+  const setActivePlatform = useStore(s => s.setActivePlatform)
+  const setActiveAccount = useStore(s => s.setActiveAccount)
 
   // 只认自己刚建的这个账号的事件：同一个人可能在别处也在关联另一个账号
   const mine = accountId !== null && challenge?.accountId === accountId ? challenge : null
@@ -53,17 +61,106 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   // 关掉弹窗时把挑战状态清掉，否则下次打开会闪一下上一轮的二维码
   useEffect(() => () => { clearAuth() }, [clearAuth])
 
+  useEffect(() => {
+    if (platform !== 'whatsapp' || step !== 'pick') return
+    let active = true
+    void api.getWhatsAppCloudConfig().then(() => {
+      if (active) setCloudAvailable(true)
+    }).catch(() => {
+      if (active) {
+        setCloudAvailable(false)
+        setWhatsAppMode('web_shell')
+      }
+    })
+    return () => { active = false }
+  }, [platform, step])
+
+  useEffect(() => {
+    if (step !== 'cloud' || !cloudSessionId || !cloudExpiresAt) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const poll = async (): Promise<void> => {
+      if (stopped) return
+      if (Date.now() >= new Date(cloudExpiresAt).getTime()) {
+        setCloudStatus('failed')
+        setError('关联票据已过期，请关闭后重新发起')
+        return
+      }
+      try {
+        const status = await api.getWhatsAppCloudOnboarding(cloudSessionId)
+        if (stopped) return
+        setCloudStatus(status.state)
+        if (status.state === 'completed' && status.accountId) {
+          const accounts = (await api.listAccounts()).accounts
+          if (stopped) return
+          setAccounts(accounts)
+          setActivePlatform('whatsapp')
+          setActiveAccount(status.accountId)
+          return
+        }
+        if (status.state === 'failed') {
+          setError('Meta 授权确认失败，请关闭后重新发起')
+          return
+        }
+      } catch (e) {
+        if (!stopped && !(e instanceof NetworkError)) {
+          setError(e instanceof Error ? e.message : '查询关联状态失败')
+          return
+        }
+      }
+      if (!stopped) timer = setTimeout(() => { void poll() }, 1500)
+    }
+    void poll()
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [
+    cloudExpiresAt,
+    cloudSessionId,
+    setAccounts,
+    setActiveAccount,
+    setActivePlatform,
+    step,
+  ])
+
   async function handleCreate(): Promise<void> {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
-      const account = await api.createAccount({ platform, displayName: name.trim() })
+      if (platform === 'whatsapp' && whatsAppMode === 'cloud_api') {
+        if (cloudAvailable !== true) throw new Error('服务端尚未配置 WhatsApp Cloud API')
+        const external = window.imHub?.external
+        if (!external) throw new Error('当前桌面宿主不能安全打开 Meta 关联页面')
+        const session = await api.startWhatsAppCloudOnboarding(name.trim())
+        await external.open(session.url)
+        setCloudSessionId(session.sessionId)
+        setCloudExpiresAt(session.expiresAt)
+        setCloudStatus('pending')
+        setLinkingPlatform('whatsapp')
+        setStep('cloud')
+        return
+      }
+      const account = await api.createAccount({
+        platform,
+        displayName: name.trim(),
+        connectionMode: platform === 'signal'
+          ? 'native_desktop'
+          : platform === 'whatsapp'
+            ? 'web_shell'
+            : 'adapter',
+      })
       setAccountId(account.id)
       setLinkingPlatform(platform)
       setStep('linking')
       // 新账号此刻还不在列表里，补一次
       setAccounts((await api.listAccounts()).accounts)
+      if (platform === 'signal' || platform === 'whatsapp') {
+        setActivePlatform(platform)
+        setActiveAccount(account.id)
+      }
+      if (platform === 'signal') onClose()
     } catch (e) {
       setError(e instanceof NetworkError ? '连不上服务端' : (e instanceof Error ? e.message : '创建失败'))
     } finally {
@@ -72,7 +169,9 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   }
 
   const suggested = `${PLATFORM_LABEL[platform] ?? platform} ${new Date().getMonth() + 1}`
-  const canCreate = PLATFORMS.find(p => p.key === platform)?.ready === true && name.trim() !== ''
+  const canCreate = PLATFORMS.find(p => p.key === platform)?.ready === true
+    && name.trim() !== ''
+    && !(platform === 'whatsapp' && whatsAppMode === 'cloud_api' && cloudAvailable !== true)
 
   return (
     <div
@@ -100,7 +199,13 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
               添加账号
             </div>
             <div style={{ fontSize: theme.font.size.sm, color: theme.color.textMuted, marginTop: 2 }}>
-              {step === 'pick' ? '选择平台，创建一个独立登录的账号' : '用手机扫码完成关联'}
+              {step === 'pick'
+                ? '选择平台，创建一个独立登录的账号'
+                : step === 'cloud'
+                  ? '在外部 HTTPS 页面完成 Meta Embedded Signup'
+                : linkingPlatform === 'signal'
+                  ? '打开 Signal Desktop 完成关联'
+                  : '用手机扫码完成关联'}
             </div>
           </div>
           <button
@@ -177,14 +282,57 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                 只用于在这里区分多个账号，跟平台上的昵称无关
               </div>
 
-              {!PLATFORMS.find(p => p.key === platform)?.ready && (
+              {platform === 'signal' && (
                 <div style={{
                   marginTop: theme.space.md, padding: theme.space.md,
                   background: theme.color.surface, borderRadius: theme.radius.lg,
                   fontSize: theme.font.size.sm, color: theme.color.textMuted, lineHeight: 1.8,
                 }}>
-                  {PLATFORM_LABEL[platform] ?? platform} 的适配器还没接入，现在建了也连不上。
+                  这里只登记由 Signal Desktop 托管的原生账号，不会启动 signal-cli，
+                  也不会生成 signal-cli 二维码。
                 </div>
+              )}
+              {platform === 'whatsapp' && (
+                <>
+                  <div style={{
+                    marginTop: theme.space.md, display: 'grid', gridTemplateColumns: '1fr 1fr',
+                    gap: theme.space.sm,
+                  }}>
+                    <button
+                      className="ih-btn"
+                      onClick={() => setWhatsAppMode('web_shell')}
+                      style={{
+                        padding: 10, borderRadius: theme.radius.md,
+                        border: `1px solid ${whatsAppMode === 'web_shell' ? theme.color.limeDeep : theme.color.border}`,
+                        background: whatsAppMode === 'web_shell' ? theme.color.limeSoft : theme.color.white,
+                      }}
+                    >
+                      Web 补丁双语页面
+                    </button>
+                    <button
+                      className="ih-btn"
+                      disabled={cloudAvailable !== true}
+                      onClick={() => setWhatsAppMode('cloud_api')}
+                      style={{
+                        padding: 10, borderRadius: theme.radius.md,
+                        border: `1px solid ${whatsAppMode === 'cloud_api' ? theme.color.limeDeep : theme.color.border}`,
+                        background: whatsAppMode === 'cloud_api' ? theme.color.limeSoft : theme.color.white,
+                        opacity: cloudAvailable === true ? 1 : .5,
+                      }}
+                    >
+                      Cloud API 双语会话{cloudAvailable === false ? '（未配置）' : ''}
+                    </button>
+                  </div>
+                  <div style={{
+                    marginTop: theme.space.sm, padding: theme.space.md,
+                    background: theme.color.surface, borderRadius: theme.radius.lg,
+                    fontSize: theme.font.size.sm, color: theme.color.textMuted, lineHeight: 1.8,
+                  }}>
+                    {whatsAppMode === 'web_shell'
+                      ? '隔离加载 WhatsApp Web，并注入双语气泡与翻译输入桥接。'
+                      : '在外部 HTTPS 页面完成 Meta Embedded Signup。token 只回服务端加密保存；入站消息与中英译文显示在 im-hub 自有会话中。'}
+                  </div>
+                </>
               )}
               {error && (
                 <div style={{
@@ -204,21 +352,60 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                 kind="primary"
                 disabled={!canCreate || busy}
               >
-                {busy ? '创建中…' : '创建并扫码'}
+                {busy
+                  ? '创建中…'
+                  : platform === 'signal'
+                    ? '创建并打开'
+                    : platform === 'whatsapp' && whatsAppMode === 'cloud_api'
+                      ? '打开 Meta 关联'
+                      : '创建并扫码'}
               </FooterButton>
             </DialogFooter>
           </>
-        ) : (
+        ) : step === 'cloud' ? (
+          <WhatsAppCloudStep status={cloudStatus} error={error} onClose={onClose} />
+        ) : accountId ? (
           <LinkingStep
-            accountId={accountId!}
+            accountId={accountId}
             platform={linkingPlatform}
             challenge={mine}
             done={mineDone}
             onClose={onClose}
           />
-        )}
+        ) : null}
       </div>
     </div>
+  )
+}
+
+function WhatsAppCloudStep({ status, error, onClose }: {
+  status: WhatsAppOnboardingStatus['state']
+  error: string | null
+  onClose(): void
+}) {
+  const completed = status === 'completed'
+  return (
+    <>
+      <div style={{ padding: `${theme.space.xxl}px ${theme.space.xl}px`, textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: theme.space.md }}>{completed ? '✓' : 'W'}</div>
+        <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+          {completed ? 'WhatsApp Cloud API 已关联' : '请在浏览器完成 Meta 关联'}
+        </div>
+        <div style={{
+          maxWidth: 450, margin: '8px auto 0', fontSize: theme.font.size.sm,
+          color: error ? theme.color.danger : theme.color.textMuted, lineHeight: 1.8,
+        }}>
+          {error ?? (completed
+            ? '账号已切换到 im-hub 自有双语会话视图。'
+            : status === 'processing'
+              ? 'Meta 授权已返回，服务端正在确认号码并订阅 Webhook…'
+              : '关联页使用一次性票据；access token 不会回到 Electron 或 WhatsApp Web。')}
+        </div>
+      </div>
+      <DialogFooter>
+        <FooterButton onClick={onClose} kind="primary">{completed ? '进入会话' : '关闭'}</FooterButton>
+      </DialogFooter>
+    </>
   )
 }
 
@@ -239,6 +426,12 @@ export function RelinkAccountDialog({ account, onClose }: {
   useEffect(() => {
     let active = true
     clearAuth()
+    if (account.platform === 'signal') {
+      return () => {
+        active = false
+        clearAuth()
+      }
+    }
     if (relinkRequest.current?.accountId !== account.id) {
       relinkRequest.current = { accountId: account.id, promise: api.relinkAccount(account.id) }
     }
@@ -251,7 +444,7 @@ export function RelinkAccountDialog({ account, onClose }: {
       active = false
       clearAuth()
     }
-  }, [account.id, clearAuth])
+  }, [account.id, account.platform, clearAuth])
 
   return (
     <div
@@ -295,7 +488,9 @@ export function RelinkAccountDialog({ account, onClose }: {
           </button>
         </div>
 
-        {error ? (
+        {account.platform === 'signal' ? (
+          <SignalDesktopStep onClose={onClose} />
+        ) : error ? (
           <>
             <div style={{
               margin: theme.space.xl, padding: theme.space.md,
@@ -329,6 +524,13 @@ function LinkingStep({ accountId, platform, challenge, done, onClose }: {
   done: { ok: boolean; reason: string | null } | null
   onClose(): void
 }) {
+  if (platform === 'whatsapp') {
+    return <WhatsAppWebStep onClose={onClose} />
+  }
+  if (platform === 'signal') {
+    return <SignalDesktopStep onClose={onClose} />
+  }
+
   if (done) {
     return (
       <>
@@ -359,6 +561,52 @@ function LinkingStep({ accountId, platform, challenge, done, onClose }: {
       link={challenge?.kind === 'qr' ? challenge.payload : null}
       onClose={onClose}
     />
+  )
+}
+
+function SignalDesktopStep({ onClose }: { onClose(): void }) {
+  return (
+    <>
+      <div style={{ padding: `${theme.space.xxl}px ${theme.space.xl}px`, textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: theme.space.md }}>S</div>
+        <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+          请在 Signal Desktop 中关联
+        </div>
+        <div style={{
+          maxWidth: 440, margin: '8px auto 0', fontSize: theme.font.size.sm,
+          color: theme.color.textMuted, lineHeight: 1.8,
+        }}>
+          返回“会话”后会在 im-hub 同一窗口中打开 Signal Desktop。二维码、文字、图片和
+          贴纸都由 Signal 原生客户端处理；这里不再生成 signal-cli 二维码。
+        </div>
+      </div>
+      <DialogFooter>
+        <FooterButton onClick={onClose} kind="primary">返回会话</FooterButton>
+      </DialogFooter>
+    </>
+  )
+}
+
+function WhatsAppWebStep({ onClose }: { onClose(): void }) {
+  return (
+    <>
+      <div style={{ padding: `${theme.space.xxl}px ${theme.space.xl}px`, textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: theme.space.md }}>✓</div>
+        <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy }}>
+          WhatsApp 会话已创建
+        </div>
+        <div style={{
+          maxWidth: 440, margin: '8px auto 0', fontSize: theme.font.size.sm,
+          color: theme.color.textMuted, lineHeight: 1.8,
+        }}>
+          关闭后进入“会话”，在官方 WhatsApp Web 页面用手机扫码。
+          登录身份核对完成后，当前可见的历史及新文字气泡会显示中英译文；页面改版时可能需要更新兼容补丁。
+        </div>
+      </div>
+      <DialogFooter>
+        <FooterButton onClick={onClose} kind="primary">进入会话扫码</FooterButton>
+      </DialogFooter>
+    </>
   )
 }
 

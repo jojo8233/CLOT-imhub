@@ -1,0 +1,81 @@
+import { normalizeWhatsAppWebUserId } from '@im-hub/shared'
+import type { NativeConversationContext } from '@im-hub/shared'
+
+export function normalizeWhatsAppStorageIdentity(raw: string): string | null {
+  const candidates: string[] = [raw]
+  let parsed: unknown = raw
+  for (let depth = 0; depth < 3; depth += 1) {
+    try {
+      parsed = JSON.parse(typeof parsed === 'string' ? parsed : JSON.stringify(parsed)) as unknown
+    } catch {
+      break
+    }
+    if (typeof parsed === 'string') candidates.push(parsed)
+    if (record(parsed)) {
+      for (const value of Object.values(parsed)) {
+        if (typeof value === 'string') candidates.push(value)
+      }
+    }
+  }
+  for (const candidate of candidates) {
+    const match = /([0-9]{5,20}(?::[0-9]{1,5})?@(c\.us|s\.whatsapp\.net|lid))/i.exec(candidate)
+    if (!match?.[1]) continue
+    try {
+      return normalizeWhatsAppWebUserId(match[1])
+    } catch {
+      // 继续尝试下一个页面状态表示。
+    }
+  }
+  return null
+}
+
+export function whatsappChatJidFromDataId(raw: string): string | null {
+  const match = /([0-9]{5,20})(?::[0-9]{1,5})?@(c\.us|g\.us|lid)/i.exec(raw)
+  if (!match?.[1] || !match[2]) return null
+  return `${match[1]}@${match[2].toLowerCase()}`
+}
+
+export function whatsappMessageDirectionFromDataId(raw: string | null): 'in' | 'out' | null {
+  if (!raw) return null
+  if (/^true_/i.test(raw)) return 'out'
+  if (/^false_/i.test(raw)) return 'in'
+  return null
+}
+
+export function normalizeWhatsAppDomText(value: string): string {
+  return value.replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').trim()
+}
+
+/** 显示名会随在线状态等页面元数据变化；只有平台会话 ID 才定义发送上下文。 */
+export function sameWhatsAppConversation(
+  left: NativeConversationContext | null,
+  right: NativeConversationContext | null,
+): boolean {
+  return left !== null
+    && right !== null
+    && left.platformConversationId === right.platformConversationId
+}
+
+export function shouldResetWhatsAppTranslations(
+  current: NativeConversationContext | null,
+  next: NativeConversationContext | null,
+): boolean {
+  if (!current && !next) return false
+  return !sameWhatsAppConversation(current, next)
+}
+
+/** updateContext(null) 只在原本有会话时重置；无会话的 sign-out 需要显式补一次。 */
+export function shouldExplicitlyResetWhatsAppTranslationsOnSignOut(
+  current: NativeConversationContext | null,
+): boolean {
+  return current === null
+}
+
+export async function sha256Text(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

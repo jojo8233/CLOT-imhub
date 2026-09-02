@@ -6,6 +6,7 @@ import { db } from './db/client.js'
 import { AdapterManager } from './adapters/manager.js'
 import { SignalAdapter } from './adapters/signal/adapter.js'
 import { TelegramAdapter } from './adapters/telegram/adapter.js'
+import { WhatsAppWebAdapter } from './adapters/whatsapp-web/adapter.js'
 import { KyselyMessageRepo } from './ingest/repo.js'
 import { MessageIngestor, messageRevision } from './ingest/ingestor.js'
 import { BullTranslateQueue, TRANSLATE_QUEUE, type TranslateJobData } from './pipeline/queue.js'
@@ -17,6 +18,19 @@ import { OpenAiProvider } from './translation/providers/openai.js'
 import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
+import {
+  buildTelegramDeleteObservation,
+  buildTelegramRemapObservation,
+  buildTelegramUpsertObservation,
+} from './shadow/telegram.js'
+import { KyselyTelegramShadowCoverageRepo } from './shadow/coverage.js'
+import { TelegramShadowRefresher } from './shadow/refresh.js'
+import { KyselyTelegramShadowRepo } from './shadow/telegram-repo.js'
+import { TelegramTdlibIngestGate } from './shadow/rollout.js'
+import { WhatsAppGraphClient } from './whatsapp-cloud/graph-client.js'
+import { KyselyWhatsAppCloudRepo } from './whatsapp-cloud/repo.js'
+import { decodeSecretMasterKey, SecretCipher } from './whatsapp-cloud/secret-cipher.js'
+import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
@@ -40,15 +54,69 @@ const adapters = new AdapterManager([
     binary: config.SIGNAL_CLI_BINARY,
     dataDir: config.SIGNAL_DATA_DIR,
   }),
+  new WhatsAppWebAdapter(),
 ])
 
 const hub = new WsHub()
 const queue = new BullTranslateQueue(redis)
 const messageRepo = new KyselyMessageRepo(db)
 const ingestor = new MessageIngestor(messageRepo, queue)
+const whatsappCloudRepo = new KyselyWhatsAppCloudRepo(db)
+const telegramShadowCoverage = new KyselyTelegramShadowCoverageRepo(db)
+const telegramShadowRefresher = new TelegramShadowRefresher(adapters, ingestor)
+const telegramShadowRepo = new KyselyTelegramShadowRepo(db)
+const telegramTdlibIngestGate = new TelegramTdlibIngestGate(
+  config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS,
+  telegramShadowRepo,
+)
+
+async function publishNewMessage(messageId: string): Promise<void> {
+  await messageRepo.withMessageForPublish(messageId, message => {
+    if (message.deletedAt) return
+    hub.publishTo(message.ownerUserId, {
+      type: 'message',
+      messageId: message.id,
+      platformMessageId: message.platformMessageId,
+      conversationId: message.conversationId,
+      accountId: message.accountId,
+      platform: message.platform,
+      direction: message.direction,
+      body: message.body,
+      translatedBody: message.translatedBody,
+      sentAt: message.sentAt.toISOString(),
+      editedAt: message.editedAt?.toISOString() ?? null,
+    })
+  })
+}
+
+const whatsappCloudService = config.WHATSAPP_CLOUD_ENABLED
+  ? new WhatsAppCloudService({
+      appId: config.WHATSAPP_META_APP_ID,
+      configId: config.WHATSAPP_META_CONFIG_ID,
+      graphApiVersion: config.WHATSAPP_GRAPH_API_VERSION,
+      publicBaseUrl: config.WHATSAPP_PUBLIC_BASE_URL,
+      graphClient: version => new WhatsAppGraphClient({
+        version,
+        appId: config.WHATSAPP_META_APP_ID,
+        appSecret: config.WHATSAPP_META_APP_SECRET,
+      }),
+    }, {
+      repo: whatsappCloudRepo,
+      cipher: new SecretCipher(decodeSecretMasterKey(config.WHATSAPP_SECRET_MASTER_KEY)),
+      ingestor,
+      onInboundStored: result => result.isNew ? publishNewMessage(result.messageId) : undefined,
+      onOutgoingAccepted: publishNewMessage,
+    })
+  : null
+
+if (config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS.length > 0) {
+  console.warn(
+    `[shadow-rollout] ${config.TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS.length} 个账号已启用 TDLib shadow-only`,
+  )
+}
 
 adapters.onMessage((msg) => {
-  void (async () => {
+  const activeIngest = async (): Promise<void> => {
     await ingestor.ingestDetailed(msg, async result => {
       if (!result.isNew && !msg.editedAt && msg.editVersion == null) return
 
@@ -60,6 +128,7 @@ adapters.onMessage((msg) => {
           hub.publishTo(message.ownerUserId, {
             type: 'message',
             messageId: message.id,
+            platformMessageId: message.platformMessageId,
             conversationId: message.conversationId,
             accountId: message.accountId,
             platform: message.platform,
@@ -89,13 +158,27 @@ adapters.onMessage((msg) => {
           })
         }
       })
-    })
-  })()
+    }, 'tdlib')
+  }
+  const operation = msg.platform === 'telegram'
+    ? telegramTdlibIngestGate.route(
+        buildTelegramUpsertObservation('tdlib', msg),
+        activeIngest,
+      )
+    : activeIngest()
+  void operation.catch((err: unknown) => {
+    console.error(`[server] 账号 ${msg.accountId} 处理适配器消息失败:`, err)
+  })
 })
 
-adapters.onMessageIdRemapped((accountId, oldId, newId) => {
-  void (async () => {
-    const result = await messageRepo.remapMessageId(accountId, oldId, newId)
+adapters.onMessageIdRemapped((accountId, oldId, newId, platform) => {
+  const activeIngest = async (): Promise<void> => {
+    const result = await messageRepo.remapMessageId(
+      accountId,
+      oldId,
+      newId,
+      buildTelegramRemapObservation(accountId, 'tdlib', oldId, newId),
+    )
     if (result?.changed) {
       console.log(`[server] 消息 id 已换成最终值 ${oldId} -> ${newId}`)
     }
@@ -113,7 +196,49 @@ adapters.onMessageIdRemapped((accountId, oldId, newId) => {
         })
       }
     }
-  })()
+  }
+  const operation = platform === 'telegram'
+    ? telegramTdlibIngestGate.route(
+        buildTelegramRemapObservation(accountId, 'tdlib', oldId, newId),
+        activeIngest,
+      )
+    : activeIngest()
+  void operation.catch((err: unknown) => {
+    console.error(`[server] 账号 ${accountId} 处理消息 id 重映射失败:`, err)
+  })
+})
+
+adapters.onMessageDeleted((accountId, platformMessageId, deletedAt, platform) => {
+  const activeIngest = async (): Promise<void> => {
+    const result = await messageRepo.markMessageDeleted(
+      accountId,
+      platformMessageId,
+      deletedAt,
+      buildTelegramDeleteObservation(accountId, 'tdlib', platformMessageId),
+    )
+    if (!result?.changed) return
+    const owner = await db.selectFrom('accounts')
+      .select('owner_user_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (owner) {
+      hub.publishTo(owner.owner_user_id, {
+        type: 'message_deleted',
+        messageId: result.messageId,
+        conversationId: result.conversationId,
+        deletedAt: deletedAt.toISOString(),
+      })
+    }
+  }
+  const operation = platform === 'telegram'
+    ? telegramTdlibIngestGate.route(
+        buildTelegramDeleteObservation(accountId, 'tdlib', platformMessageId),
+        activeIngest,
+      )
+    : activeIngest()
+  void operation.catch((err: unknown) => {
+    console.error(`[server] 账号 ${accountId} 处理 TDLib 删除事件失败:`, err)
+  })
 })
 
 /**
@@ -135,6 +260,17 @@ adapters.onAuthChallenge((accountId, challenge) => {
       kind: challenge.kind,
       payload: challenge.payload,
     })
+  })()
+})
+
+adapters.onAuthFailure((accountId, reason) => {
+  void (async () => {
+    const owner = await db.selectFrom('accounts')
+      .select('owner_user_id')
+      .where('id', '=', accountId)
+      .executeTakeFirst()
+    if (!owner) return
+    hub.publishTo(owner.owner_user_id, { type: 'auth_done', accountId, ok: false, reason })
   })()
 })
 
@@ -193,7 +329,10 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
   await runTranslateJob(job.data, {
     loadMessage: async (id) => {
       const row = await db.selectFrom('messages')
-        .select(['id', 'body', 'direction', 'conversation_id', 'edited_at', 'edit_version'])
+        .select([
+          'id', 'body', 'direction', 'conversation_id', 'account_id', 'platform',
+          'platform_message_id', 'body_lang', 'edited_at', 'edit_version',
+        ])
         .where('id', '=', id)
         .executeTakeFirst()
       return row
@@ -202,6 +341,10 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
             body: row.body,
             direction: row.direction,
             conversationId: row.conversation_id,
+            accountId: row.account_id,
+            platform: row.platform,
+            platformMessageId: row.platform_message_id,
+            bodyLang: row.body_lang,
             revision: messageRevision(row.edit_version, row.edited_at),
           }
         : null
@@ -232,10 +375,24 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
 const app = await buildServer({
   adapters,
   gateway,
+  ...(whatsappCloudService
+    ? {
+        whatsappCloud: whatsappCloudService,
+        whatsappCloudRoutes: {
+          service: whatsappCloudService,
+          webhookVerifyToken: config.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+          appSecret: config.WHATSAPP_META_APP_SECRET,
+        },
+      }
+    : {}),
   native: {
     ingestor,
     repo: messageRepo,
     publish: (userId, event) => hub.publishTo(userId, event),
+  },
+  telegramShadowRefresh: {
+    coverage: telegramShadowCoverage,
+    refresher: telegramShadowRefresher,
   },
 }, hub)
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
@@ -248,8 +405,13 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     void (async () => {
       console.log(`[server] 收到 ${signal}，正在断开所有账号…`)
-      const connected = await db.selectFrom('accounts').select('id').where('status', '=', 'connected').execute()
-      await Promise.allSettled(connected.map(a => adapters.disconnect(a.id)))
+      const connected = await db.selectFrom('accounts')
+        .select(['id', 'connection_mode'])
+        .where('status', '=', 'connected')
+        .execute()
+      await Promise.allSettled(connected
+        .filter(a => a.connection_mode === 'adapter')
+        .map(a => adapters.disconnect(a.id)))
       await app.close()
       await redis.quit()
       await db.destroy()
@@ -274,7 +436,7 @@ async function connectRegisteredAccounts(): Promise<void> {
 
   const all = (await db
     .selectFrom('accounts')
-    .select(['id', 'platform', 'display_name', 'credentials_ref', 'status'])
+    .select(['id', 'platform', 'display_name', 'credentials_ref', 'status', 'connection_mode'])
     .execute()
   ).filter((a) => a.platform !== 'telegram' || telegramReady)
 
@@ -283,7 +445,28 @@ async function connectRegisteredAccounts(): Promise<void> {
     return
   }
 
-  // 只自动连接「本机确实有可用 session」的账号，判据是 credentials_ref。
+  const adapterAccounts = all.filter(a => a.connection_mode === 'adapter')
+  const nativeDesktopAccounts = all.filter(a => a.connection_mode === 'native_desktop')
+  const webShellAccounts = all.filter(a => a.connection_mode === 'web_shell')
+  const cloudApiAccounts = all.filter(a => a.connection_mode === 'cloud_api')
+  if (nativeDesktopAccounts.length > 0) {
+    console.log(`[server] ${nativeDesktopAccounts.length} 个原生桌面账号交由 im-hub 桌面主进程托管`)
+  }
+  if (webShellAccounts.length > 0) {
+    console.log(`[server] ${webShellAccounts.length} 个官方网页壳账号交由 im-hub 桌面主进程托管`)
+  }
+  if (cloudApiAccounts.length > 0) {
+    if (whatsappCloudService) {
+      console.log(`[server] ${cloudApiAccounts.length} 个 WhatsApp Cloud API 账号由 Webhook/Graph API 托管`)
+    } else {
+      console.warn(
+        `[server] ${cloudApiAccounts.length} 个 Cloud API 账号尚未启用；请完成官方授权配置后再连接`,
+      )
+    }
+  }
+
+  // 只自动连接「服务端适配器模式且本机确实有可用 session」的账号，
+  // session 判据是 credentials_ref。
   //
   // 这一栏由适配器在 authorizationStateReady 时写入，所以它精确表示
   // 「这个账号在这台机器上鉴权成功过」。
@@ -292,9 +475,9 @@ async function connectRegisteredAccounts(): Promise<void> {
   // 建好，没登录过的账号一样有这个目录（实测 348K vs 已登录的 7.2M）。
   // 也不该只看 status：员工在手机上解除了这台设备的授权后 status 仍是
   // connected，而那时 session 早就失效了。
-  const accounts = all.filter((a) => a.credentials_ref !== null)
+  const accounts = adapterAccounts.filter((a) => a.credentials_ref !== null)
 
-  const skipped = all.filter((a) => a.credentials_ref === null)
+  const skipped = adapterAccounts.filter((a) => a.credentials_ref === null)
   if (skipped.length > 0) {
     console.log(
       `[server] 跳过 ${skipped.length} 个尚未关联的账号：${skipped.map((a) => a.display_name).join('、')}\n` +

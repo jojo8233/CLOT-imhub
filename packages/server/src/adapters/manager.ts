@@ -2,13 +2,28 @@ import type { OutboundContent, Platform } from '@im-hub/shared'
 import type {
   AdapterAccount,
   AuthChallengeHandler,
+  AuthFailureHandler,
   CredentialsHandler,
+  CurrentMessageFetchResult,
   MessageHandler,
-  MessageIdRemapHandler,
   PlatformIdentityHandler,
   PlatformAdapter,
   StatusHandler,
 } from './types.js'
+
+type ManagedMessageIdRemapHandler = (
+  accountId: string,
+  oldPlatformMessageId: string,
+  newPlatformMessageId: string,
+  platform: Platform,
+) => void
+
+type ManagedMessageDeletedHandler = (
+  accountId: string,
+  platformMessageId: string,
+  deletedAt: Date,
+  platform: Platform,
+) => void
 
 /**
  * 逐个调用订阅者，单个失败不影响其余，也绝不向上冒泡。
@@ -37,9 +52,11 @@ export class AdapterManager {
   private readonly messageHandlers: MessageHandler[] = []
   private readonly statusHandlers: StatusHandler[] = []
   private readonly authChallengeHandlers: AuthChallengeHandler[] = []
+  private readonly authFailureHandlers: AuthFailureHandler[] = []
   private readonly credentialsHandlers: CredentialsHandler[] = []
   private readonly platformIdentityHandlers: PlatformIdentityHandler[] = []
-  private readonly idRemapHandlers: MessageIdRemapHandler[] = []
+  private readonly idRemapHandlers: ManagedMessageIdRemapHandler[] = []
+  private readonly messageDeletedHandlers: ManagedMessageDeletedHandler[] = []
 
   constructor(adapters: PlatformAdapter[]) {
     for (const a of adapters) {
@@ -47,22 +64,34 @@ export class AdapterManager {
       a.onMessage(msg => fanOut(this.messageHandlers, msg))
       a.onStatusChange((id, status) => fanOut(this.statusHandlers, id, status))
       a.onAuthChallenge((id, c) => fanOut(this.authChallengeHandlers, id, c))
+      a.onAuthFailure?.((id, reason) => fanOut(this.authFailureHandlers, id, reason))
       a.onCredentialsUpdated((id, ref) => fanOut(this.credentialsHandlers, id, ref))
       a.onPlatformIdentityUpdated?.((id, externalId) => {
         fanOut(this.platformIdentityHandlers, id, externalId)
       })
-      a.onMessageIdRemapped((id, oldId, newId) => fanOut(this.idRemapHandlers, id, oldId, newId))
+      a.onMessageIdRemapped((id, oldId, newId) => {
+        fanOut(this.idRemapHandlers, id, oldId, newId, a.platform)
+      })
+      a.onMessageDeleted((id, messageId, deletedAt) => {
+        fanOut(this.messageDeletedHandlers, id, messageId, deletedAt, a.platform)
+      })
     }
   }
 
   onMessage(handler: MessageHandler): void { this.messageHandlers.push(handler) }
   onStatusChange(handler: StatusHandler): void { this.statusHandlers.push(handler) }
   onAuthChallenge(handler: AuthChallengeHandler): void { this.authChallengeHandlers.push(handler) }
+  onAuthFailure(handler: AuthFailureHandler): void { this.authFailureHandlers.push(handler) }
   onCredentialsUpdated(handler: CredentialsHandler): void { this.credentialsHandlers.push(handler) }
   onPlatformIdentityUpdated(handler: PlatformIdentityHandler): void {
     this.platformIdentityHandlers.push(handler)
   }
-  onMessageIdRemapped(handler: MessageIdRemapHandler): void { this.idRemapHandlers.push(handler) }
+  onMessageIdRemapped(handler: ManagedMessageIdRemapHandler): void {
+    this.idRemapHandlers.push(handler)
+  }
+  onMessageDeleted(handler: ManagedMessageDeletedHandler): void {
+    this.messageDeletedHandlers.push(handler)
+  }
 
   private require(platform: Platform): PlatformAdapter {
     const adapter = this.byPlatform.get(platform)
@@ -112,5 +141,18 @@ export class AdapterManager {
     const platform = this.accountPlatform.get(accountId)
     if (!platform) throw new Error(`account ${accountId} is not connected`)
     return this.require(platform).sendMessage(accountId, conversationId, content)
+  }
+
+  async fetchCurrentMessages(
+    accountId: string,
+    platformMessageIds: string[],
+  ): Promise<CurrentMessageFetchResult[]> {
+    const platform = this.accountPlatform.get(accountId)
+    if (!platform) throw new Error(`account ${accountId} is not connected`)
+    const adapter = this.require(platform)
+    if (!adapter.fetchCurrentMessages) {
+      throw new Error(`platform ${platform} does not support current message refresh`)
+    }
+    return adapter.fetchCurrentMessages(accountId, platformMessageIds)
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api/client.js'
+import { api, HttpError } from '../api/client.js'
 import { useStore } from '../store.js'
 import { CHAT_MAX_WIDTH } from '../layout.js'
 import { theme } from '../theme.js'
@@ -52,6 +52,8 @@ export function Composer() {
   const reqIdRef = useRef(0)
   const backTranslateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sendLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Cloud API 的网络失败可能是“Meta 已接受但响应丢失”。正文/会话不变时重试必须沿用同一 id。
+  const sendAttemptIdRef = useRef<string | null>(null)
 
   // 切换会话：作废所有在途请求，清空上一个会话残留的中文草稿/预览/回译/语言状态，
   // 否则会串到新会话里去。
@@ -70,6 +72,7 @@ export function Composer() {
     setSendLocked(false)
     setError(null)
     setJustSent(null)
+    sendAttemptIdRef.current = null
     setLockedLang(conv?.target_lang ?? null)
     setResolvedLang(conv?.target_lang ?? null)
     // conv 是从 conversations 数组按 id 过滤出来的引用，每次渲染都会变；
@@ -90,11 +93,13 @@ export function Composer() {
     setManuallyEdited(false)
     setSendLocked(false)
     if (sendLockTimerRef.current) clearTimeout(sendLockTimerRef.current)
+    sendAttemptIdRef.current = null
   }
 
   async function handleTranslate(): Promise<void> {
     if (!conversationId || zh.trim() === '' || translating) return
     const myReqId = ++reqIdRef.current
+    sendAttemptIdRef.current = null
     setTranslating(true)
     setError(null)
     setJustSent(null)
@@ -149,6 +154,8 @@ export function Composer() {
   function handlePreviewChange(value: string): void {
     setPreview(value)
     setManuallyEdited(true)
+    // 用户改稿后 fingerprint 已变化，旧 attempt 绝不能跟着新正文走。
+    sendAttemptIdRef.current = null
     scheduleBackTranslateRefresh(value)
   }
 
@@ -157,12 +164,15 @@ export function Composer() {
     const myReqId = ++reqIdRef.current
     setSending(true)
     setError(null)
+    const attemptId = sendAttemptIdRef.current ?? crypto.randomUUID()
+    sendAttemptIdRef.current = attemptId
     try {
       // preTranslated: true + 预览框里的最终文本——绝不让服务端重新翻译，
       // 否则员工确认过的内容和实际发出的内容可能不一样。
       const res = await api.send(conversationId, preview, {
         preTranslated: true,
         targetLang: resolvedLang ?? undefined,
+        attemptId,
       })
       if (reqIdRef.current !== myReqId) return
       setJustSent(res.sentText)
@@ -170,6 +180,12 @@ export function Composer() {
       clearPreviewState()
     } catch (e) {
       if (reqIdRef.current !== myReqId) return
+      // Meta 明确拒绝时可以用新 attempt 重试；网络/结果未知则必须保留原 attempt 对账。
+      if (e instanceof HttpError && [
+        'whatsapp_graph_rejected',
+        'attempt_failed',
+        'attempt_payload_mismatch',
+      ].includes(e.code ?? '')) sendAttemptIdRef.current = null
       setError(e instanceof Error ? `发送失败：${e.message}` : '发送失败，请重试')
     } finally {
       if (reqIdRef.current === myReqId) setSending(false)

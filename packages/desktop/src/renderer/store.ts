@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { AuthChallengeKind } from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
-import type { NativeConversationContext } from '@im-hub/shared'
+import type { NativeComposerStateEvent, NativeConversationContext } from '@im-hub/shared'
 import {
   initialNavigation,
   reconcileNavigation,
@@ -34,11 +34,20 @@ export interface NativeConversationState extends NativeConversationContext {
 export interface NativeAccountBridgeState {
   connection: NativeBridgeConnection
   error: string | null
+  /** 不影响账号授权的消息级提示；身份心跳不得把它提前清除。 */
+  notice: string | null
   /** guest 报告的实际平台登录账号；M3 control grant 用它做身份绑定。 */
   platformAccountExternalId: string | null
   context: NativeConversationState | null
   /** 原生客户端对当前 revision 的实时可发送状态。 */
   composerCanSend: boolean
+  /** 持久消息 outbox 的非敏感积压与失败指标。 */
+  outbox?: {
+    pendingCount: number
+    deadLetterCount: number
+    isSending: boolean
+    lastErrorCode: string | null
+  }
 }
 
 export type NativeDraftStatus = 'idle' | 'configuring' | 'translating' | 'ready' | 'sending' | 'failed'
@@ -53,12 +62,20 @@ export interface NativeDraftState {
   /** 结果未知时与最终原生草稿绑定，重试必须沿用同一个逻辑发送标识。 */
   sendAttemptId: string | null
   sendAttemptDraft: string | null
+  /** Signal 只恢复正文指纹，不把消息正文复制进持久 attempt 账本。 */
+  sendAttemptFingerprint: string | null
+  sendAttemptContextRevision: number | null
+  /** guest 已确认最终 ID、正在等待最终 ACK 状态回放完成。 */
+  sendAttemptConfirmed: boolean
 }
 
 const EMPTY_DRAFT: NativeDraftState = {
   sourceText: '', translatedText: '', backTranslated: null,
   targetLang: null, status: 'idle', error: null,
   sendAttemptId: null, sendAttemptDraft: null,
+  sendAttemptFingerprint: null,
+  sendAttemptContextRevision: null,
+  sendAttemptConfirmed: false,
 }
 
 interface State {
@@ -95,6 +112,11 @@ interface State {
   setAccountStatus(accountId: string, status: string): void
   updateConversationTargetLang(id: string, targetLang: string | null): void
   setNativeBridgeConnection(accountId: string, connection: NativeBridgeConnection, error?: string | null): void
+  setNativeBridgeNotice(accountId: string, notice: string | null): void
+  setNativeOutboxStatus(
+    accountId: string,
+    status: NonNullable<NativeAccountBridgeState['outbox']>,
+  ): void
   setNativeAccountIdentity(accountId: string, platformAccountExternalId: string | null): void
   setNativeContext(accountId: string, context: NativeConversationState | null): void
   resolveNativeConversation(
@@ -109,6 +131,7 @@ interface State {
     platformConversationId: string,
     draft: string,
     canSend: boolean,
+    sendAttempt?: NonNullable<NativeComposerStateEvent['sendAttempt']>,
   ): void
   updateNativeDraft(key: string, patch: Partial<NativeDraftState>): void
   clearNativeDraft(key: string): void
@@ -199,24 +222,48 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection,
         error,
+        notice: s.nativeBridgeByAccount[accountId]?.notice ?? null,
         platformAccountExternalId:
           s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context: s.nativeBridgeByAccount[accountId]?.context ?? null,
         composerCanSend: connection === 'ready'
           ? s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false
           : false,
+        outbox: s.nativeBridgeByAccount[accountId]?.outbox,
       },
     },
   })),
+  setNativeBridgeNotice: (accountId, notice) => set((s) => {
+    const current = s.nativeBridgeByAccount[accountId]
+    if (!current) return {}
+    return {
+      nativeBridgeByAccount: {
+        ...s.nativeBridgeByAccount,
+        [accountId]: { ...current, notice },
+      },
+    }
+  }),
+  setNativeOutboxStatus: (accountId, status) => set((s) => {
+    const current = s.nativeBridgeByAccount[accountId]
+    if (!current) return {}
+    return {
+      nativeBridgeByAccount: {
+        ...s.nativeBridgeByAccount,
+        [accountId]: { ...current, outbox: status },
+      },
+    }
+  }),
   setNativeAccountIdentity: (accountId, platformAccountExternalId) => set((s) => ({
     nativeBridgeByAccount: {
       ...s.nativeBridgeByAccount,
       [accountId]: {
         connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
         error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        notice: s.nativeBridgeByAccount[accountId]?.notice ?? null,
         platformAccountExternalId,
         context: s.nativeBridgeByAccount[accountId]?.context ?? null,
         composerCanSend: s.nativeBridgeByAccount[accountId]?.composerCanSend ?? false,
+        outbox: s.nativeBridgeByAccount[accountId]?.outbox,
       },
     },
   })),
@@ -226,10 +273,12 @@ export const useStore = create<State>((set) => ({
       [accountId]: {
         connection: s.nativeBridgeByAccount[accountId]?.connection ?? 'waiting',
         error: s.nativeBridgeByAccount[accountId]?.error ?? null,
+        notice: s.nativeBridgeByAccount[accountId]?.notice ?? null,
         platformAccountExternalId:
           s.nativeBridgeByAccount[accountId]?.platformAccountExternalId ?? null,
         context,
         composerCanSend: false,
+        outbox: s.nativeBridgeByAccount[accountId]?.outbox,
       },
     },
     ...(s.activeAccountId === accountId ? {
@@ -264,6 +313,7 @@ export const useStore = create<State>((set) => ({
     platformConversationId,
     draft,
     canSend,
+    sendAttempt,
   ) => set((s) => {
     const current = s.nativeBridgeByAccount[accountId]
     if (!current?.context
@@ -277,9 +327,43 @@ export const useStore = create<State>((set) => ({
       || existing?.status === 'translating'
       || existing?.status === 'sending'
     const hasDraft = draft.trim() !== ''
+    const persistentAttemptAccount = s.accounts.some(account => account.id === accountId
+      && (account.platform === 'signal' || account.platform === 'whatsapp'))
+    const platformLabel = s.accounts.find(account => account.id === accountId)?.platform === 'whatsapp'
+      ? 'WhatsApp'
+      : 'Signal'
     const nextDrafts = { ...s.nativeDrafts }
-    if (existing && !busy) {
-      if (existing.status === 'ready' && !hasDraft) {
+    if (sendAttempt && !busy
+      && (!existing?.sendAttemptId || existing.sendAttemptId === sendAttempt.attemptId)) {
+      nextDrafts[key] = {
+        ...(existing ?? EMPTY_DRAFT),
+        status: 'failed',
+        error: sendAttempt.platformMessageId
+          ? `上次 ${platformLabel} 发送已确认，点击发送完成结果恢复`
+          : `上次 ${platformLabel} 发送结果待确认，点击发送继续核对`,
+        sendAttemptId: sendAttempt.attemptId,
+        sendAttemptDraft: null,
+        sendAttemptFingerprint: sendAttempt.draftFingerprint,
+        sendAttemptContextRevision: sendAttempt.contextRevision,
+        sendAttemptConfirmed: sendAttempt.platformMessageId !== null,
+      }
+    } else if (existing && !busy) {
+      if (persistentAttemptAccount && existing.sendAttemptConfirmed && !sendAttempt) {
+        // 最终 ID 已确认的 attempt 可能在 renderer 清空成功态后、guest 完成 ACK 前短暂
+        // 回放一次。ACK 后的无 attempt 状态必须收掉这个短暂恢复态，不能继续显示失败。
+        nextDrafts[key] = {
+          ...existing,
+          translatedText: '',
+          backTranslated: null,
+          status: 'idle',
+          error: null,
+          sendAttemptId: null,
+          sendAttemptDraft: null,
+          sendAttemptFingerprint: null,
+          sendAttemptContextRevision: null,
+          sendAttemptConfirmed: false,
+        }
+      } else if (existing.status === 'ready' && !hasDraft && !existing.sendAttemptId) {
         // 原生框在 ready 后被清空，通常表示用户从原生端发送/删除了草稿。
         // 清掉外壳的可发送门禁，避免再点一次发送重复消息。
         nextDrafts[key] = {
@@ -290,6 +374,9 @@ export const useStore = create<State>((set) => ({
           error: null,
           sendAttemptId: null,
           sendAttemptDraft: null,
+          sendAttemptFingerprint: null,
+          sendAttemptContextRevision: null,
+          sendAttemptConfirmed: false,
         }
       } else if (existing.status === 'ready') {
         nextDrafts[key] = {

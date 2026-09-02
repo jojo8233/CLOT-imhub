@@ -17,7 +17,8 @@ function fakeSocket(readyState = OPEN) {
 }
 
 const event = {
-  type: 'translation', messageId: 'm1', conversationId: 'c1', targetLang: 'zh', translatedText: '你好',
+  type: 'translation', messageId: 'm1', platformMessageId: 'sender:1', conversationId: 'c1',
+  accountId: 'a1', platform: 'signal', targetLang: 'zh', translatedText: '你好',
   provider: 'deepl', revision: 'initial',
 } as const
 

@@ -19,6 +19,14 @@ import {
   NATIVE_CONTROL_STATE_CHANNEL,
   NATIVE_CONTROL_SYNC_CONTEXT_CHANNEL,
 } from '../native-control-ipc.js'
+import {
+  SIGNAL_DESKTOP_RELEASE_ALL_CHANNEL,
+  SIGNAL_DESKTOP_RELEASE_CHANNEL,
+  SIGNAL_DESKTOP_STATE_CHANNEL,
+  SIGNAL_DESKTOP_SYNC_CHANNEL,
+  type SignalDesktopRect,
+  type SignalDesktopStateUpdate,
+} from '../signal-desktop-ipc.js'
 
 interface SessionPayload {
   token: string
@@ -59,6 +67,9 @@ contextBridge.exposeInMainWorld('imHub', {
     load: (): Promise<SessionPayload | null> => ipcRenderer.invoke('session:load'),
     clear: (): Promise<void> => ipcRenderer.invoke('session:clear'),
   },
+  external: {
+    open: (url: string): Promise<void> => ipcRenderer.invoke('external:open', url),
+  },
   nativeControl: {
     configure: (target: NativeControlTarget, grant: NativeControlGrantResponse): Promise<NativeControlStateUpdate> =>
       ipcRenderer.invoke(NATIVE_CONTROL_CONFIGURE_CHANNEL, { ...target, grant: grant.grant }),
@@ -78,4 +89,17 @@ contextBridge.exposeInMainWorld('imHub', {
     onState: (listener: (value: NativeControlStateUpdate) => void): (() => void) =>
       onIpc(NATIVE_CONTROL_STATE_CHANNEL, listener),
   },
+  signalDesktop: process.env.IM_HUB_SIGNAL_INTEGRATED === '1' ? {
+    sync: (
+      accountId: string,
+      rect: SignalDesktopRect,
+      visible: boolean,
+    ): Promise<SignalDesktopStateUpdate> =>
+      ipcRenderer.invoke(SIGNAL_DESKTOP_SYNC_CHANNEL, { accountId, rect, visible }),
+    release: (accountId: string): Promise<void> =>
+      ipcRenderer.invoke(SIGNAL_DESKTOP_RELEASE_CHANNEL, { accountId }),
+    releaseAll: (): Promise<void> => ipcRenderer.invoke(SIGNAL_DESKTOP_RELEASE_ALL_CHANNEL),
+    onState: (listener: (value: SignalDesktopStateUpdate) => void): (() => void) =>
+      onIpc(SIGNAL_DESKTOP_STATE_CHANNEL, listener),
+  } : undefined,
 })

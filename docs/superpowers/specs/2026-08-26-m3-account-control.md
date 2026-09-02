@@ -1,7 +1,7 @@
 # M3-2 Telegram 账号控制授权与身份绑定
 
 日期：2026-08-26
-状态：代码已实现；真实账号联调、消息 outbox 与 shadow 对账仍由后续 M3 Issue 验收
+状态：M3-2 代码与 M3-4 消息 outbox 已实现；真实故障矩阵与 shadow 对账仍待后续验收
 
 ## 1. 目标与信任边界
 
@@ -29,7 +29,7 @@ migration `0006_native_account_control` 为 `accounts` 增加：
 `native_control_version`，使所有旧 grant 立即失效。已有账号在 adapter 再次 ready 前不能
 签发 grant，接口明确返回“平台身份尚未就绪”，不会猜测磁盘 session 或 display name。
 
-telegram-tt 从全局状态读取 `currentUserId`，通过 Bridge v2 发
+telegram-tt 从全局状态读取 `currentUserId`，通过 typed bridge 发
 `account.identity { platformAccountExternalId }`。初始鉴权状态未知不等于退出；只有页面曾经
 上报真实 self id 后转为非 ready，才发 `account.signed-out`，避免启动恢复期间误清分区。
 
@@ -64,6 +64,10 @@ telegram-tt 从全局状态读取 `currentUserId`，通过 Bridge v2 发
 3. 身份不一致、signed-out、过期或服务端返回 401/403：`blocked`，立即停止命令与代理。
 4. 身份后来恢复一致但旧 grant 已撤销：回到 `waiting`，由外壳重新申请 grant。
 
+GramJS 主 sender 只对连接初始化期间的 `AUTH_KEY_UNREGISTERED` 保留跳过语义。
+`SESSION_REVOKED` 与 `USER_DEACTIVATED` 必须发布 `connectionStateBroken`，由现有全局 sign-out
+进入 `account.signed-out`，不能让缓存的 self id 继续把已撤销会话显示为 `ready`。
+
 主进程在发送原生命令前再次调用服务端 verify，避免服务端撤销后仍继续发送。同步会话、
 回传事件和翻译代理都只从 registry 取得 grant；服务端 401/403 会同时阻断本地状态。所有
 blocked 与 webview 加载失败路径向 UI 发固定、无敏感信息的提示，并以账号 UUID 的前八位
@@ -71,7 +75,7 @@ blocked 与 webview 加载失败路径向 UI 发固定、无敏感信息的提�
 
 guest preload 只暴露：
 
-- `emit` / `onCommand` 的 Bridge v2 typed API；
+- `emit` / `onCommand` 的当前 Bridge v3 typed API；
 - `translateBatch` / `detectLanguage` 的窄代理 API。
 
 telegram-tt 不再读取 `window.__IM_HUB__`，也不直接向 im-hub 发 fetch/Bearer 请求。
@@ -93,8 +97,9 @@ telegram-tt 不再读取 `window.__IM_HUB__`，也不直接向 im-hub 发 fetch/
 
 自动测试覆盖 token 类型隔离、签名/过期、owner/manager/auditor、身份变更与显式撤销、
 Bearer 绕过、跨账号 grant、翻译代理、主进程等待/匹配/不匹配/过期/signed-out 状态，以及
-partition/account 解析。`0006` 只在按规则派生的测试库执行验证。
+partition/account 解析。telegram-tt 回归另覆盖 `SESSION_REVOKED`/`USER_DEACTIVATED` 进入 broken，
+同时锁住主 sender 的 `AUTH_KEY_UNREGISTERED` 既有语义。`0006` 只在按规则派生的测试库执行验证。
 
-M3-2 不宣称完成 telegram-tt 的 context/composer/message outbox 接线、发送 attempt 幂等、
-真实 Telegram fixture、TDLib + fork shadow 对账或安装包分发；这些仍按 M3-3 至 M3-5
-及后续发布任务验收。
+M3-3 已完成 context/composer 与发送 attempt 幂等，M3-4 已完成持久 message outbox 接线；
+真实 Telegram 故障矩阵、TDLib + fork shadow 对账和安装包分发仍按 M3-4/M3-5 及后续发布
+任务验收。

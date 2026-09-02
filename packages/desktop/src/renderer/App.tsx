@@ -18,6 +18,11 @@ import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
+import { BootstrapRetryController } from './bootstrap-retry.js'
+import {
+  nativeMessageTranslationBridge,
+  nativeMessageTranslationsFromRows,
+} from './native-bridge.js'
 
 type AuthState = 'checking' | 'loggedOut' | 'loggedIn'
 
@@ -67,6 +72,9 @@ export function App() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const bootstrapRef = useRef<((user: SessionUser) => Promise<void>) | null>(null)
+  const bootRetryRef = useRef<BootstrapRetryController | null>(null)
+  bootRetryRef.current ??= new BootstrapRetryController()
   const authGenerationRef = useRef(0)
   const messageMutationRevisionRef = useRef(0)
   const messageLoadGenerationRef = useRef(0)
@@ -88,6 +96,15 @@ export function App() {
         || useStore.getState().activeConversationId !== conversationId) return
       if (before !== messageMutationRevisionRef.current) continue
       setMessages(result.messages)
+      const state = useStore.getState()
+      const conversation = state.conversations.find(item => item.id === conversationId)
+      const account = state.accounts.find(item => item.id === conversation?.account_id)
+      if (conversation && account?.platform === 'signal') {
+        void nativeMessageTranslationBridge.sync(
+          account.id,
+          nativeMessageTranslationsFromRows(result.messages),
+        ).catch(() => {})
+      }
       return
     }
   }, [setMessages])
@@ -97,10 +114,14 @@ export function App() {
   const backToLogin = useCallback(() => {
     authGenerationRef.current += 1
     messageLoadGenerationRef.current += 1
+    bootRetryRef.current?.reset()
     wsRef.current?.close()
     wsRef.current = null
     void window.imHub?.nativeControl?.releaseAll().catch(() => {
       console.error('[native-control] 登出时撤销账号控制授权失败；本地能力已随页面卸载')
+    })
+    void window.imHub?.signalDesktop?.releaseAll().catch(() => {
+      console.error('[signal-desktop] 登出时关闭 Signal Desktop 宿主失败')
     })
     resetStore()
     setUser(null)
@@ -116,11 +137,11 @@ export function App() {
   }, [backToLogin])
 
   const bootstrap = useCallback(async (loggedInUser: SessionUser) => {
+    bootRetryRef.current?.cancel()
     const generation = ++authGenerationRef.current
     wsRef.current?.close()
     wsRef.current = null
     setUser(loggedInUser)
-    setBootError(null)
     try {
       const currentSessionUser = await api.refreshSessionUser()
       if (generation !== authGenerationRef.current) return
@@ -131,6 +152,8 @@ export function App() {
       const conversations = await api.listConversations()
       if (generation !== authGenerationRef.current) return
       setConversations(conversations.conversations)
+      bootRetryRef.current?.reset()
+      setBootError(null)
     } catch (e) {
       if (generation !== authGenerationRef.current) return
       if (e instanceof UnauthorizedError) {
@@ -139,7 +162,11 @@ export function App() {
         return
       }
       if (e instanceof NetworkError) {
-        setBootError('连不上服务端，检查它是否在运行')
+        setBootError('连不上服务端，正在自动重连')
+        bootRetryRef.current?.schedule(() => {
+          if (generation !== authGenerationRef.current) return
+          void bootstrapRef.current?.(loggedInUser)
+        })
       } else {
         console.error('[bootstrap] 拉取账号/会话列表失败', e)
       }
@@ -152,6 +179,13 @@ export function App() {
         if (event.conversationId === useStore.getState().activeConversationId) {
           messageMutationRevisionRef.current += 1
           applyTranslation(event.messageId, event.translatedText, event.revision)
+        }
+        if (event.platform === 'signal') {
+          void nativeMessageTranslationBridge.sync(event.accountId, [{
+            platformMessageId: event.platformMessageId,
+            translatedText: event.translatedText,
+            revision: event.revision,
+          }]).catch(() => {})
         }
         return
       }
@@ -186,12 +220,20 @@ export function App() {
           messageMutationRevisionRef.current += 1
           appendMessage({
             id: event.messageId,
+            platform_message_id: event.platformMessageId,
             direction: event.direction,
             body: event.body,
             sent_at: event.sentAt,
             edited_at: event.editedAt,
             translated_text: event.translatedBody,
           })
+        }
+        if (event.platform === 'signal' && event.translatedBody) {
+          void nativeMessageTranslationBridge.sync(event.accountId, [{
+            platformMessageId: event.platformMessageId,
+            translatedText: event.translatedBody,
+            revision: event.editedAt ?? 'initial',
+          }]).catch(() => {})
         }
         return
       }
@@ -223,6 +265,7 @@ export function App() {
     setAccounts, setConversations, applyTranslation, setAccountStatus,
     appendMessage, updateMessage, removeMessage, refreshMessages,
   ])
+  bootstrapRef.current = bootstrap
 
   // 启动时先看磁盘上有没有加密存档的登录态：有就跳过登录页直接进主界面，
   // 没有（或 safeStorage 解不出来）就显示登录页。
@@ -238,6 +281,7 @@ export function App() {
     return () => {
       authGenerationRef.current += 1
       messageLoadGenerationRef.current += 1
+      bootRetryRef.current?.reset()
       wsRef.current?.close()
     }
     // 只在挂载时跑一次，bootstrap 走 ref 闭包即可
@@ -313,8 +357,8 @@ export function App() {
             compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
           />
 
-          {/* 原生 webview 已建立后保持常驻。切到账号管理只隐藏宿主，不卸载 guest，
-              否则返回会话时会重连、丢滚动位置，“多开常驻”就只在同平台切账号时成立。 */}
+          {/* 三个平台统一进入原生工作区：Telegram/WhatsApp 使用常驻 webview，
+              Signal 使用同一物理窗口内的受控 WebContentsView。 */}
           <div style={{
             display: view === 'chat' ? 'flex' : 'none',
             flex: 1,

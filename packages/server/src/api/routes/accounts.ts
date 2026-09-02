@@ -1,15 +1,16 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { PLATFORMS } from '@im-hub/shared'
+import { ACCOUNT_CONNECTION_MODES, PLATFORMS } from '@im-hub/shared'
 import { db } from '../../db/client.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 
-/** 已经有可用适配器实现的平台。没实现的平台建了也连不上，直接挡在门口 */
-const IMPLEMENTED = new Set(['telegram', 'signal'])
+/** 已有可用适配器或受控原生壳的平台；没实现的平台建了也连不上，直接挡在门口。 */
+const IMPLEMENTED = new Set(['telegram', 'signal', 'whatsapp'])
 
 const createBody = z.object({
   platform: z.enum(PLATFORMS),
   displayName: z.string().trim().min(1, '账号名称不能为空').max(60, '账号名称最长 60 个字'),
+  connectionMode: z.enum(ACCOUNT_CONNECTION_MODES).optional(),
 })
 
 const answerBody = z.object({
@@ -48,7 +49,7 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
     // req.scoped 已经把当前 actor 的可见范围闭包进去了，漏过滤在结构上不可能发生。
     const accounts = await req.scoped.accounts().select([
       'id', 'platform', 'display_name', 'status',
-      'owner_user_id', 'team_id', 'history_available_from',
+      'owner_user_id', 'team_id', 'history_available_from', 'connection_mode',
     ]).execute()
     return { accounts }
   })
@@ -69,9 +70,24 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? '参数不合法' })
     }
     const { platform, displayName } = parsed.data
+    const connectionMode = parsed.data.connectionMode
+      ?? (platform === 'whatsapp' ? 'web_shell' : 'adapter')
 
     if (!IMPLEMENTED.has(platform)) {
       return reply.code(400).send({ error: `${platform} 的适配器还没接入，暂时建不了` })
+    }
+    if (connectionMode === 'cloud_api') {
+      return reply.code(400).send({
+        error: 'WhatsApp Business Platform 尚未配置，当前不能创建 Cloud API 账号',
+      })
+    }
+    const validConnectionMode = (platform === 'telegram' && connectionMode === 'adapter')
+      || (platform === 'signal'
+        && (connectionMode === 'adapter' || connectionMode === 'native_desktop'))
+      || (platform === 'whatsapp'
+        && (connectionMode === 'adapter' || connectionMode === 'web_shell'))
+    if (!validConnectionMode) {
+      return reply.code(400).send({ error: `${platform} 不支持 ${connectionMode} 账号模式` })
     }
 
     // 账号归属跟着创建者走：他在哪个组，账号就属于哪个组，管理员才看得见。
@@ -89,19 +105,25 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
         team_id: membership?.team_id ?? null,
         display_name: displayName,
         status: 'pending_auth',
+        connection_mode: connectionMode,
       })
-      .returning(['id', 'platform', 'display_name', 'status', 'owner_user_id', 'team_id', 'history_available_from'])
+      .returning([
+        'id', 'platform', 'display_name', 'status', 'owner_user_id', 'team_id',
+        'history_available_from', 'connection_mode',
+      ])
       .executeTakeFirstOrThrow()
 
-    // 不 await：鉴权要等人扫码，可能挂几分钟。接口立刻返回，二维码随后经
-    // WebSocket 推过来。connect() 本身也已经改成建完 client 就返回了。
-    void deps.adapters.connect(platform, {
-      id: account.id,
-      displayName: account.display_name,
-      credentialsRef: null,
-    }).catch((err: unknown) => {
-      console.error(`[accounts] 账号 ${account.id} 启动鉴权失败:`, err)
-    })
+    if (connectionMode === 'adapter') {
+      // 不 await：鉴权要等人扫码，可能挂几分钟。接口立刻返回，二维码随后经
+      // WebSocket 推过来。connect() 本身也已经改成建完 client 就返回了。
+      void deps.adapters.connect(platform, {
+        id: account.id,
+        displayName: account.display_name,
+        credentialsRef: null,
+      }).catch((err: unknown) => {
+        console.error(`[accounts] 账号 ${account.id} 启动鉴权失败:`, err)
+      })
+    }
 
     return reply.code(201).send({ account })
   })
@@ -118,6 +140,15 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
 
     const account = await requireOwnedAccount(req.actor.userId, params.data.id)
     if (!account) return reply.code(404).send({ error: '账号不存在或不属于你' })
+    if (account.connection_mode === 'native_desktop') {
+      return reply.code(409).send({ error: 'Signal 原生账号请直接在 Signal Desktop 中重新关联' })
+    }
+    if (account.connection_mode === 'web_shell') {
+      return reply.code(409).send({ error: 'WhatsApp Web 账号请直接在官方页面中重新关联' })
+    }
+    if (account.connection_mode === 'cloud_api') {
+      return reply.code(409).send({ error: 'WhatsApp Cloud API 账号请通过官方重新授权流程关联' })
+    }
     if (account.status === 'connected') {
       return reply.code(409).send({ error: '账号已经在线，不需要重新关联' })
     }
@@ -164,7 +195,10 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
     const row = await db.updateTable('accounts')
       .set({ display_name: parsed.data.displayName })
       .where('id', '=', params.data.id)
-      .returning(['id', 'platform', 'display_name', 'status', 'owner_user_id', 'team_id', 'history_available_from'])
+      .returning([
+        'id', 'platform', 'display_name', 'status', 'owner_user_id', 'team_id',
+        'history_available_from', 'connection_mode',
+      ])
       .executeTakeFirstOrThrow()
     return { account: row }
   })
@@ -200,13 +234,16 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
       .where('account_id', '=', account.id)
       .executeTakeFirstOrThrow()
 
-    // 先清平台数据。这一步失败就中止——宁可什么都没删，也不要删一半：
-    // 库里没了而平台侧还连着，是最难查的那种状态。
-    try {
-      await deps.adapters.purge(account.platform, account.id)
-    } catch (err) {
-      console.error(`[accounts] 账号 ${account.id} 清除平台数据失败，已中止删除:`, err)
-      return reply.code(500).send({ error: '清除平台数据失败，账号未删除。请查看服务端日志' })
+    if (account.connection_mode === 'adapter') {
+      // 先清适配器数据。这一步失败就中止——宁可什么都没删，也不要删一半。
+      // native_desktop 的 profile 与 web_shell 的 partition 归桌面主进程管理，
+      // 服务端不能误删平台本地数据。cloud_api 未来必须走单独的授权撤销流程。
+      try {
+        await deps.adapters.purge(account.platform, account.id)
+      } catch (err) {
+        console.error(`[accounts] 账号 ${account.id} 清除平台数据失败，已中止删除:`, err)
+        return reply.code(500).send({ error: '清除平台数据失败，账号未删除。请查看服务端日志' })
+      }
     }
 
     await db.deleteFrom('accounts').where('id', '=', account.id).execute()
@@ -217,7 +254,11 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
       /** 平台侧可能仍留着一个已关联设备，需要用户自己去移除 */
       manualCleanup: account.platform === 'signal'
         ? '请到手机 Signal 的「设置 → 已关联设备」里移除这台设备'
-        : null,
+        : account.platform === 'whatsapp'
+          ? account.connection_mode === 'cloud_api'
+            ? '请在 Meta Business 中确认该 WhatsApp Business Platform 授权已经撤销'
+            : '请到手机 WhatsApp 的「设置 → 已关联设备」里移除这个浏览器会话'
+          : null,
     }
   })
 
@@ -233,6 +274,9 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
 
     const account = await requireOwnedAccount(req.actor.userId, params.data.id)
     if (!account) return reply.code(404).send({ error: '账号不存在或不属于你' })
+    if (account.connection_mode !== 'adapter') {
+      return reply.code(409).send({ error: '该账号模式不接受服务端验证码或密码' })
+    }
 
     try {
       await deps.adapters.submitAuthAnswer(account.id, parsed.data.value)
@@ -253,7 +297,7 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
  */
 async function requireOwnedAccount(userId: string, accountId: string) {
   const row = await db.selectFrom('accounts')
-    .select(['id', 'platform', 'display_name', 'status', 'credentials_ref'])
+    .select(['id', 'platform', 'display_name', 'status', 'credentials_ref', 'connection_mode'])
     .where('id', '=', accountId)
     .where('owner_user_id', '=', userId)
     .executeTakeFirst()

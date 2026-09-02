@@ -5,6 +5,7 @@ import {
   telegramMessageKeyFromMtp,
   telegramMessageKeyFromTdlib,
   telegramServerMessageKey,
+  telegramTemporaryMessageKey,
 } from './telegram-message-id.js'
 
 const CHAT_ID = '-1001234567890'
@@ -41,6 +42,23 @@ describe('Telegram canonical message id', () => {
       source: 'tdlib',
       localMessageId: '987654321',
     })
+  })
+
+  it('telegram-tt 页面实例命名空间隔离重载后复用的本地 id', () => {
+    const firstInstance = '0123456789abcdef0123456789abcdef'
+    const secondInstance = 'fedcba9876543210fedcba9876543210'
+    const first = telegramTemporaryMessageKey(CHAT_ID, 'telegram-tt', '456.000001', firstInstance)
+    const second = telegramTemporaryMessageKey(CHAT_ID, 'telegram-tt', '456.000001', secondInstance)
+
+    expect(first).not.toBe(second)
+    expect(parseTelegramMessageKey(first)).toEqual({
+      chatId: CHAT_ID,
+      kind: 'temporary',
+      source: 'telegram-tt',
+      instanceId: firstInstance,
+      localMessageId: '456.000001',
+    })
+    expect(parseTelegramMessageKey(`${CHAT_ID}:temp:telegram-tt:short:456.000001`)).toBeNull()
   })
 
   it('拒绝跨 chat、畸形和越界服务器 id', () => {

@@ -9,14 +9,17 @@ function fakeAdapter(platform: Platform): PlatformAdapter {
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue('msg-1'),
+    fetchCurrentMessages: vi.fn().mockResolvedValue([]),
     onMessage: vi.fn(),
     onStatusChange: vi.fn(),
     onAuthChallenge: vi.fn(),
+    onAuthFailure: vi.fn(),
     onCredentialsUpdated: vi.fn(),
     onPlatformIdentityUpdated: vi.fn(),
     onMessageIdRemapped: vi.fn(),
-  submitAuthAnswer: vi.fn(),
-  purge: vi.fn(),
+    onMessageDeleted: vi.fn(),
+    submitAuthAnswer: vi.fn(),
+    purge: vi.fn(),
   }
 }
 
@@ -42,6 +45,14 @@ describe('AdapterManager', () => {
     const mgr = new AdapterManager([fakeAdapter('telegram')])
     await expect(mgr.send('nope', 'c', { body: 'x' }))
       .rejects.toThrow('account nope is not connected')
+  })
+
+  it('只把精确当前消息读取路由到账号的真实适配器', async () => {
+    const tg = fakeAdapter('telegram')
+    const mgr = new AdapterManager([tg])
+    await mgr.connect('telegram', account)
+    await expect(mgr.fetchCurrentMessages('a1', ['6639331234:3502'])).resolves.toEqual([])
+    expect(tg.fetchCurrentMessages).toHaveBeenCalledWith('a1', ['6639331234:3502'])
   })
 
   it('连接未注册的平台时抛错', async () => {
@@ -98,6 +109,19 @@ describe('AdapterManager', () => {
     expect(seen).toEqual([['a1', { kind: 'qr', payload: 'sgnl://x' }]])
   })
 
+  it('把已脱敏的鉴权失败汇聚到统一回调', () => {
+    const signal = fakeAdapter('signal')
+    const handlers: ((id: string, reason: string) => void)[] = []
+    signal.onAuthFailure = vi.fn((h) => { handlers.push(h) })
+
+    const seen: [string, string][] = []
+    const mgr = new AdapterManager([signal])
+    mgr.onAuthFailure((id, reason) => seen.push([id, reason]))
+
+    handlers[0]!('a1', '本机缺少 signal-cli')
+    expect(seen).toEqual([['a1', '本机缺少 signal-cli']])
+  })
+
   it('把凭据更新汇聚到统一回调', () => {
     const tg = fakeAdapter('telegram')
     const handlers: ((id: string, ref: string) => void)[] = []
@@ -130,12 +154,29 @@ describe('AdapterManager', () => {
     const handlers: ((id: string, o: string, n: string) => void)[] = []
     tg.onMessageIdRemapped = vi.fn((h) => { handlers.push(h as never) })
 
-    const seen: [string, string, string][] = []
+    const seen: [string, string, string, Platform][] = []
     const mgr = new AdapterManager([tg])
-    mgr.onMessageIdRemapped((id, o, n) => seen.push([id, o, n]))
+    mgr.onMessageIdRemapped((id, o, n, platform) => seen.push([id, o, n, platform]))
 
     handlers[0]!('a1', '3575644161', '3576692736')
-    expect(seen).toEqual([['a1', '3575644161', '3576692736']])
+    expect(seen).toEqual([['a1', '3575644161', '3576692736', 'telegram']])
+  })
+
+  it('把删除事实汇聚到统一回调', () => {
+    const tg = fakeAdapter('telegram')
+    const handlers: ((id: string, messageId: string, deletedAt: Date) => void)[] = []
+    tg.onMessageDeleted = vi.fn((handler) => { handlers.push(handler) })
+
+    const seen: [string, string, string, Platform][] = []
+    const mgr = new AdapterManager([tg])
+    mgr.onMessageDeleted((id, messageId, deletedAt, platform) => {
+      seen.push([id, messageId, deletedAt.toISOString(), platform])
+    })
+
+    handlers[0]!('a1', '6639331234:3497', new Date('2026-08-29T01:00:00.000Z'))
+    expect(seen).toEqual([
+      ['a1', '6639331234:3497', '2026-08-29T01:00:00.000Z', 'telegram'],
+    ])
   })
 
   it('disconnect 后账号不再可发送', async () => {

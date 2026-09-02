@@ -38,6 +38,7 @@ function fakeActorRepo(): ActorRepo {
 let app: FastifyInstance
 let translate: ReturnType<typeof vi.fn>
 let adapterSend: ReturnType<typeof vi.fn>
+let whatsappSend: ReturnType<typeof vi.fn>
 let token: string
 let auditorToken: string
 let accountId: string
@@ -75,10 +76,12 @@ beforeEach(async () => {
 
   translate = vi.fn()
   adapterSend = vi.fn().mockResolvedValue('platform-msg-id')
+  whatsappSend = vi.fn().mockResolvedValue('wamid.cloud-final')
 
   const deps: MessageRouteDeps = {
     adapters: { send: adapterSend } as never,
     gateway: { translate } as never,
+    whatsappCloud: { sendText: whatsappSend } as never,
   }
 
   ;({ buildServer } = await import('../server.js'))
@@ -98,6 +101,45 @@ afterAll(async () => {
 function auth(token_: string) {
   return { authorization: `Bearer ${token_}` }
 }
+
+describe('GET /api/conversations/:id/messages', () => {
+  it('返回平台规范消息键，并按原文方向选择中英译文', async () => {
+    const rows = await db.insertInto('messages').values([
+      {
+        conversation_id: conversationId, account_id: accountId, platform: 'telegram',
+        platform_message_id: 'english-message', direction: 'in', sender_external_id: 'c1',
+        body: 'Hello', body_lang: 'en', sent_at: new Date('2026-08-31T00:00:00Z'),
+        media_refs: JSON.stringify([]) as never, raw: JSON.stringify({}) as never,
+      },
+      {
+        conversation_id: conversationId, account_id: accountId, platform: 'telegram',
+        platform_message_id: 'chinese-message', direction: 'in', sender_external_id: 'c1',
+        body: '你好', body_lang: 'zh', sent_at: new Date('2026-08-31T00:01:00Z'),
+        media_refs: JSON.stringify([]) as never, raw: JSON.stringify({}) as never,
+      },
+    ]).returning(['id', 'platform_message_id']).execute()
+    const english = rows.find(row => row.platform_message_id === 'english-message')!
+    const chinese = rows.find(row => row.platform_message_id === 'chinese-message')!
+    await db.insertInto('message_translations').values([
+      { message_id: english.id, target_lang: 'zh', provider: 'deepl', translated_text: '你好' },
+      { message_id: chinese.id, target_lang: 'en', provider: 'deepl', translated_text: 'Hello' },
+    ]).execute()
+
+    const response = await app.inject({
+      method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: auth(token),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().messages).toEqual([
+      expect.objectContaining({
+        platform_message_id: 'english-message', body: 'Hello', translated_text: '你好',
+      }),
+      expect.objectContaining({
+        platform_message_id: 'chinese-message', body: '你好', translated_text: 'Hello',
+      }),
+    ])
+  })
+})
 
 describe('POST /api/messages/translate-preview', () => {
   it('看不到的会话返回 404，且不调用翻译网关', async () => {
@@ -235,6 +277,41 @@ describe('POST /api/messages/send', () => {
     expect(translate).not.toHaveBeenCalled()
     expect(adapterSend).toHaveBeenCalledWith(accountId, 'pc-1', { body: 'Confirmed English text' })
     expect(res.json()).toEqual({ platformMessageId: 'platform-msg-id', sentText: 'Confirmed English text', provider: undefined })
+  })
+
+  it('WhatsApp cloud_api 强制使用 attemptId 和最终 wamid，不走网页壳 adapter', async () => {
+    await db.updateTable('accounts').set({
+      platform: 'whatsapp', connection_mode: 'cloud_api',
+    }).where('id', '=', accountId).execute()
+    const attemptId = '11111111-1111-4111-8111-111111111111'
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/send', headers: auth(token),
+      payload: { conversationId, body: 'Confirmed text', preTranslated: true, attemptId },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().platformMessageId).toBe('wamid.cloud-final')
+    expect(whatsappSend).toHaveBeenCalledWith({
+      attemptId,
+      accountId,
+      conversationId,
+      actorUserId: OWNER_ID,
+      targetExternalId: 'contact-1',
+      body: 'Confirmed text',
+    })
+    expect(adapterSend).not.toHaveBeenCalled()
+  })
+
+  it('WhatsApp cloud_api 缺 attemptId 时拒绝，不能退回无幂等发送', async () => {
+    await db.updateTable('accounts').set({
+      platform: 'whatsapp', connection_mode: 'cloud_api',
+    }).where('id', '=', accountId).execute()
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/send', headers: auth(token),
+      payload: { conversationId, body: 'Confirmed text', preTranslated: true },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(whatsappSend).not.toHaveBeenCalled()
+    expect(adapterSend).not.toHaveBeenCalled()
   })
 
   it('preTranslated 缺省为 false 时保持旧行为：服务端翻译后发出（向后兼容旧客户端）', async () => {
