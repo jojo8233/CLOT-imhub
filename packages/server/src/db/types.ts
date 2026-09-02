@@ -5,6 +5,7 @@ import type {
   Direction,
   Platform,
   Role,
+  CustomerProfileField,
 } from '@im-hub/shared'
 import type { TelegramShadowEventType, TelegramShadowSource } from '../shadow/telegram.js'
 
@@ -68,6 +69,30 @@ export interface ConversationsTable {
   last_message_at: Timestamp | null
   /** null 表示自动跟随客户语言，有值表示员工按会话锁定了目标语言 */
   target_lang: string | null
+}
+
+export interface CustomerProfilesTable {
+  conversation_id: string
+  name: string | null
+  age_location: string | null
+  occupation: string | null
+  family: string | null
+  interests: string | null
+  other: string | null
+  revision: number
+  updated_by_user_id: string | null
+  created_at: Timestamp
+  updated_at: Timestamp
+}
+
+export interface AuditLogsTable {
+  id: Generated<string>
+  actor_user_id: string | null
+  account_id: string
+  conversation_id: string
+  action: string
+  changed_fields: JSONColumnType<CustomerProfileField[]>
+  created_at: Timestamp
 }
 
 export interface MessagesTable {
@@ -195,6 +220,8 @@ export interface Database {
   team_members: TeamMembersTable
   accounts: AccountsTable
   conversations: ConversationsTable
+  customer_profiles: CustomerProfilesTable
+  audit_logs: AuditLogsTable
   messages: MessagesTable
   message_translations: MessageTranslationsTable
   message_reactions: MessageReactionsTable

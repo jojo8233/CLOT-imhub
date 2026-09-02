@@ -317,7 +317,7 @@ Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 att
 | 邮箱 | 角色 | 可见范围 | 说明 |
 |---|---|---|---|
 | `owner@example.com` | owner | 全部账号（2 个） | 老板，无限制 |
-| `auditor@example.com` | auditor | 全部账号（2 个），只读 | 风控/审计，`resolveScope` 里 `requiresAudit: true`，但 P0 还没有实际的审计日志落地（见第 6 节已知限制） |
+| `auditor@example.com` | auditor | 全部账号（2 个），只读 | 风控/审计，`resolveScope` 里 `requiresAudit: true`；M4-1 只落客户档案写入的最小审计，auditor 读取审计和完整查询仍未实现 |
 | `manager@example.com` | manager | 仅自己**带队**（`is_lead=true`）的组内账号（1 个） | 只是组员（`is_lead=false`）不算带队，看不到组内账号——这是刻意设计，见 `rbac/scope.ts` 的注释 |
 | `agent@example.com` | agent | 仅自己名下的账号（1 个） | 属于"默认组"，manager 能看到他 |
 | `outsider@example.com` | agent | 仅自己名下的账号（1 个），和 agent 的不是同一个 | 不属于任何组，用来证明 agent 之间互相看不到、manager 也看不到组外人 |
@@ -390,6 +390,28 @@ Telegram：
 - [ ] WhatsApp 翻译坞只在新出站 DOM `data-id` 确认后显示成功；制造结果未知时相同 attempt 不得重复点击发送
 - [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
+
+### 5.4 客户档案（M4-1）
+
+右侧“客户档案”已经接通人工读取、编辑和保存。档案始终绑定 im-hub 内部
+`conversations.id`，不会把 Telegram、Signal 或 WhatsApp 的平台会话标识当成内部主键，也不会
+自动合并跨平台或跨账号联系人。
+
+- owner 可读取和维护全局可见会话；manager 只能维护其当前带领团队内的会话；agent 只能维护
+  本人账号下的会话；auditor 可读取全局可见档案，但界面与 API 都固定只读；
+- 保存携带当前 `revision` 和本地单调请求编号，同一时刻只允许一个保存。遇到其他员工先保存时
+  返回冲突，界面保留用户实际改过的字段、把未改字段合并为服务器最新值，并逐字段展示最新快照，
+  避免完整表单重存时静默覆盖他人的无关修改；
+- 每次实际变化都在同一数据库事务内记录最小审计事实。审计只包含操作者、内部账号/会话、动作、
+  发生变化的字段名和时间，不保存字段旧值、新值、聊天正文或平台联系人标识；重复保存相同内容
+  不增加 revision，也不制造审计记录；
+- 自动提取、提取建议审核、客户档案库、审计查询界面、关键词告警和管理后台尚未实现；当前
+  “重新提取”按钮保持禁用，人工资料是权威值；
+- WhatsApp Web 的可见 DOM 正文不会因本功能上传或形成中央消息归档；本功能没有修改三平台翻译、
+  composer、发送 attempt 或平台消息 ID，也不需要新的真实平台发送验收。
+
+部署包含 M4-1 的版本前先执行数据库 migration `0013_customer_profiles.ts`。如果 UI 需要回滚，停止
+调用档案 API 即可；档案开始承载真实资料后，不要通过 down migration 删除表，应使用向前修复。
 
 ---
 

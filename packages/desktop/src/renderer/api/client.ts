@@ -1,5 +1,7 @@
 import type {
   AccountConnectionMode,
+  CustomerProfile,
+  CustomerProfileUpdate,
   NativeControlGrantResponse,
   WsServerEvent,
 } from '@im-hub/shared'
@@ -232,6 +234,13 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
+  getCustomerProfile: (conversationId: string, signal?: AbortSignal) =>
+    request<CustomerProfile>(`/api/conversations/${conversationId}/customer-profile`, { signal }),
+  updateCustomerProfile: (conversationId: string, update: CustomerProfileUpdate) =>
+    request<CustomerProfile>(`/api/conversations/${conversationId}/customer-profile`, {
+      method: 'PUT',
+      body: JSON.stringify(update),
+    }),
   getWhatsAppCloudConfig: () => request<{
     appId: string
     configId: string

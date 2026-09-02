@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { emptyCustomerProfile } from '@im-hub/shared'
 import { api, logout } from './client.js'
 
 function jsonResponse(body: unknown): Response {
@@ -37,5 +38,49 @@ describe('desktop API request headers', () => {
     expect(loginHeaders['Content-Type']).toBe('application/json')
     expect(grantHeaders['Content-Type']).toBeUndefined()
     expect(relinkHeaders['Content-Type']).toBeUndefined()
+  })
+
+  it('客户档案 GET 可取消，PUT 发送完整六字段和 expectedRevision', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        token: 'test-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Test' },
+      }))
+      .mockResolvedValueOnce(jsonResponse(emptyCustomerProfile('conversation-1')))
+      .mockResolvedValueOnce(jsonResponse({
+        ...emptyCustomerProfile('conversation-1'),
+        name: 'Synthetic Name',
+        revision: 1,
+        updatedAt: '2026-09-02T00:00:00.000Z',
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+
+    await api.login('agent@example.test', 'synthetic-password')
+    await api.getCustomerProfile('conversation-1', controller.signal)
+    await api.updateCustomerProfile('conversation-1', {
+      name: 'Synthetic Name',
+      ageLocation: null,
+      occupation: null,
+      family: null,
+      interests: null,
+      other: null,
+      expectedRevision: 0,
+    })
+
+    expect(fetchMock.mock.calls[1]?.[0]).toContain(
+      '/api/conversations/conversation-1/customer-profile',
+    )
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ signal: controller.signal })
+    expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('PUT')
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      name: 'Synthetic Name',
+      ageLocation: null,
+      occupation: null,
+      family: null,
+      interests: null,
+      other: null,
+      expectedRevision: 0,
+    })
   })
 })
