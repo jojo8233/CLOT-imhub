@@ -318,51 +318,68 @@ export function CustomerProfileLibraryContent({
                 重试
               </button>
             </LibraryNotice>
-          ) : state.hasLoaded && state.items.length === 0 ? (
-            <LibraryNotice>
-              {hasFilters ? '没有匹配的客户档案' : '还没有客户档案，可在会话右侧手动补充'}
-            </LibraryNotice>
           ) : (
             <>
-              {state.items.map(item => {
-                const selected = selectedItem?.conversationId === item.conversationId
-                return (
-                  <button
-                    key={item.conversationId}
-                    className="ih-btn ih-row"
-                    type="button"
-                    onClick={() => onSelect(item.conversationId)}
-                    style={{
-                      ...rowStyle,
-                      background: selected ? theme.color.limeSoft : 'transparent',
-                      borderColor: selected ? theme.color.limeDeep : theme.color.border,
-                    }}
-                  >
-                    <span style={rowTitleStyle}>{profileTitle(item)}</span>
-                    <span style={rowMetaStyle}>
-                      {PLATFORM_LABEL[item.platform] ?? item.platform} · {item.accountDisplayName}
-                    </span>
-                    <span className="ih-selectable" style={rowPreviewStyle}>
-                      {profilePreview(item)}
-                    </span>
-                  </button>
-                )
-              })}
-              {state.appendError && (
+              {state.error && state.hasLoaded && (
                 <LibraryNotice tone="error">
-                  {state.appendError}
-                  <button className="ih-btn" type="button" onClick={onLoadMore} style={inlineButtonStyle}>
-                    重试加载更多
+                  {state.error}
+                  <button className="ih-btn" type="button" onClick={onRetry} style={inlineButtonStyle}>
+                    重试
                   </button>
                 </LibraryNotice>
               )}
-              {!state.appendError && state.activeLoad?.mode === 'append' && (
-                <LibraryNotice>正在加载更多…</LibraryNotice>
-              )}
-              {!state.appendError && state.nextCursor && !state.activeLoad && (
-                <button className="ih-btn" type="button" onClick={onLoadMore} style={loadMoreStyle}>
-                  加载更多
-                </button>
+              {state.hasLoaded && state.items.length === 0 && !state.error ? (
+                <LibraryNotice>
+                  {hasFilters ? '没有匹配的客户档案' : '还没有客户档案，可在会话右侧手动补充'}
+                </LibraryNotice>
+              ) : (
+                <>
+                  {state.items.map(item => {
+                    const selected = selectedItem?.conversationId === item.conversationId
+                    return (
+                      <button
+                        key={item.conversationId}
+                        className="ih-btn ih-row"
+                        type="button"
+                        onClick={() => onSelect(item.conversationId)}
+                        style={{
+                          ...rowStyle,
+                          background: selected ? theme.color.limeSoft : 'transparent',
+                          borderColor: selected ? theme.color.limeDeep : theme.color.border,
+                        }}
+                      >
+                        <span style={rowTitleStyle}>{profileTitle(item)}</span>
+                        <span style={rowMetaStyle}>
+                          {PLATFORM_LABEL[item.platform] ?? item.platform} · {item.accountDisplayName}
+                        </span>
+                        <span className="ih-selectable" style={rowPreviewStyle}>
+                          {profilePreview(item)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                  {state.appendError && (
+                    <LibraryNotice tone="error">
+                      {state.appendError}
+                      <button
+                        className="ih-btn"
+                        type="button"
+                        onClick={onLoadMore}
+                        style={inlineButtonStyle}
+                      >
+                        重试加载更多
+                      </button>
+                    </LibraryNotice>
+                  )}
+                  {!state.appendError && state.activeLoad?.mode === 'append' && (
+                    <LibraryNotice>正在加载更多…</LibraryNotice>
+                  )}
+                  {!state.appendError && state.nextCursor && !state.activeLoad && (
+                    <button className="ih-btn" type="button" onClick={onLoadMore} style={loadMoreStyle}>
+                      加载更多
+                    </button>
+                  )}
+                </>
               )}
             </>
           )}

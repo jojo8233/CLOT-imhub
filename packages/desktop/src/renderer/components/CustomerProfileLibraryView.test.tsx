@@ -102,4 +102,36 @@ describe('CustomerProfileLibraryContent', () => {
     expect(renderContent({ state: appendFailedState(), selectedItem: null }))
       .toContain('重试加载更多')
   })
+
+  it('keeps loaded rows visible and offers retry after a replacement refresh fails', () => {
+    const html = renderContent({
+      state: viewState({
+        items: [profileItem],
+        hasLoaded: true,
+        error: '连不上服务端，请稍后重试',
+      }),
+      selectedItem: profileItem,
+      detail: <div>Selected profile detail</div>,
+    })
+
+    expect(html).toContain('连不上服务端，请稍后重试')
+    expect(html).toContain('重试')
+    expect(html).toContain('Synthetic Customer')
+    expect(html).toContain('Selected profile detail')
+  })
+
+  it('shows a replacement refresh error instead of an empty-library notice', () => {
+    const html = renderContent({
+      state: viewState({
+        items: [],
+        hasLoaded: true,
+        error: '客户档案库加载失败，请稍后重试',
+      }),
+      selectedItem: null,
+    })
+
+    expect(html).toContain('客户档案库加载失败，请稍后重试')
+    expect(html).toContain('重试')
+    expect(html).not.toContain('还没有客户档案')
+  })
 })
