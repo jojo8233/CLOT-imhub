@@ -27,6 +27,26 @@ export type SaveCustomerProfileResult =
 
 type CustomerProfileRow = Selectable<CustomerProfilesTable>
 
+const preciseUtcTimestamp = sql<string>`
+  to_char(
+    statement_timestamp() at time zone 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+  )
+`
+
+function preciseUtcTimestampFor(reference: string) {
+  return sql<string>`
+    to_char(
+      ${sql.ref(reference)} at time zone 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+    )
+  `
+}
+
+function timestampParameter(value: string) {
+  return sql<Date>`cast(${value} as timestamptz)`
+}
+
 function timestampToIso(value: Date | string): string {
   return (value instanceof Date ? value : new Date(value)).toISOString()
 }
@@ -81,7 +101,9 @@ export class ScopedCustomerProfileRepo {
     const cursor = request.cursor
       ? decodeCustomerProfileCursor(request.cursor, fingerprint)
       : null
-    const snapshotAt = cursor?.snapshotAt ?? new Date().toISOString()
+    const snapshotAt = cursor?.snapshotAt ?? (await this.db
+      .selectNoFrom(preciseUtcTimestamp.as('snapshot_at'))
+      .executeTakeFirstOrThrow()).snapshot_at
 
     let query = applyAccountScope(
       this.db.selectFrom('accounts')
@@ -101,7 +123,7 @@ export class ScopedCustomerProfileRepo {
         eb('customer_profiles.interests', 'is not', null),
         eb('customer_profiles.other', 'is not', null),
       ]))
-      .where('customer_profiles.updated_at', '<=', new Date(snapshotAt))
+      .where('customer_profiles.updated_at', '<=', timestampParameter(snapshotAt))
 
     if (platform) query = query.where('accounts.platform', '=', platform)
     if (accountId) query = query.where('accounts.id', '=', accountId)
@@ -122,9 +144,9 @@ export class ScopedCustomerProfileRepo {
 
     if (cursor) {
       query = query.where(({ and, eb, or }) => or([
-        eb('customer_profiles.updated_at', '<', new Date(cursor.updatedAt)),
+        eb('customer_profiles.updated_at', '<', timestampParameter(cursor.updatedAt)),
         and([
-          eb('customer_profiles.updated_at', '=', new Date(cursor.updatedAt)),
+          eb('customer_profiles.updated_at', '=', timestampParameter(cursor.updatedAt)),
           eb('conversations.id', '<', cursor.conversationId),
         ]),
       ]))
@@ -145,6 +167,7 @@ export class ScopedCustomerProfileRepo {
         'customer_profiles.other',
         'customer_profiles.revision',
         'customer_profiles.updated_at',
+        preciseUtcTimestampFor('customer_profiles.updated_at').as('updated_at_cursor'),
       ])
       .orderBy('customer_profiles.updated_at', 'desc')
       .orderBy('conversations.id', 'desc')
@@ -174,7 +197,7 @@ export class ScopedCustomerProfileRepo {
     const nextCursor = rows.length > limit && lastRow
       ? encodeCustomerProfileCursor({
         snapshotAt,
-        updatedAt: timestampToIso(lastRow.updated_at),
+        updatedAt: lastRow.updated_at_cursor,
         conversationId: lastRow.conversation_id,
         fingerprint,
       })

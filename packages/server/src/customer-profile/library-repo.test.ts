@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { Kysely, PostgresDialect } from 'kysely'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import pg from 'pg'
 import type { Role } from '@im-hub/shared'
 import type { Database } from '../db/types.js'
@@ -331,6 +331,32 @@ describe('ScopedCustomerProfileRepo.list', () => {
       ...secondPage.items,
       ...thirdPage.items,
     ].map(item => item.conversationId)).not.toContain(missingProfileConversationId)
+  })
+
+  it('paginates profiles whose timestamps differ only below JavaScript millisecond precision', async () => {
+    await db.updateTable('customer_profiles')
+      .set({
+        updated_at: sql<Date>`${'2026-09-02T00:00:00.123456Z'}::timestamptz`,
+      })
+      .where('conversation_id', '=', percentConversationId)
+      .execute()
+    await db.updateTable('customer_profiles')
+      .set({
+        updated_at: sql<Date>`${'2026-09-02T00:00:00.123123Z'}::timestamptz`,
+      })
+      .where('conversation_id', '=', primaryConversationId)
+      .execute()
+
+    const firstPage = await ownerRepo.list({ platform: 'telegram', limit: 1 })
+    const secondPage = await ownerRepo.list({
+      platform: 'telegram',
+      limit: 1,
+      cursor: firstPage.nextCursor ?? undefined,
+    })
+
+    expect(firstPage.items.map(item => item.conversationId)).toEqual([percentConversationId])
+    expect(secondPage.items.map(item => item.conversationId)).toEqual([primaryConversationId])
+    expect(secondPage.nextCursor).toBeNull()
   })
 
   it('rejects a cursor when the search filters change', async () => {
