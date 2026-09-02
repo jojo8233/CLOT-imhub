@@ -53,7 +53,7 @@ owner    → 不过滤
 ┌──────────────────────────────────────────────┐
 │ server (Node 24 + TypeScript + Fastify)      │
 │  ├── adapters/  telegram signal zoom whatsapp│
-│  ├── pipeline/  translate keyword summary    │
+│  ├── pipeline/  translate keyword            │
 │  ├── rbac/      scope filter + audit         │
 │  └── api/       REST + WS gateway            │
 └───────┬──────────────────────┬───────────────┘
@@ -210,8 +210,8 @@ interface TranslationProvider {
 ```
 ┌────────┬──────────────────────────┬─────────────┐
 │ 账号   │  会话消息                │  客户档案   │
-│ 列表   │  原文 / 译文双栏         │  AI 摘要    │
-│ 多平台 ├──────────────────────────┤  + 人工编辑 │
+│ 列表   │  原文 / 译文双栏         │  人工档案   │
+│ 多平台 ├──────────────────────────┤  手动维护   │
 │ 多开   │  智能输入区              │             │
 │        │  中文输入 → 实时译 → 发  │  告警提示   │
 └────────┴──────────────────────────┴─────────────┘
