@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely'
 import type { ScopeFilter } from '@im-hub/shared'
 import type { Database } from '../db/types.js'
 import { applyAccountScope } from './apply.js'
+import { ScopedCustomerProfileRepo } from '../customer-profile/repo.js'
 
 /**
  * 每请求构造一次，把当前 actor 的可见范围闭包进去。
@@ -31,6 +32,10 @@ export class ScopedDb {
       this.db.selectFrom('accounts').innerJoin('conversations', 'conversations.account_id', 'accounts.id'),
       this.scope,
     )
+  }
+
+  customerProfiles(): ScopedCustomerProfileRepo {
+    return new ScopedCustomerProfileRepo(this.db, this.scope)
   }
 
   /**

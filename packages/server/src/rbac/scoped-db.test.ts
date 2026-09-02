@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely'
 import type { Database } from '../db/types.js'
+import { ScopedCustomerProfileRepo } from '../customer-profile/repo.js'
 import { ScopedDb } from './scoped-db.js'
 
 const db = new Kysely<Database>({
@@ -47,5 +48,10 @@ describe('ScopedDb', () => {
   it('暴露 scope 供需要审计的调用方判断', () => {
     const scope = { kind: 'all', requiresAudit: true } as const
     expect(new ScopedDb(db, scope).scope).toEqual(scope)
+  })
+
+  it('customerProfiles() 返回闭包当前 scope 的聚焦仓储', () => {
+    const scoped = new ScopedDb(db, { kind: 'self', userId: 'u9', requiresAudit: false })
+    expect(scoped.customerProfiles()).toBeInstanceOf(ScopedCustomerProfileRepo)
   })
 })
