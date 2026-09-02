@@ -10,7 +10,7 @@
 1. **多平台多开** — 一个员工同时经营 Telegram / Signal / Zoom / WhatsApp 上的多个账号，互不串号
 2. **多引擎翻译** — DeepL / OpenAI / Claude 自主切换，收到的消息自动译成中文，发出的中文自动译成客户语言
 3. **团队管理** — 管理员分组带队，看得到组内员工的账号状态、客户档案与告警
-4. **客户沉淀** — 聊天记录自动提炼客户档案，支持人工修改补充；关键词命中时提醒管理员，避免销售漏接关键信号
+4. **客户沉淀** — 员工按会话维护客户档案；关键词命中时提醒管理员，避免销售漏接关键信号
 
 ## 2. 非目标（明确不做）
 
@@ -53,7 +53,7 @@ owner    → 不过滤
 ┌──────────────────────────────────────────────┐
 │ server (Node 24 + TypeScript + Fastify)      │
 │  ├── adapters/  telegram signal zoom whatsapp│
-│  ├── pipeline/  translate keyword summary    │
+│  ├── pipeline/  translate keyword            │
 │  ├── rbac/      scope filter + audit         │
 │  └── api/       REST + WS gateway            │
 └───────┬──────────────────────┬───────────────┘
@@ -138,11 +138,10 @@ messages(id, conversation_id, account_id, platform, direction,
          sent_at, ingested_at, raw jsonb)
 message_translations(message_id, target_lang, provider, translated_text, created_at)
 
--- 客户档案
-customer_profiles(id, conversation_id UNIQUE,
-                  ai_summary jsonb,      -- 每次重算覆盖
-                  manual_fields jsonb,   -- 人工填写，永不被覆盖
-                  ai_generated_at, manual_updated_by, manual_updated_at)
+-- 客户档案（人工维护）
+customer_profiles(conversation_id PRIMARY KEY,
+                  name, age_location, occupation, family, interests, other,
+                  revision, updated_by_user_id, created_at, updated_at)
 
 -- 关键词告警
 keyword_rules(id, scope_team_id NULL, pattern, match_type, severity,
@@ -171,37 +170,30 @@ interface TranslationProvider {
 - **选型建议**：DeepL 处理欧洲语系性价比最高，作为默认；需要口语化改写或长上下文时切 Claude（`claude-sonnet-5`）
 - API key 存服务端，客户端永不接触
 
-## 8. 客户档案与摘要
+## 8. 客户档案
 
 ### 8.1 字段
 
 | 字段 | 说明 |
 |---|---|
-| `name` / `preferred_name` | 姓名、称呼 |
-| `age_range` | 年龄段 |
-| `location` / `timezone` | 居住地、时区 |
-| `language` | 常用语言 |
+| `name` | 姓名、称呼 |
+| `age_location` | 年龄、居住地 |
 | `occupation` | 职业 |
 | `family` | 家庭情况 |
 | `interests` | 兴趣偏好 |
-| `category_preference` | 品类偏好 |
-| `budget_level` | 预算区间 / 客单价水平 |
-| `stage` | 决策阶段 |
-| `next_followup_at` | 下次跟进时间 |
-| `taboo_topics` | 禁忌话题 |
-| `interaction` | 互动情况：首次接触、最近互动、消息频次、平均响应时长 |
-| `notes` | 自由备注 |
+| `other` | 其他人工备注 |
 
-### 8.2 AI 与人工物理分离
+### 8.2 人工资料是唯一权威来源
 
-`ai_summary` 与 `manual_fields` 分两列存储。重算只写 `ai_summary`；读取时按字段名做 `manual_fields` 覆盖 `ai_summary` 的合并。UI 上每个字段标注来源（AI 推断 / 人工确认）。人工改过的字段永不被自动覆盖。
+客户档案不分析聊天正文，也不调用模型自动生成。员工在当前内部会话右栏填写六个字段，保存时携带
+`revision` 做乐观并发控制；发生冲突时保留员工实际修改并展示服务器最新值，不能静默覆盖其他人的更新。
 
-### 8.3 生成
+### 8.3 维护与审计
 
-- **触发**：会话静默 10 分钟后入队 + 每日兜底全量 + 手动「重新生成」按钮
-- **模型**：Claude 结构化输出（JSON schema 约束），保证字段稳定
-- **上下文**：取该会话最近 N 条消息（原文优先，缺失时用译文）
-- **历史缺口**：`accounts.history_available_from` 有值时，prompt 中声明记录不完整，UI 提示员工手动补充
+- **触发**：员工显式点击“手动补充”并保存，不设后台自动任务
+- **权限**：owner、当前带队范围内的 manager 和账号所有者可写，auditor 只读
+- **审计**：实际变化与档案保存处于同一事务；只记录操作者、内部目标、变化字段名和时间，不记录字段值
+- **范围**：不提供“自动提取”或“重新提取”入口，不因档案功能上传 WhatsApp Web 可见 DOM 正文
 
 ## 9. 关键词告警
 
@@ -218,8 +210,8 @@ interface TranslationProvider {
 ```
 ┌────────┬──────────────────────────┬─────────────┐
 │ 账号   │  会话消息                │  客户档案   │
-│ 列表   │  原文 / 译文双栏         │  AI 摘要    │
-│ 多平台 ├──────────────────────────┤  + 人工编辑 │
+│ 列表   │  原文 / 译文双栏         │  人工档案   │
+│ 多平台 ├──────────────────────────┤  手动维护   │
 │ 多开   │  智能输入区              │             │
 │        │  中文输入 → 实时译 → 发  │  告警提示   │
 └────────┴──────────────────────────┴─────────────┘
@@ -229,7 +221,7 @@ interface TranslationProvider {
 - 中栏消息支持原文/译文切换与并排两种模式
 - 发送前展示译文预览，员工确认后发出
 - WhatsApp 账号被选中时，中栏整块替换为 `WebContentsView`
-- 右栏档案面板每个字段可就地编辑，编辑即写入 `manual_fields`
+- 右栏档案面板提供显式“手动补充”，保存后写入结构化档案字段
 
 ## 11. 错误处理与降级
 
@@ -239,16 +231,15 @@ interface TranslationProvider {
 | TDLib 掉线 | 指数退避重连，账号状态置 `reconnecting`，客户端显示黄色状态点 |
 | signal-cli daemon 崩溃 | 进程守护自动重启，重启后重新 attach 所有账号 |
 | WhatsApp 注入失效 | 上报 `selector_mismatch` 事件，账号置 `degraded`，其他平台不受影响 |
-| 摘要生成失败 | 保留上次 `ai_summary`，不清空；记录失败次数，连续 3 次告警 |
 | Postgres 不可用 | 消息暂存 Redis 队列，恢复后回放，不丢消息 |
 
 ## 12. 测试策略
 
 - **适配器层**：录制真实消息作为 fixture，离线回放做归一化断言。不依赖真实网络
-- **pipeline**：翻译/关键词/摘要的核心逻辑写成纯函数，单元测试覆盖
-- **翻译与摘要**：mock provider，断言调用参数与 fallback 顺序，不烧真实额度
+- **pipeline**：翻译/关键词的核心逻辑写成纯函数，单元测试覆盖
+- **翻译**：mock provider，断言调用参数与 fallback 顺序，不烧真实额度
 - **RBAC**：scope 过滤器逐角色断言可见集合，这是安全边界，必须有测试
-- **E2E**：Playwright + Electron，覆盖登录 → 选账号 → 收消息 → 翻译 → 发送 → 档案生成主链路
+- **E2E**：Playwright + Electron，覆盖登录 → 选账号 → 收消息 → 翻译 → 发送 → 手动保存档案主链路
 
 ## 13. 交付阶段
 
@@ -256,7 +247,7 @@ interface TranslationProvider {
 |---|---|---|
 | **P0** | 服务端骨架 + RBAC + Telegram 适配器 + 消息表 + 翻译网关 + 客户端基础 UI | 单个 Telegram 账号能收发并自动翻译，权限过滤生效 |
 | **P1** | Signal 扫码接入 + 关键词监控 + 告警闭环 + 员工申请权限 | Signal 多账号在线，关键词命中推达管理员并可确认 |
-| **P2** | 客户档案（自动 + 人工）+ 管理后台 + 审计日志 | 档案自动生成且人工编辑不被覆盖，auditor 查阅留痕 |
+| **P2** | 人工客户档案 + 管理后台 + 审计日志 | 档案人工保存与冲突保护可用，auditor 查阅留痕 |
 | **P3** | WhatsApp 网页容器 + Zoom 接入 | 四平台全部可用 |
 
 P0 必须先跑通。Telegram 是四个平台里最干净的，用它验证「多开 → 入库 → 翻译 → 前端」整条链路，后面三个平台只是往同一个接口填实现。

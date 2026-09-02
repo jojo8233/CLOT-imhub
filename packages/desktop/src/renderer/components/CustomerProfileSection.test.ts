@@ -88,7 +88,7 @@ function renderView(
 }
 
 describe('CustomerProfileSectionView', () => {
-  it('查看态显示服务器档案并为可写角色提供手动补充', () => {
+  it('查看态只为可写角色提供一个人工维护入口', () => {
     const html = renderView(loadedEditorState({
       ...emptyCustomerProfile('c'),
       name: 'Synthetic Name',
@@ -96,8 +96,8 @@ describe('CustomerProfileSectionView', () => {
     }))
     expect(html).toContain('Synthetic Name')
     expect(html).toContain('尚未填写')
-    expect(html).toContain('手动补充')
-    expect(html).toContain('重新提取（后续 M4）')
+    expect(html).toMatch(/<button[^>]*>手动补充<\/button>/)
+    expect(html.match(/<button\b/g)).toHaveLength(1)
   })
 
   it('auditor 查看态不渲染编辑入口', () => {
