@@ -854,7 +854,7 @@ git commit -m "feat(desktop): add customer profile editor state"
 
 **Files:**
 - Create: `packages/desktop/src/renderer/components/CustomerProfileSection.tsx`
-- Create: `packages/desktop/src/renderer/components/CustomerProfileSection.test.tsx`
+- Create: `packages/desktop/src/renderer/components/CustomerProfileSection.test.ts`
 - Modify: `packages/desktop/src/renderer/components/CustomerPanel.tsx`
 
 **Interfaces:**
@@ -962,7 +962,7 @@ Also test loading, initial load failure with a “重试加载” button, confli
 
 - [ ] **Step 2: Run the view tests to verify RED**
 
-Run: `pnpm exec vitest run packages/desktop/src/renderer/components/CustomerProfileSection.test.tsx`
+Run: `pnpm exec vitest run packages/desktop/src/renderer/components/CustomerProfileSection.test.ts`
 
 Expected: FAIL because the component module does not exist.
 
@@ -1071,7 +1071,7 @@ Remove the old local `PROFILE_FIELDS`, `NotWired` badge, explanatory “服务�
 
 - [ ] **Step 6: Run GREEN and desktop regressions**
 
-Run: `pnpm exec vitest run packages/desktop/src/renderer/components/CustomerProfileSection.test.tsx packages/desktop/src/renderer/customer-profile-editor.test.ts packages/desktop/src/renderer/api/client.test.ts packages/desktop/src/renderer/store.test.ts`
+Run: `pnpm exec vitest run packages/desktop/src/renderer/components/CustomerProfileSection.test.ts packages/desktop/src/renderer/customer-profile-editor.test.ts packages/desktop/src/renderer/api/client.test.ts packages/desktop/src/renderer/store.test.ts`
 
 Expected: all tests PASS.
 
@@ -1086,7 +1086,7 @@ Run: `git diff --check`
 Expected: no output.
 
 ```bash
-git add packages/desktop/src/renderer/components/CustomerProfileSection.tsx packages/desktop/src/renderer/components/CustomerProfileSection.test.tsx packages/desktop/src/renderer/components/CustomerPanel.tsx
+git add packages/desktop/src/renderer/components/CustomerProfileSection.tsx packages/desktop/src/renderer/components/CustomerProfileSection.test.ts packages/desktop/src/renderer/components/CustomerPanel.tsx
 git commit -m "feat(desktop): wire customer profile panel"
 ```
 
@@ -1097,6 +1097,7 @@ git commit -m "feat(desktop): wire customer profile panel"
 **Files:**
 - Modify: `docs/RUNBOOK.md`
 - Modify: `docs/superpowers/specs/2026-09-02-m4-customer-profile-design.md`
+- Modify: `docs/superpowers/plans/2026-09-02-m4-customer-profile.md`
 
 **Interfaces:**
 - Consumes: Tasks 1–5 behavior and fresh verification evidence.
@@ -1120,7 +1121,7 @@ Change the spec header to `状态：已实现，待 PR 复核` only after all co
 
 - [ ] **Step 3: Run focused customer profile regression**
 
-Run: `pnpm exec vitest run packages/shared/src/customer-profile.test.ts packages/server/src/customer-profile/repo.test.ts packages/server/src/api/routes/customer-profile.test.ts packages/desktop/src/renderer/api/client.test.ts packages/desktop/src/renderer/customer-profile-editor.test.ts packages/desktop/src/renderer/components/CustomerProfileSection.test.tsx`
+Run: `pnpm exec vitest run packages/shared/src/customer-profile.test.ts packages/server/src/customer-profile/repo.test.ts packages/server/src/api/routes/customer-profile.test.ts packages/desktop/src/renderer/api/client.test.ts packages/desktop/src/renderer/customer-profile-editor.test.ts packages/desktop/src/renderer/components/CustomerProfileSection.test.ts`
 
 Expected: every customer profile test passes with zero failures.
 
@@ -1159,7 +1160,7 @@ Expected: no `.env`, `data/`, `out/`, platform profile/session, generated app bu
 - [ ] **Step 8: Commit documentation**
 
 ```bash
-git add docs/RUNBOOK.md docs/superpowers/specs/2026-09-02-m4-customer-profile-design.md
+git add docs/RUNBOOK.md docs/superpowers/specs/2026-09-02-m4-customer-profile-design.md docs/superpowers/plans/2026-09-02-m4-customer-profile.md
 git commit -m "docs: record M4 customer profile completion"
 ```
 
