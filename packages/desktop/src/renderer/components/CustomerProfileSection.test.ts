@@ -5,10 +5,12 @@ import { emptyCustomerProfile, type CustomerProfile } from '@im-hub/shared'
 import {
   initialCustomerProfileEditorState,
   reduceCustomerProfileEditor,
+  type CustomerProfileEditorAction,
   type CustomerProfileEditorState,
 } from '../customer-profile-editor.js'
 import {
   CustomerProfileSectionView,
+  completeCustomerProfileSave,
   reserveCustomerProfileSaveAttempt,
   type CustomerProfileSaveAttempt,
 } from './CustomerProfileSection.js'
@@ -212,5 +214,22 @@ describe('reserveCustomerProfileSaveAttempt', () => {
     expect(second).toBeNull()
     expect(activeSaveRef.current).toEqual(first)
     expect(requestIdRef.current).toBe(1)
+  })
+})
+
+describe('completeCustomerProfileSave', () => {
+  it('保存成功时通知档案库刷新对应条目', () => {
+    const dispatched: CustomerProfileEditorAction[] = []
+    const saved: CustomerProfile[] = []
+    const profile = { ...emptyCustomerProfile('c'), name: 'Updated', revision: 2 }
+
+    completeCustomerProfileSave(
+      action => { dispatched.push(action) },
+      value => { saved.push(value) },
+      { type: 'save.succeeded', conversationId: 'c', requestId: 2, profile },
+    )
+
+    expect(dispatched).toHaveLength(1)
+    expect(saved).toEqual([profile])
   })
 })
