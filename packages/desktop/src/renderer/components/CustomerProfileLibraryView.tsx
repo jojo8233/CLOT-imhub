@@ -239,9 +239,14 @@ export function CustomerProfileLibraryContent({
           <h2 style={titleStyle}>客户档案库</h2>
           <div style={subtitleStyle}>检索当前账号权限范围内的人工客户档案</div>
         </div>
-        <button className="ih-btn" type="button" onClick={onRefresh} style={secondaryButtonStyle}>
-          刷新
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space.md }}>
+          {state.hasLoaded && (
+            <span style={resultCountStyle}>{state.items.length} 位客户</span>
+          )}
+          <button className="ih-btn" type="button" onClick={onRefresh} style={secondaryButtonStyle}>
+            刷新
+          </button>
+        </div>
       </header>
 
       <div style={filterBarStyle}>
@@ -290,7 +295,9 @@ export function CustomerProfileLibraryContent({
               </button>
             </LibraryNotice>
           ) : state.hasLoaded && state.items.length === 0 ? (
-            <LibraryNotice>{hasFilters ? '没有匹配的客户档案' : '还没有客户档案'}</LibraryNotice>
+            <LibraryNotice>
+              {hasFilters ? '没有匹配的客户档案' : '还没有客户档案，可在会话右侧手动补充'}
+            </LibraryNotice>
           ) : (
             <>
               {state.items.map(item => {
@@ -394,6 +401,12 @@ const subtitleStyle: CSSProperties = {
   marginTop: theme.space.xs,
   color: theme.color.textMuted,
   fontSize: theme.font.size.sm,
+}
+
+const resultCountStyle: CSSProperties = {
+  color: theme.color.textMuted,
+  fontSize: theme.font.size.sm,
+  whiteSpace: 'nowrap',
 }
 
 const filterBarStyle: CSSProperties = {

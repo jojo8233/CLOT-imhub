@@ -85,6 +85,7 @@ describe('CustomerProfileLibraryContent', () => {
     })
     expect(html).toContain('客户档案库')
     expect(html).toContain('搜索客户档案')
+    expect(html).toContain('1 位客户')
     expect(html).toContain('Synthetic Account')
     expect(html).toContain('Synthetic Customer')
     expect(html).toContain('Selected profile detail')
