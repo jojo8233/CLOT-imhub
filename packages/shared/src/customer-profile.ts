@@ -1,3 +1,8 @@
+import type { Platform } from './platform.js'
+
+export const CUSTOMER_PROFILE_SEARCH_DEFAULT_LIMIT = 50
+export const CUSTOMER_PROFILE_SEARCH_MAX_LIMIT = 100
+
 export const CUSTOMER_PROFILE_FIELDS = [
   'name',
   'ageLocation',
@@ -35,6 +40,28 @@ export interface CustomerProfile extends CustomerProfileValues {
 
 export interface CustomerProfileUpdate extends CustomerProfileValues {
   expectedRevision: number
+}
+
+export interface CustomerProfileSearchRequest {
+  q?: string
+  platform?: Platform
+  accountId?: string
+  limit?: number
+  cursor?: string
+}
+
+export interface CustomerProfileListItem {
+  conversationId: string
+  accountId: string
+  platform: Platform
+  accountDisplayName: string
+  conversationDisplayName: string | null
+  profile: CustomerProfile
+}
+
+export interface CustomerProfileListPage {
+  items: CustomerProfileListItem[]
+  nextCursor: string | null
 }
 
 export function normalizeCustomerProfileText(value: string | null): string | null {
