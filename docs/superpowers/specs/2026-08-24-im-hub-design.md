@@ -26,7 +26,7 @@
 | 角色 | 数据范围 | 配置权限 |
 |---|---|---|
 | `owner` | 全局 | 建账号、配平台、设关键词规则、决定员工能否收告警 |
-| `auditor` | 全局**只读**，查阅原文强制写审计日志 | 无 |
+| `auditor` | 全局**只读**兼容角色 | 无 |
 | `manager` | 仅本人所带 team 内的员工 | 组内关键词规则 |
 | `agent` | 仅本人 | 无 |
 
@@ -35,7 +35,7 @@
 ```
 agent    → WHERE owner_user_id = :me
 manager  → WHERE team_id IN (SELECT team_id FROM team_members WHERE user_id=:me AND is_lead)
-auditor  → 不过滤，但写 audit_logs
+auditor  → 不过滤，只读
 owner    → 不过滤
 ```
 
@@ -149,8 +149,6 @@ keyword_rules(id, scope_team_id NULL, pattern, match_type, severity,
 alerts(id, message_id, rule_id, severity, status, acked_by, acked_at, created_at)
 alert_permissions(user_id, granted, requested_at, decided_by, decided_at)
 
--- 审计
-audit_logs(id, actor_user_id, action, target_type, target_id, detail jsonb, created_at)
 ```
 
 所有业务表带 `team_id` 或可经 `account_id` 推导出 team，供 scope 过滤器使用。
@@ -188,11 +186,11 @@ interface TranslationProvider {
 客户档案不分析聊天正文，也不调用模型自动生成。员工在当前内部会话右栏填写六个字段，保存时携带
 `revision` 做乐观并发控制；发生冲突时保留员工实际修改并展示服务器最新值，不能静默覆盖其他人的更新。
 
-### 8.3 维护与审计
+### 8.3 维护与检索
 
 - **触发**：员工显式点击“手动补充”并保存，不设后台自动任务
 - **权限**：owner、当前带队范围内的 manager 和账号所有者可写，auditor 只读
-- **审计**：实际变化与档案保存处于同一事务；只记录操作者、内部目标、变化字段名和时间，不记录字段值
+- **检索**：独立档案库按相同 RBAC 范围搜索六字段、会话名称和账号名称，可按平台/账号筛选
 - **范围**：不提供“自动提取”或“重新提取”入口，不因档案功能上传 WhatsApp Web 可见 DOM 正文
 
 ## 9. 关键词告警
@@ -247,7 +245,7 @@ interface TranslationProvider {
 |---|---|---|
 | **P0** | 服务端骨架 + RBAC + Telegram 适配器 + 消息表 + 翻译网关 + 客户端基础 UI | 单个 Telegram 账号能收发并自动翻译，权限过滤生效 |
 | **P1** | Signal 扫码接入 + 关键词监控 + 告警闭环 + 员工申请权限 | Signal 多账号在线，关键词命中推达管理员并可确认 |
-| **P2** | 人工客户档案 + 管理后台 + 审计日志 | 档案人工保存与冲突保护可用，auditor 查阅留痕 |
+| **P2** | 人工客户档案库 + 管理后台 | 档案人工保存、冲突保护、RBAC 检索与只读角色可用 |
 | **P3** | WhatsApp 网页容器 + Zoom 接入 | 四平台全部可用 |
 
 P0 必须先跑通。Telegram 是四个平台里最干净的，用它验证「多开 → 入库 → 翻译 → 前端」整条链路，后面三个平台只是往同一个接口填实现。
@@ -257,5 +255,5 @@ P0 必须先跑通。Telegram 是四个平台里最干净的，用它验证「�
 1. **Signal 无官方 API**，signal-cli 是社区项目，Signal 改协议时需跟进升级
 2. **Signal link 模式无历史消息**，档案完整性依赖人工补充
 3. **WhatsApp 网页容器违反其服务条款**，存在账号被封风险，且需跟随 Meta 改版维护
-4. **员工通讯监控**需事先书面告知并取得员工同意（GDPR / 个人信息保护法 / 部分辖区的双方同意要求）。产品内置员工首次登录时的知情确认流程，确认记录写入 `audit_logs`
+4. **员工通讯监控**需事先书面告知并取得员工同意（GDPR / 个人信息保护法 / 部分辖区的双方同意要求）。当前没有审计表或知情确认存储，上线前必须另行完成合规设计与实现
 5. **TDLib 需编译原生模块**，需为目标平台预构建或提供构建镜像
