@@ -7,7 +7,11 @@ import {
   reduceCustomerProfileEditor,
   type CustomerProfileEditorState,
 } from '../customer-profile-editor.js'
-import { CustomerProfileSectionView } from './CustomerProfileSection.js'
+import {
+  CustomerProfileSectionView,
+  reserveCustomerProfileSaveAttempt,
+  type CustomerProfileSaveAttempt,
+} from './CustomerProfileSection.js'
 
 function loadedEditorState(profile: CustomerProfile): CustomerProfileEditorState {
   let state = initialCustomerProfileEditorState()
@@ -180,5 +184,33 @@ describe('CustomerProfileSectionView', () => {
     const html = renderView(oldConversation, false, 'new-conversation')
     expect(html).not.toContain('Old Profile Value')
     expect(html).toContain('正在加载客户档案')
+  })
+})
+
+describe('reserveCustomerProfileSaveAttempt', () => {
+  it('同一渲染闭包连续保存只保留第一个 attempt 且只递增一次序号', () => {
+    const state = editingState('Draft')
+    const activeSaveRef: { current: CustomerProfileSaveAttempt | null } = { current: null }
+    const requestIdRef = { current: 0 }
+
+    const first = reserveCustomerProfileSaveAttempt(
+      activeSaveRef,
+      requestIdRef,
+      state,
+      false,
+      'c',
+    )
+    const second = reserveCustomerProfileSaveAttempt(
+      activeSaveRef,
+      requestIdRef,
+      state,
+      false,
+      'c',
+    )
+
+    expect(first).toEqual({ conversationId: 'c', requestId: 1 })
+    expect(second).toBeNull()
+    expect(activeSaveRef.current).toEqual(first)
+    expect(requestIdRef.current).toBe(1)
   })
 })

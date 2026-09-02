@@ -33,6 +33,35 @@ export function customerProfileErrorMessage(error: unknown): string {
   return '客户档案操作失败，请稍后重试'
 }
 
+export interface CustomerProfileSaveAttempt {
+  conversationId: string
+  requestId: number
+}
+
+export function reserveCustomerProfileSaveAttempt(
+  activeSaveRef: { current: CustomerProfileSaveAttempt | null },
+  requestIdRef: { current: number },
+  state: CustomerProfileEditorState,
+  readOnly: boolean,
+  conversationId: string,
+): CustomerProfileSaveAttempt | null {
+  if (readOnly
+    || state.status !== 'editing'
+    || state.conversationId !== conversationId
+    || !state.snapshot
+    || state.activeLoad
+    || state.activeSave
+    || activeSaveRef.current) return null
+
+  const attempt = {
+    conversationId,
+    requestId: requestIdRef.current + 1,
+  }
+  requestIdRef.current = attempt.requestId
+  activeSaveRef.current = attempt
+  return attempt
+}
+
 export function CustomerProfileSection({
   conversationId,
   readOnly,
@@ -48,7 +77,7 @@ export function CustomerProfileSection({
   const saveRequestIdRef = useRef(0)
   const controllerRef = useRef<AbortController | null>(null)
   const activeConversationIdRef = useRef(conversationId)
-  const activeSaveRef = useRef<{ conversationId: string; requestId: number } | null>(null)
+  const activeSaveRef = useRef<CustomerProfileSaveAttempt | null>(null)
   activeConversationIdRef.current = conversationId
 
   const loadProfile = useCallback((
@@ -95,18 +124,22 @@ export function CustomerProfileSection({
   }, [conversationId, loadProfile])
 
   const save = useCallback(async () => {
-    if (readOnly
-      || state.status !== 'editing'
-      || !state.snapshot
-      || state.activeLoad) return
+    const snapshot = state.snapshot
+    const attempt = reserveCustomerProfileSaveAttempt(
+      activeSaveRef,
+      saveRequestIdRef,
+      state,
+      readOnly,
+      conversationId,
+    )
+    if (!attempt || !snapshot) return
 
-    const capturedConversationId = conversationId
-    const requestId = ++saveRequestIdRef.current
+    const capturedConversationId = attempt.conversationId
+    const requestId = attempt.requestId
     const update = {
       ...state.draft,
-      expectedRevision: state.snapshot.revision,
+      expectedRevision: snapshot.revision,
     }
-    activeSaveRef.current = { conversationId: capturedConversationId, requestId }
     dispatch({ type: 'save.started', conversationId: capturedConversationId, requestId })
     try {
       const profile = await api.updateCustomerProfile(capturedConversationId, update)
