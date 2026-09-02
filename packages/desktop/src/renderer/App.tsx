@@ -16,6 +16,7 @@ import { AddAccountDialog, RelinkAccountDialog } from './components/AddAccountDi
 import { NativeConversationWorkspace } from './components/NativeConversationWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
+import { CustomerProfileLibraryView } from './components/CustomerProfileLibraryView.js'
 import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
 import { BootstrapRetryController } from './bootstrap-retry.js'
@@ -367,7 +368,7 @@ export function App() {
           }}>
             <NativeConversationWorkspace />
           </div>
-          {view !== 'chat' && (
+          {view === 'accounts' && (
             <AccountsView
               onOpenChat={() => setView('chat')}
               onRelink={setRelinkAccount}
@@ -376,6 +377,11 @@ export function App() {
                 setAddOpen(true)
               }}
             />
+          )}
+          {view === 'customerProfiles' && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+              <CustomerProfileLibraryView readOnly={user?.role === 'auditor'} />
+            </div>
           )}
         </div>
       </div>
