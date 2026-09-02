@@ -317,7 +317,7 @@ Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 att
 | 邮箱 | 角色 | 可见范围 | 说明 |
 |---|---|---|---|
 | `owner@example.com` | owner | 全部账号（2 个） | 老板，无限制 |
-| `auditor@example.com` | auditor | 全部账号（2 个），只读 | 风控/审计，`resolveScope` 里 `requiresAudit: true`，但 P0 还没有实际的审计日志落地（见第 6 节已知限制） |
+| `auditor@example.com` | auditor | 全部账号（2 个），只读 | 风控/审计，`resolveScope` 里 `requiresAudit: true`；M4-1 只落客户档案写入的最小审计，auditor 读取审计和完整查询仍未实现 |
 | `manager@example.com` | manager | 仅自己**带队**（`is_lead=true`）的组内账号（1 个） | 只是组员（`is_lead=false`）不算带队，看不到组内账号——这是刻意设计，见 `rbac/scope.ts` 的注释 |
 | `agent@example.com` | agent | 仅自己名下的账号（1 个） | 属于"默认组"，manager 能看到他 |
 | `outsider@example.com` | agent | 仅自己名下的账号（1 个），和 agent 的不是同一个 | 不属于任何组，用来证明 agent 之间互相看不到、manager 也看不到组外人 |
@@ -399,8 +399,9 @@ Telegram：
 
 - owner 可读取和维护全局可见会话；manager 只能维护其当前带领团队内的会话；agent 只能维护
   本人账号下的会话；auditor 可读取全局可见档案，但界面与 API 都固定只读；
-- 保存携带当前 `revision`。遇到其他员工先保存时返回冲突，界面保留本地草稿、读取最新服务器
-  快照并提示用户对照后重试，不静默覆盖；
+- 保存携带当前 `revision` 和本地单调请求编号，同一时刻只允许一个保存。遇到其他员工先保存时
+  返回冲突，界面保留用户实际改过的字段、把未改字段合并为服务器最新值，并逐字段展示最新快照，
+  避免完整表单重存时静默覆盖他人的无关修改；
 - 每次实际变化都在同一数据库事务内记录最小审计事实。审计只包含操作者、内部账号/会话、动作、
   发生变化的字段名和时间，不保存字段旧值、新值、聊天正文或平台联系人标识；重复保存相同内容
   不增加 revision，也不制造审计记录；
