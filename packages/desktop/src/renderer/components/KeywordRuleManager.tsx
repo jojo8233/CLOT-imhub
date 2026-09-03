@@ -62,6 +62,133 @@ function replaceRule(rules: KeywordRule[], replacement: KeywordRule): KeywordRul
   return rules.map(rule => rule.id === replacement.id ? replacement : rule)
 }
 
+export type KeywordRuleMutationKind = 'create' | 'update' | 'delete' | 'retry'
+
+export interface KeywordRuleListTicket {
+  kind: 'list'
+  generation: number
+  requestId: number
+}
+
+export interface KeywordRuleMutationTicket {
+  kind: KeywordRuleMutationKind
+  generation: number
+  requestId: number
+}
+
+export class KeywordRuleOperationCoordinator {
+  private mounted = false
+  private generation = 0
+  private nextRequestId = 0
+  private activeListRequestId: number | null = null
+  private activeMutationRequestId: number | null = null
+
+  mount(): void {
+    this.mounted = true
+  }
+
+  unmount(): void {
+    this.mounted = false
+    this.generation += 1
+    this.activeListRequestId = null
+    this.activeMutationRequestId = null
+  }
+
+  startList(): KeywordRuleListTicket | null {
+    if (!this.mounted || this.activeMutationRequestId !== null) return null
+    const requestId = ++this.nextRequestId
+    this.activeListRequestId = requestId
+    return { kind: 'list', generation: this.generation, requestId }
+  }
+
+  startMutation(kind: KeywordRuleMutationKind): KeywordRuleMutationTicket | null {
+    if (!this.mounted || this.activeMutationRequestId !== null) return null
+    this.generation += 1
+    this.activeListRequestId = null
+    const requestId = ++this.nextRequestId
+    this.activeMutationRequestId = requestId
+    return { kind, generation: this.generation, requestId }
+  }
+
+  isCurrentList(ticket: KeywordRuleListTicket): boolean {
+    return this.mounted
+      && ticket.generation === this.generation
+      && ticket.requestId === this.activeListRequestId
+  }
+
+  isCurrentMutation(ticket: KeywordRuleMutationTicket): boolean {
+    return this.mounted
+      && ticket.generation === this.generation
+      && ticket.requestId === this.activeMutationRequestId
+  }
+
+  finishList(ticket: KeywordRuleListTicket): boolean {
+    if (!this.isCurrentList(ticket)) return false
+    this.activeListRequestId = null
+    return true
+  }
+
+  finishMutation(ticket: KeywordRuleMutationTicket): boolean {
+    if (!this.isCurrentMutation(ticket)) return false
+    this.activeMutationRequestId = null
+    return true
+  }
+}
+
+interface KeywordRuleSettlement<T> {
+  coordinator: KeywordRuleOperationCoordinator
+  request: Promise<T>
+  onSuccess(result: T): void
+  onFailure(error: unknown): void
+  onSettled(): void
+}
+
+export async function settleKeywordRuleList<T>({
+  coordinator,
+  ticket,
+  request,
+  onSuccess,
+  onFailure,
+  onSettled,
+}: KeywordRuleSettlement<T> & { ticket: KeywordRuleListTicket }): Promise<boolean> {
+  let result: T
+  try {
+    result = await request
+  } catch (error) {
+    if (!coordinator.isCurrentList(ticket)) return false
+    onFailure(error)
+    if (coordinator.finishList(ticket)) onSettled()
+    return false
+  }
+  if (!coordinator.isCurrentList(ticket)) return false
+  onSuccess(result)
+  if (coordinator.finishList(ticket)) onSettled()
+  return true
+}
+
+export async function settleKeywordRuleMutation<T>({
+  coordinator,
+  ticket,
+  request,
+  onSuccess,
+  onFailure,
+  onSettled,
+}: KeywordRuleSettlement<T> & { ticket: KeywordRuleMutationTicket }): Promise<boolean> {
+  let result: T
+  try {
+    result = await request
+  } catch (error) {
+    if (!coordinator.isCurrentMutation(ticket)) return false
+    onFailure(error)
+    if (coordinator.finishMutation(ticket)) onSettled()
+    return false
+  }
+  if (!coordinator.isCurrentMutation(ticket)) return false
+  onSuccess(result)
+  if (coordinator.finishMutation(ticket)) onSettled()
+  return true
+}
+
 export function KeywordRuleManager() {
   const [rules, setRules] = useState<KeywordRule[]>([])
   const [degradedScanCount, setDegradedScanCount] = useState(0)
@@ -75,29 +202,35 @@ export function KeywordRuleManager() {
   const [busyRuleId, setBusyRuleId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [retrying, setRetrying] = useState(false)
-  const loadGenerationRef = useRef(0)
+  const operationCoordinatorRef = useRef(new KeywordRuleOperationCoordinator())
 
   const loadRules = useCallback(() => {
-    const generation = ++loadGenerationRef.current
+    const coordinator = operationCoordinatorRef.current
+    const ticket = coordinator.startList()
+    if (!ticket) return
     setLoading(true)
     setError(null)
-    void api.listKeywordRules().then(result => {
-      if (generation !== loadGenerationRef.current) return
-      setRules(result.rules)
-      setDegradedScanCount(result.degradedScanCount)
-    }).catch(loadError => {
-      if (generation !== loadGenerationRef.current) return
-      const mapped = ruleError(loadError)
-      if (mapped) setError(mapped)
-    }).finally(() => {
-      if (generation === loadGenerationRef.current) setLoading(false)
+    void settleKeywordRuleList({
+      coordinator,
+      ticket,
+      request: api.listKeywordRules(),
+      onSuccess: result => {
+        setRules(result.rules)
+        setDegradedScanCount(result.degradedScanCount)
+      },
+      onFailure: loadError => {
+        const mapped = ruleError(loadError)
+        if (mapped) setError(mapped)
+      },
+      onSettled: () => { setLoading(false) },
     })
   }, [])
 
   useEffect(() => {
+    operationCoordinatorRef.current.mount()
     loadRules()
     return () => {
-      loadGenerationRef.current += 1
+      operationCoordinatorRef.current.unmount()
     }
   }, [loadRules])
 
@@ -117,6 +250,10 @@ export function KeywordRuleManager() {
       setError('generic')
       return
     }
+    const coordinator = operationCoordinatorRef.current
+    const ticket = coordinator.startMutation(current ? 'update' : 'create')
+    if (!ticket) return
+    setLoading(false)
     setSaving(true)
     setError(null)
     const request = current
@@ -127,15 +264,22 @@ export function KeywordRuleManager() {
         enabled,
       })
       : api.createKeywordRule({ pattern, severity, enabled })
-    void request.then(savedRule => {
-      setRules(previous => current
-        ? replaceRule(previous, savedRule)
-        : [...previous, savedRule])
-      resetForm()
-    }).catch(saveError => {
-      const mapped = ruleError(saveError)
-      if (mapped) setError(mapped)
-    }).finally(() => setSaving(false))
+    void settleKeywordRuleMutation({
+      coordinator,
+      ticket,
+      request,
+      onSuccess: savedRule => {
+        setRules(previous => current
+          ? replaceRule(previous, savedRule)
+          : [...previous, savedRule])
+        resetForm()
+      },
+      onFailure: saveError => {
+        const mapped = ruleError(saveError)
+        if (mapped) setError(mapped)
+      },
+      onSettled: () => { setSaving(false) },
+    })
   }, [busyRuleId, editingRuleId, enabled, pattern, resetForm, rules, saving, severity])
 
   const edit = useCallback((rule: KeywordRule) => {
@@ -150,20 +294,31 @@ export function KeywordRuleManager() {
 
   const toggleEnabled = useCallback((rule: KeywordRule) => {
     if (saving || busyRuleId) return
+    const coordinator = operationCoordinatorRef.current
+    const ticket = coordinator.startMutation('update')
+    if (!ticket) return
+    setLoading(false)
     setBusyRuleId(rule.id)
     setError(null)
-    void api.updateKeywordRule(rule.id, {
-      baseRevision: rule.revision,
-      enabled: !rule.enabled,
-    }).then(savedRule => {
-      setRules(previous => replaceRule(previous, savedRule))
-      if (editingRuleId === rule.id) {
-        setEnabled(savedRule.enabled)
-      }
-    }).catch(updateError => {
-      const mapped = ruleError(updateError)
-      if (mapped) setError(mapped)
-    }).finally(() => setBusyRuleId(null))
+    void settleKeywordRuleMutation({
+      coordinator,
+      ticket,
+      request: api.updateKeywordRule(rule.id, {
+        baseRevision: rule.revision,
+        enabled: !rule.enabled,
+      }),
+      onSuccess: savedRule => {
+        setRules(previous => replaceRule(previous, savedRule))
+        if (editingRuleId === rule.id) {
+          setEnabled(savedRule.enabled)
+        }
+      },
+      onFailure: updateError => {
+        const mapped = ruleError(updateError)
+        if (mapped) setError(mapped)
+      },
+      onSettled: () => { setBusyRuleId(null) },
+    })
   }, [busyRuleId, editingRuleId, saving])
 
   const confirmDelete = useCallback((ruleId: string) => {
@@ -173,28 +328,50 @@ export function KeywordRuleManager() {
       setPendingDeleteId(null)
       return
     }
+    const coordinator = operationCoordinatorRef.current
+    const ticket = coordinator.startMutation('delete')
+    if (!ticket) return
+    setLoading(false)
     setBusyRuleId(ruleId)
     setError(null)
-    void api.deleteKeywordRule(ruleId, rule.revision).then(() => {
-      setRules(previous => previous.filter(candidate => candidate.id !== ruleId))
-      setPendingDeleteId(null)
-      if (editingRuleId === ruleId) resetForm()
-    }).catch(deleteError => {
-      const mapped = ruleError(deleteError)
-      if (mapped) setError(mapped)
-    }).finally(() => setBusyRuleId(null))
+    void settleKeywordRuleMutation({
+      coordinator,
+      ticket,
+      request: api.deleteKeywordRule(ruleId, rule.revision),
+      onSuccess: () => {
+        setRules(previous => previous.filter(candidate => candidate.id !== ruleId))
+        setPendingDeleteId(null)
+        if (editingRuleId === ruleId) resetForm()
+      },
+      onFailure: deleteError => {
+        const mapped = ruleError(deleteError)
+        if (mapped) setError(mapped)
+      },
+      onSettled: () => { setBusyRuleId(null) },
+    })
   }, [busyRuleId, editingRuleId, pendingDeleteId, resetForm, rules, saving])
 
   const retryScans = useCallback(() => {
     if (retrying) return
+    const coordinator = operationCoordinatorRef.current
+    const ticket = coordinator.startMutation('retry')
+    if (!ticket) return
+    setLoading(false)
     setRetrying(true)
     setError(null)
-    void api.retryKeywordAlertScans().then(() => {
-      loadRules()
-    }).catch(retryError => {
-      const mapped = ruleError(retryError)
-      if (mapped) setError(mapped)
-    }).finally(() => setRetrying(false))
+    void settleKeywordRuleMutation({
+      coordinator,
+      ticket,
+      request: api.retryKeywordAlertScans(),
+      onSuccess: () => undefined,
+      onFailure: retryError => {
+        const mapped = ruleError(retryError)
+        if (mapped) setError(mapped)
+      },
+      onSettled: () => { setRetrying(false) },
+    }).then(succeeded => {
+      if (succeeded) loadRules()
+    })
   }, [loadRules, retrying])
 
   return (

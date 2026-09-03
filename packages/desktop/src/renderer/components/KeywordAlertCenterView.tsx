@@ -62,6 +62,32 @@ interface ActiveAcknowledgement {
   requestId: number
 }
 
+export function keywordAlertReplacementIdentity({
+  role,
+  status,
+  severity,
+  platform,
+  accountId,
+}: {
+  role: Role
+  status: KeywordAlertStatusFilter
+  severity: KeywordAlertSeverity | null
+  platform: Platform | null
+  accountId: string | null
+}): string {
+  return JSON.stringify([role, status, severity, platform, accountId])
+}
+
+export function keywordAlertStateForReplacement(
+  state: KeywordAlertCenterState,
+  stateIdentity: string,
+  replacementIdentity: string,
+): KeywordAlertCenterState {
+  return stateIdentity === replacementIdentity
+    ? state
+    : initialKeywordAlertCenterState()
+}
+
 const SEVERITY_LABEL: Record<KeywordAlertSeverity, string> = {
   normal: '普通',
   important: '重要',
@@ -122,6 +148,19 @@ export function KeywordAlertCenterView({
   const effectiveAccountId = accountId && accountMatchesPlatform(accountId, platform)
     ? accountId
     : null
+  const replacementIdentity = keywordAlertReplacementIdentity({
+    role,
+    status,
+    severity,
+    platform,
+    accountId: effectiveAccountId,
+  })
+  const stateReplacementIdentityRef = useRef(replacementIdentity)
+  const visibleState = keywordAlertStateForReplacement(
+    state,
+    stateReplacementIdentityRef.current,
+    replacementIdentity,
+  )
 
   const cancelActiveLoad = useCallback(() => {
     controllerRef.current?.abort()
@@ -191,9 +230,10 @@ export function KeywordAlertCenterView({
   // 角色或账号范围变化的失效 effect 必须先运行，再开始新一代请求；否则后置
   // abort 会把刚按新 scope 发出的请求取消，且依赖已稳定后不会自动补发。
   useEffect(() => {
+    stateReplacementIdentityRef.current = replacementIdentity
     startLoad('replace')
     return cancelActiveLoad
-  }, [cancelActiveLoad, realtimeRevision, startLoad])
+  }, [cancelActiveLoad, realtimeRevision, replacementIdentity, startLoad])
 
   const changeStatus = useCallback((value: KeywordAlertStatusFilter) => {
     if (role === 'auditor' || value === status) return
@@ -261,7 +301,7 @@ export function KeywordAlertCenterView({
 
   return (
     <KeywordAlertContent
-      state={state}
+      state={visibleState}
       role={role}
       status={status}
       severity={severity}
@@ -312,12 +352,14 @@ function AlertNotice({
 function AlertRow({
   item,
   role,
+  acknowledgementBusy,
   acknowledging,
   acknowledgementError,
   onAcknowledge,
 }: {
   item: KeywordAlertListItem
   role: Role
+  acknowledgementBusy: boolean
   acknowledging: boolean
   acknowledgementError: string | null
   onAcknowledge(): void
@@ -358,12 +400,15 @@ function AlertRow({
           <button
             className="ih-btn"
             type="button"
-            disabled={acknowledging}
+            data-acknowledge-button={item.alertId}
+            disabled={acknowledgementBusy}
             onClick={onAcknowledge}
             style={primaryButtonStyle}
           >
             {acknowledging
               ? '正在确认…'
+              : acknowledgementBusy
+                ? '等待当前确认…'
               : acknowledgementError
                 ? '重试确认'
                 : '确认告警'}
@@ -525,6 +570,7 @@ export function KeywordAlertContent({
                         key={item.alertId}
                         item={item}
                         role={role}
+                        acknowledgementBusy={state.acknowledgingAlertId !== null}
                         acknowledging={state.acknowledgingAlertId === item.alertId}
                         acknowledgementError={state.ackError?.alertId === item.alertId
                           ? state.ackError.message

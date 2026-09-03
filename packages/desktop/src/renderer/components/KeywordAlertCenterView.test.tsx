@@ -15,6 +15,8 @@ import {
 } from '../keyword-alert-center.js'
 import {
   KeywordAlertContent,
+  keywordAlertReplacementIdentity,
+  keywordAlertStateForReplacement,
   type KeywordAlertContentProps,
 } from './KeywordAlertCenterView.js'
 
@@ -76,6 +78,31 @@ function alertItem(overrides: Partial<KeywordAlertListItem> = {}): KeywordAlertL
     ...overrides,
   }
 }
+
+describe('KeywordAlertCenterView replacement loading', () => {
+  it('starts a distinct replacement generation when the permission scope role changes', () => {
+    const identity = (role: Role) => keywordAlertReplacementIdentity({
+      role,
+      status: 'pending',
+      severity: null,
+      platform: null,
+      accountId: null,
+    })
+
+    expect(identity('owner')).not.toBe(identity('manager'))
+    expect(identity('manager')).not.toBe(identity('agent'))
+    expect(identity('agent')).toBe(identity('agent'))
+  })
+
+  it('hides rows from the previous permission scope before replacement effects run', () => {
+    const staleState = state({ items: [alertItem()], hasLoaded: true })
+
+    expect(keywordAlertStateForReplacement(staleState, 'owner-scope', 'manager-scope').items)
+      .toEqual([])
+    expect(keywordAlertStateForReplacement(staleState, 'manager-scope', 'manager-scope'))
+      .toBe(staleState)
+  })
+})
 
 describe('KeywordAlertContent role boundaries', () => {
   it.each<Role>(['owner', 'manager', 'agent'])(
@@ -202,6 +229,29 @@ describe('KeywordAlertContent alert timeline', () => {
     })
     expect(ackFailed).toContain('确认失败，请稍后重试')
     expect(ackFailed).toContain('重试确认')
+  })
+
+  it('disables every acknowledgement action while one alert is being acknowledged', () => {
+    const html = renderContent({
+      state: state({
+        items: [
+          alertItem(),
+          alertItem({
+            alertId: 'alert-second',
+            messageId: 'message-second',
+            conversationId: 'conversation-second',
+          }),
+        ],
+        hasLoaded: true,
+        acknowledgingAlertId: 'alert-normal',
+        acknowledgementRequestId: 7,
+      }),
+    })
+
+    expect(html).toContain('data-acknowledge-button="alert-normal" disabled=""')
+    expect(html).toContain('data-acknowledge-button="alert-second" disabled=""')
+    expect(html).toContain('正在确认…')
+    expect(html).toContain('等待当前确认…')
   })
 
   it('exposes controlled filter values without inventing unsupported values', () => {

@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { KeywordRule } from '@im-hub/shared'
 import { describe, expect, it } from 'vitest'
 import {
+  KeywordRuleOperationCoordinator,
   KeywordRuleManagerContent,
+  settleKeywordRuleList,
+  settleKeywordRuleMutation,
+  type KeywordRuleMutationKind,
   type KeywordRuleManagerContentProps,
 } from './KeywordRuleManager.js'
 
@@ -54,6 +58,118 @@ function alertText(html: string): string {
   const end = html.indexOf('</div>', role)
   return html.slice(start, end).replace(/<[^>]+>/g, '')
 }
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve(value: T): void
+  reject(error: unknown): void
+} {
+  let resolvePromise: (value: T | PromiseLike<T>) => void = () => undefined
+  let rejectPromise: (reason?: unknown) => void = () => undefined
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve
+    rejectPromise = reject
+  })
+  return {
+    promise,
+    resolve: resolvePromise,
+    reject: rejectPromise,
+  }
+}
+
+describe('KeywordRuleOperationCoordinator', () => {
+  it('does not let an older list response overwrite a newer mutation revision', async () => {
+    const coordinator = new KeywordRuleOperationCoordinator()
+    coordinator.mount()
+    const oldList = deferred<{ rules: KeywordRule[]; degradedScanCount: number }>()
+    const update = deferred<KeywordRule>()
+    let visibleRules = [rule]
+
+    const listTicket = coordinator.startList()
+    if (!listTicket) throw new Error('expected a list ticket')
+    const listResult = settleKeywordRuleList({
+      coordinator,
+      ticket: listTicket,
+      request: oldList.promise,
+      onSuccess: result => { visibleRules = result.rules },
+      onFailure: () => undefined,
+      onSettled: () => undefined,
+    })
+
+    const mutationTicket = coordinator.startMutation('update')
+    if (!mutationTicket) throw new Error('expected a mutation ticket')
+    expect(coordinator.startList()).toBeNull()
+    const mutationResult = settleKeywordRuleMutation({
+      coordinator,
+      ticket: mutationTicket,
+      request: update.promise,
+      onSuccess: savedRule => { visibleRules = [savedRule] },
+      onFailure: () => undefined,
+      onSettled: () => undefined,
+    })
+
+    update.resolve({ ...rule, revision: 4 })
+    await mutationResult
+    oldList.resolve({ rules: [{ ...rule, revision: 3 }], degradedScanCount: 0 })
+    await listResult
+
+    expect(visibleRules[0]?.revision).toBe(4)
+  })
+
+  it.each<KeywordRuleMutationKind>(['create', 'update', 'delete', 'retry'])(
+    'ignores %s callbacks and cannot reload after unmount',
+    async kind => {
+      const coordinator = new KeywordRuleOperationCoordinator()
+      coordinator.mount()
+      const request = deferred<string>()
+      const callbacks: string[] = []
+      let reloads = 0
+      const ticket = coordinator.startMutation(kind)
+      if (!ticket) throw new Error('expected a mutation ticket')
+      const result = settleKeywordRuleMutation({
+        coordinator,
+        ticket,
+        request: request.promise,
+        onSuccess: () => { callbacks.push('success') },
+        onFailure: () => { callbacks.push('failure') },
+        onSettled: () => { callbacks.push('settled') },
+      }).then(succeeded => {
+        if (succeeded && coordinator.startList()) reloads += 1
+      })
+
+      coordinator.unmount()
+      request.resolve('done')
+      await result
+
+      expect(callbacks).toEqual([])
+      expect(reloads).toBe(0)
+    },
+  )
+
+  it('preserves the form draft when a mutation fails', async () => {
+    const coordinator = new KeywordRuleOperationCoordinator()
+    coordinator.mount()
+    const request = deferred<KeywordRule>()
+    let draft = 'Unsaved Pattern'
+    let error: string | null = null
+    const ticket = coordinator.startMutation('create')
+    if (!ticket) throw new Error('expected a mutation ticket')
+    const result = settleKeywordRuleMutation({
+      coordinator,
+      ticket,
+      request: request.promise,
+      onSuccess: () => { draft = '' },
+      onFailure: () => { error = 'generic' },
+      onSettled: () => undefined,
+    })
+
+    request.reject(new Error('synthetic failure'))
+    await result
+
+    expect(error).toBe('generic')
+    expect(draft).toBe('Unsaved Pattern')
+  })
+})
 
 describe('KeywordRuleManagerContent', () => {
   it('renders owner rule controls, degraded count and retry action', () => {
