@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely'
 import type { Database } from '../db/types.js'
 import { ScopedCustomerProfileRepo } from '../customer-profile/repo.js'
+import { KeywordRuleRepo } from '../keyword-alert/rule-repo.js'
 import { ScopedDb } from './scoped-db.js'
 
 const db = new Kysely<Database>({
@@ -53,5 +54,10 @@ describe('ScopedDb', () => {
   it('customerProfiles() 返回闭包当前 scope 的聚焦仓储', () => {
     const scoped = new ScopedDb(db, { kind: 'self', userId: 'u9' })
     expect(scoped.customerProfiles()).toBeInstanceOf(ScopedCustomerProfileRepo)
+  })
+
+  it('keywordRules() 返回使用同一私有数据库的规则仓储', () => {
+    const scoped = new ScopedDb(db, { kind: 'all' })
+    expect(scoped.keywordRules()).toBeInstanceOf(KeywordRuleRepo)
   })
 })

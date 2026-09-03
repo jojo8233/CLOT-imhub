@@ -3,6 +3,8 @@ import type { ScopeFilter } from '@im-hub/shared'
 import type { Database } from '../db/types.js'
 import { applyAccountScope } from './apply.js'
 import { ScopedCustomerProfileRepo } from '../customer-profile/repo.js'
+import { KeywordRuleRepo } from '../keyword-alert/rule-repo.js'
+import { KyselyKeywordAlertScanRepo } from '../keyword-alert/scan-repo.js'
 
 /**
  * 每请求构造一次，把当前 actor 的可见范围闭包进去。
@@ -35,6 +37,10 @@ export class ScopedDb {
 
   customerProfiles(): ScopedCustomerProfileRepo {
     return new ScopedCustomerProfileRepo(this.db, this.scope)
+  }
+
+  keywordRules(): KeywordRuleRepo {
+    return new KeywordRuleRepo(this.db, new KyselyKeywordAlertScanRepo(this.db))
   }
 
   /**
