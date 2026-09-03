@@ -1,4 +1,5 @@
 import type { AccountStatus, Direction, Platform } from './platform.js'
+import type { KeywordAlertSeverity } from './keyword-alert.js'
 
 /**
  * 需要人工介入的鉴权挑战类型。
@@ -95,6 +96,14 @@ export interface WsAuthDoneEvent {
   reason: string | null
 }
 
+export interface WsKeywordAlertEvent {
+  type: 'keyword_alert'
+  alertId: string
+  severity: KeywordAlertSeverity
+  requiresAcknowledgement: boolean
+  createdAt: string
+}
+
 export type WsServerEvent =
   | WsMessageEvent
   | WsMessageUpdatedEvent
@@ -104,3 +113,4 @@ export type WsServerEvent =
   | WsTranslationEvent
   | WsAuthChallengeEvent
   | WsAuthDoneEvent
+  | WsKeywordAlertEvent
