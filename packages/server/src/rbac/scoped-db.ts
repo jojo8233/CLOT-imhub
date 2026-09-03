@@ -5,6 +5,7 @@ import { applyAccountScope } from './apply.js'
 import { ScopedCustomerProfileRepo } from '../customer-profile/repo.js'
 import { KeywordRuleRepo } from '../keyword-alert/rule-repo.js'
 import { KyselyKeywordAlertScanRepo } from '../keyword-alert/scan-repo.js'
+import { ScopedKeywordAlertRepo } from '../keyword-alert/scoped-repo.js'
 
 /**
  * 每请求构造一次，把当前 actor 的可见范围闭包进去。
@@ -17,6 +18,7 @@ export class ScopedDb {
   constructor(
     private readonly db: Kysely<Database>,
     readonly scope: ScopeFilter,
+    private readonly actorUserId: string,
   ) {}
 
   /** 当前 actor 可见的账号。 */
@@ -41,6 +43,10 @@ export class ScopedDb {
 
   keywordRules(): KeywordRuleRepo {
     return new KeywordRuleRepo(this.db, new KyselyKeywordAlertScanRepo(this.db))
+  }
+
+  keywordAlerts(): ScopedKeywordAlertRepo {
+    return new ScopedKeywordAlertRepo(this.db, this.scope, this.actorUserId)
   }
 
   /**
