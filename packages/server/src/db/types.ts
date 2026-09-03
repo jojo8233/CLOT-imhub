@@ -3,6 +3,7 @@ import type {
   AccountConnectionMode,
   AccountStatus,
   Direction,
+  KeywordAlertSeverity,
   Platform,
   Role,
 } from '@im-hub/shared'
@@ -203,6 +204,52 @@ export interface WhatsAppOnboardingSessionsTable {
   consumed_at: Timestamp | null
 }
 
+export interface KeywordRulesTable {
+  id: Generated<string>
+  pattern: string
+  normalized_pattern: string
+  severity: KeywordAlertSeverity
+  enabled: Generated<boolean>
+  revision: Generated<number>
+  effective_at: Generated<Timestamp>
+  created_by_user_id: string
+  updated_by_user_id: string
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  deleted_at: Timestamp | null
+}
+
+export interface KeywordAlertScanJobsTable {
+  id: Generated<string>
+  message_id: string
+  message_revision: string
+  body_snapshot: string
+  available_at: Generated<Timestamp>
+  attempt_count: Generated<number>
+  lease_owner: string | null
+  lease_expires_at: Timestamp | null
+  last_error_code: string | null
+  created_at: Generated<Timestamp>
+}
+
+export interface KeywordAlertsTable {
+  id: Generated<string>
+  message_id: string
+  rule_id: string
+  pattern_snapshot: string
+  severity_snapshot: KeywordAlertSeverity
+  matched_message_revision: string
+  created_at: Generated<Timestamp>
+}
+
+export interface KeywordAlertRecipientsTable {
+  alert_id: string
+  user_id: string
+  requires_ack: boolean
+  acknowledged_at: Timestamp | null
+  created_at: Generated<Timestamp>
+}
+
 export interface Database {
   users: UsersTable
   teams: TeamsTable
@@ -220,4 +267,8 @@ export interface Database {
   whatsapp_send_attempts: WhatsAppSendAttemptsTable
   whatsapp_message_statuses: WhatsAppMessageStatusesTable
   whatsapp_onboarding_sessions: WhatsAppOnboardingSessionsTable
+  keyword_rules: KeywordRulesTable
+  keyword_alert_scan_jobs: KeywordAlertScanJobsTable
+  keyword_alerts: KeywordAlertsTable
+  keyword_alert_recipients: KeywordAlertRecipientsTable
 }
