@@ -1,7 +1,7 @@
 # M4-2 可检索客户档案库与审计功能移除设计
 
 日期：2026-09-03
-状态：实现完成，自动化验证通过；真实桌面验收待执行
+状态：实现与自动化验证完成；真实桌面交互验收已通过，owner/admin 全局可见范围因登录角色未知尚未验证
 
 ## 1. 决策摘要
 
@@ -330,3 +330,16 @@ Telegram、Signal、WhatsApp 消息。
 
 继续遵守敏感数据边界：不读取、打印或提交 `.env`、平台 profile/session、数据库档案正文、账号标识、
 消息正文/键、媒体引用、token、二维码、验证码或密钥。
+
+## 15. 运行态验收 checkpoint（2026-09-03）
+
+- 已在明确确认的本地 `imhub` 开发数据库成功执行 migration `0014_customer_profile_library`；复核显示该
+  migration 有一条已应用记录、`audit_logs` 不存在，且
+  `customer_profiles_updated_conversation_idx` 存在。
+- 已从官方 Signal Desktop 8.25.0 与既有不透明 profile 源生成 a55 包；独立的 deep/strict codesign 验证
+  通过。用户确认 Telegram 连接正常。
+- 用户实际验收通过：客户档案库可正常打开，关键词搜索命中，平台/账号筛选正常，详情正确，编辑保存
+  成功，“翻译历史”入口不存在，且未显示错误。
+- 当前登录角色未知：界面只显示用户显示名。编辑成功仅可排除 `auditor`，不能区分 `owner`、`manager`
+  或 `agent`；因此 owner/admin 全局可见范围尚未验证，M4-2 不得表述为已完成 RBAC 或完整人工验收。
+- 本次验收未发送任何平台消息。
