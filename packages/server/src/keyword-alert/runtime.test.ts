@@ -8,6 +8,7 @@ import {
   createKeywordAlertShutdownSignalHandler,
   startKeywordAlertServerLifecycle,
   startKeywordAlertRuntime,
+  stopKeywordAlertAdapters,
 } from './runtime.js'
 import type { KeywordAlertWorkerOptions } from './worker.js'
 
@@ -187,5 +188,127 @@ describe('keyword alert server lifecycle', () => {
     for (const sentinel of sensitiveSentinels) {
       expect(serializedReport).not.toContain(sentinel)
     }
+  })
+
+  it('等待所有适配器断连并将拒绝数聚合为固定生命周期失败', async () => {
+    const sensitiveSentinels = [
+      'BODY-MUST-NOT-LEAK',
+      'PATTERN-MUST-NOT-LEAK',
+      'ACCOUNT-ID-MUST-NOT-LEAK',
+      'ADAPTER-ID-MUST-NOT-LEAK',
+    ]
+    const order: string[] = []
+    const reported: Array<{ code: string; count: number }> = []
+    let adapterFailure: unknown
+    let startedCount = 0
+    let resolveAllStarted: (() => void) | undefined
+    const allStarted = new Promise<void>(resolve => { resolveAllStarted = resolve })
+    let releaseLastDisconnect: (() => void) | undefined
+    const recordStarted = (name: string): void => {
+      order.push(name)
+      startedCount += 1
+      if (startedCount !== 3) return
+      const resolve = resolveAllStarted
+      if (resolve === undefined) throw new Error('expected all-started resolver')
+      resolve()
+    }
+    const lifecycle = createKeywordAlertServerLifecycle({
+      runtime: { stop: async () => { order.push('runtime') } },
+      stopAdapters: async () => {
+        try {
+          await stopKeywordAlertAdapters([
+            async () => {
+              recordStarted('adapter-1')
+              throw new Error(`${sensitiveSentinels[0]} ${sensitiveSentinels[2]}`)
+            },
+            async () => {
+              recordStarted('adapter-2')
+              throw new Error(`${sensitiveSentinels[1]} ${sensitiveSentinels[3]}`)
+            },
+            () => {
+              recordStarted('adapter-3')
+              return new Promise<void>(resolve => {
+                releaseLastDisconnect = () => {
+                  order.push('adapter-3-finished')
+                  resolve()
+                }
+              })
+            },
+          ])
+        } catch (error) {
+          adapterFailure = error
+          throw error
+        }
+      },
+      closeApp: async () => { order.push('app') },
+      quitRedis: async () => { order.push('redis') },
+      destroyDb: async () => { order.push('db') },
+      onError: (code, count) => { reported.push({ code, count }) },
+    })
+    const exitCodes: number[] = []
+    const handleSignal = createKeywordAlertShutdownSignalHandler({
+      lifecycle,
+      onSignal: () => undefined,
+      exit: code => { exitCodes.push(code) },
+    })
+
+    handleSignal('SIGTERM')
+    const shutdown = lifecycle.shutdown()
+    const firstOutcome = await Promise.race([
+      allStarted.then(() => 'all-started' as const),
+      shutdown.then(
+        () => 'shutdown-settled' as const,
+        () => 'shutdown-settled' as const,
+      ),
+    ])
+
+    expect(firstOutcome).toBe('all-started')
+    expect(order).toEqual(['runtime', 'adapter-1', 'adapter-2', 'adapter-3'])
+    const release = releaseLastDisconnect
+    if (release === undefined) throw new Error('expected last disconnect release')
+    release()
+
+    let shutdownFailure: unknown
+    try {
+      await shutdown
+    } catch (error) {
+      shutdownFailure = error
+    }
+    await Promise.resolve()
+
+    expect(String(shutdownFailure)).toBe('Error: keyword_alert_server_shutdown_failed')
+    expect(String(adapterFailure)).toBe('Error: adapter_disconnect_failed')
+    expect(order).toEqual([
+      'runtime',
+      'adapter-1',
+      'adapter-2',
+      'adapter-3',
+      'adapter-3-finished',
+      'app',
+      'redis',
+      'db',
+    ])
+    expect(reported).toEqual([{ code: 'adapter_disconnect_failed', count: 2 }])
+    expect(exitCodes).toEqual([1])
+    const serializedOutcome = [
+      String(shutdownFailure),
+      String(adapterFailure),
+      JSON.stringify(adapterFailure),
+      JSON.stringify(reported),
+    ].join(' ')
+    for (const sentinel of sensitiveSentinels) {
+      expect(serializedOutcome).not.toContain(sentinel)
+    }
+  })
+
+  it('所有适配器断连成功时聚合正常完成', async () => {
+    const completed: string[] = []
+
+    await expect(stopKeywordAlertAdapters([
+      async () => { completed.push('adapter-1') },
+      async () => { completed.push('adapter-2') },
+    ])).resolves.toBeUndefined()
+
+    expect(completed).toEqual(['adapter-1', 'adapter-2'])
   })
 })

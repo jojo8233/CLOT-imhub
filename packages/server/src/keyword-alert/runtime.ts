@@ -52,6 +52,30 @@ export interface KeywordAlertRuntimeOptions {
   ) => Pick<KeywordAlertWorker, 'start' | 'stop'>
 }
 
+class KeywordAlertAdapterDisconnectFailure extends Error {
+  readonly failureCount: number
+
+  constructor(failureCount: number) {
+    super('adapter_disconnect_failed')
+    this.failureCount = failureCount
+  }
+}
+
+export async function stopKeywordAlertAdapters(
+  disconnects: ReadonlyArray<() => Promise<unknown>>,
+): Promise<void> {
+  const results = await Promise.allSettled(
+    disconnects.map(disconnect => Promise.resolve().then(disconnect)),
+  )
+  const failureCount = results.reduce(
+    (count, result) => result.status === 'rejected' ? count + 1 : count,
+    0,
+  )
+  if (failureCount > 0) {
+    throw new KeywordAlertAdapterDisconnectFailure(failureCount)
+  }
+}
+
 export async function startKeywordAlertRuntime(
   options: KeywordAlertRuntimeOptions,
 ): Promise<KeywordAlertWorkerLifecycle> {
@@ -149,9 +173,12 @@ async function runKeywordAlertServerShutdown(
   for (const step of steps) {
     try {
       await step.run()
-    } catch {
-      failureCount += 1
-      reportLifecycleError(options.onError, step.code, 1)
+    } catch (error) {
+      const stepFailureCount = error instanceof KeywordAlertAdapterDisconnectFailure
+        ? error.failureCount
+        : 1
+      failureCount += stepFailureCount
+      reportLifecycleError(options.onError, step.code, stepFailureCount)
     }
   }
 

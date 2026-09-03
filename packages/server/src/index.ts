@@ -22,6 +22,7 @@ import {
   createKeywordAlertShutdownSignalHandler,
   startKeywordAlertRuntime,
   startKeywordAlertServerLifecycle,
+  stopKeywordAlertAdapters,
 } from './keyword-alert/runtime.js'
 import {
   buildTelegramDeleteObservation,
@@ -416,9 +417,9 @@ const keywordAlertServer = await startKeywordAlertServerLifecycle({
       .select(['id', 'connection_mode'])
       .where('status', '=', 'connected')
       .execute()
-    await Promise.allSettled(connected
+    await stopKeywordAlertAdapters(connected
       .filter(a => a.connection_mode === 'adapter')
-      .map(a => adapters.disconnect(a.id)))
+      .map(a => () => adapters.disconnect(a.id)))
   },
   closeApp: () => app.close(),
   quitRedis: () => redis.quit(),
