@@ -12,7 +12,7 @@ import { IconButton, NotWired } from './ui.js'
  * 顺带这份名单也就是路线图，接完一个把 view 填上、ready 改 true。
  */
 
-export type ViewKey = 'chat' | 'accounts' | 'customerProfiles'
+export type ViewKey = 'chat' | 'accounts' | 'customerProfiles' | 'keywordAlerts'
 
 export interface FunctionCenterEntry {
   /** 图标块里的字。参考稿用的就是单字，比抽象图形更好认 */
@@ -29,7 +29,7 @@ export const FUNCTION_CENTER_ENTRIES: FunctionCenterEntry[] = [
   { glyph: '+', tint: '#0a6fe8', title: '添加账号', desc: '接入新的聊天平台账号', action: 'addAccount' },
   { glyph: '话', tint: '#101a5c', title: '会话', desc: '平台原生界面、翻译与客户资料', view: 'chat' },
   { glyph: '号', tint: '#22b573', title: '账号状态', desc: '各账号在线情况与历史起点', view: 'accounts' },
-  { glyph: '警', tint: '#e0364a', title: '关键词警报', desc: '命中敏感词时通知管理员' },
+  { glyph: '警', tint: '#e0364a', title: '关键词警报', desc: '查看账号范围内的客户关键词告警', view: 'keywordAlerts' },
   { glyph: '词', tint: '#8b5cf6', title: '术语表', desc: '固定人名、品牌与产品译法' },
   { glyph: '档', tint: '#0891b2', title: '客户档案库', desc: '搜索并维护跨会话客户资料', view: 'customerProfiles' },
   { glyph: '搜', tint: '#64748b', title: '全局搜索', desc: '跨账号检索消息与联系人' },
@@ -39,11 +39,18 @@ interface Props {
   view: ViewKey
   onSelectView(v: ViewKey): void
   onAddAccount(): void
+  keywordAlertCount: number | null
   /** 窗口太窄时强制收成图标栏。不写回 store——窗口一宽回来就该自己展开 */
   compact?: boolean
 }
 
-export function FunctionCenter({ view, onSelectView, onAddAccount, compact = false }: Props) {
+export function FunctionCenter({
+  view,
+  onSelectView,
+  onAddAccount,
+  keywordAlertCount,
+  compact = false,
+}: Props) {
   const open = useStore(s => s.panelOpen) && !compact
   const togglePanel = useStore(s => s.togglePanel)
 
@@ -106,9 +113,27 @@ export function FunctionCenter({ view, onSelectView, onAddAccount, compact = fal
                 background: active ? theme.color.lime : wired ? theme.color.card : theme.color.surface,
                 color: active ? theme.color.onLime : wired ? theme.color.text : theme.color.textFaint,
                 fontSize: theme.font.size.base, fontWeight: theme.font.weight.heavy,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
               }}>
                 {e.glyph}
+                {e.view === 'keywordAlerts' && keywordAlertCount !== null && keywordAlertCount > 0 && (
+                  <span
+                    data-keyword-alert-badge
+                    aria-label={`${keywordAlertCount} 条未确认关键词告警`}
+                    style={{
+                      position: 'absolute', top: -7, right: -9,
+                      minWidth: 18, height: 18, padding: '0 5px',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: theme.radius.pill,
+                      background: theme.color.danger, color: theme.color.white,
+                      border: `2px solid ${active ? theme.color.ink : theme.color.bg}`,
+                      fontSize: 10, fontWeight: theme.font.weight.heavy,
+                      lineHeight: 1,
+                    }}
+                  >
+                    {keywordAlertCount > 99 ? '99+' : keywordAlertCount}
+                  </span>
+                )}
               </span>
               {open && (
                 <span style={{ minWidth: 0, flex: 1 }}>
