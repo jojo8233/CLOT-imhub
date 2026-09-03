@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { emptyCustomerProfile } from '@im-hub/shared'
+import { emptyCustomerProfile, type KeywordRule } from '@im-hub/shared'
 import { api, logout } from './client.js'
 
 function jsonResponse(body: unknown): Response {
@@ -7,6 +7,21 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+function authenticatedFetch(responseBody: unknown) {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      token: 'test-token',
+      user: { id: 'user-1', role: 'owner', displayName: 'Test' },
+    }))
+    .mockResolvedValueOnce(jsonResponse(responseBody))
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+async function loginSyntheticOwner(): Promise<void> {
+  await api.login('owner@example.test', 'synthetic-password')
 }
 
 describe('desktop API request headers', () => {
@@ -110,5 +125,176 @@ describe('desktop API request headers', () => {
       q: 'Synthetic query',
       limit: 50,
     })
+  })
+})
+
+describe('keyword alert API contracts', () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await logout()
+  })
+
+  it('searches with POST JSON outside the URL and forwards the abort signal', async () => {
+    const fetchMock = authenticatedFetch({ items: [], nextCursor: 'next-page' })
+    const controller = new AbortController()
+    await loginSyntheticOwner()
+
+    const result = await api.searchKeywordAlerts({
+      status: 'pending',
+      severity: 'urgent',
+      platform: 'telegram',
+      accountId: '00000000-0000-4000-8000-000000000010',
+      limit: 50,
+      cursor: 'opaque-cursor',
+    }, controller.signal)
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe('http://localhost:4000/api/keyword-alerts/search')
+    expect(request?.[1]?.method).toBe('POST')
+    expect(request?.[1]?.signal).toBe(controller.signal)
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      status: 'pending',
+      severity: 'urgent',
+      platform: 'telegram',
+      accountId: '00000000-0000-4000-8000-000000000010',
+      limit: 50,
+      cursor: 'opaque-cursor',
+    })
+    expect(result).toEqual({ items: [], nextCursor: 'next-page' })
+  })
+
+  it('gets the unacknowledged count without a request body or signal', async () => {
+    const fetchMock = authenticatedFetch({ count: 3 })
+    await loginSyntheticOwner()
+
+    const result = await api.getKeywordAlertUnacknowledgedCount()
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe('http://localhost:4000/api/keyword-alerts/unacknowledged-count')
+    expect(request?.[1]?.method).toBeUndefined()
+    expect(request?.[1]?.body).toBeUndefined()
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(result).toEqual({ count: 3 })
+  })
+
+  it('acknowledges one alert with PATCH and no request body or signal', async () => {
+    const fetchMock = authenticatedFetch({ acknowledgedAt: '2026-09-03T01:00:00.000Z' })
+    await loginSyntheticOwner()
+
+    const result = await api.acknowledgeKeywordAlert(
+      '00000000-0000-4000-8000-000000000101',
+    )
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe(
+      'http://localhost:4000/api/keyword-alerts/00000000-0000-4000-8000-000000000101/acknowledge',
+    )
+    expect(request?.[1]?.method).toBe('PATCH')
+    expect(request?.[1]?.body).toBeUndefined()
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(result).toEqual({ acknowledgedAt: '2026-09-03T01:00:00.000Z' })
+  })
+
+  it('lists keyword rules with GET and no request body or signal', async () => {
+    const fetchMock = authenticatedFetch({ rules: [], degradedScanCount: 2 })
+    await loginSyntheticOwner()
+
+    const result = await api.listKeywordRules()
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe('http://localhost:4000/api/keyword-rules')
+    expect(request?.[1]?.method).toBeUndefined()
+    expect(request?.[1]?.body).toBeUndefined()
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(result).toEqual({ rules: [], degradedScanCount: 2 })
+  })
+
+  it('creates a keyword rule with the shared create body', async () => {
+    const rule: KeywordRule = {
+      id: '00000000-0000-4000-8000-000000000201',
+      pattern: 'Synthetic',
+      severity: 'normal',
+      enabled: true,
+      revision: 1,
+      effectiveAt: '2026-09-03T00:00:00.000Z',
+      createdAt: '2026-09-03T00:00:00.000Z',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    }
+    const fetchMock = authenticatedFetch(rule)
+    await loginSyntheticOwner()
+
+    const result = await api.createKeywordRule({
+      pattern: 'Synthetic', severity: 'normal', enabled: true,
+    })
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe('http://localhost:4000/api/keyword-rules')
+    expect(request?.[1]?.method).toBe('POST')
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      pattern: 'Synthetic', severity: 'normal', enabled: true,
+    })
+    expect(result).toEqual(rule)
+  })
+
+  it('updates a keyword rule with PATCH and the shared revision body', async () => {
+    const rule: KeywordRule = {
+      id: '00000000-0000-4000-8000-000000000201',
+      pattern: 'Synthetic',
+      severity: 'normal',
+      enabled: false,
+      revision: 2,
+      effectiveAt: '2026-09-03T01:00:00.000Z',
+      createdAt: '2026-09-03T00:00:00.000Z',
+      updatedAt: '2026-09-03T01:00:00.000Z',
+    }
+    const fetchMock = authenticatedFetch(rule)
+    await loginSyntheticOwner()
+
+    const result = await api.updateKeywordRule(rule.id, {
+      baseRevision: 1, enabled: false,
+    })
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe(`http://localhost:4000/api/keyword-rules/${rule.id}`)
+    expect(request?.[1]?.method).toBe('PATCH')
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      baseRevision: 1, enabled: false,
+    })
+    expect(result).toEqual(rule)
+  })
+
+  it('deletes a keyword rule with DELETE and an exact baseRevision body', async () => {
+    const fetchMock = authenticatedFetch({ deleted: true })
+    await loginSyntheticOwner()
+
+    const result = await api.deleteKeywordRule(
+      '00000000-0000-4000-8000-000000000201',
+      2,
+    )
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe(
+      'http://localhost:4000/api/keyword-rules/00000000-0000-4000-8000-000000000201',
+    )
+    expect(request?.[1]?.method).toBe('DELETE')
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ baseRevision: 2 })
+    expect(result).toEqual({ deleted: true })
+  })
+
+  it('retries degraded scans with POST and an exact empty JSON body', async () => {
+    const fetchMock = authenticatedFetch({ retried: 4 })
+    await loginSyntheticOwner()
+
+    const result = await api.retryKeywordAlertScans()
+
+    const request = fetchMock.mock.calls[1]
+    expect(request?.[0]).toBe('http://localhost:4000/api/keyword-alert-scans/retry')
+    expect(request?.[1]?.method).toBe('POST')
+    expect(request?.[1]?.signal).toBeUndefined()
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({})
+    expect(result).toEqual({ retried: 4 })
   })
 })

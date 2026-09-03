@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { AccountRow } from '../api/client.js'
 import {
   browserCompatibleUserAgent,
   createSingleFlight,
@@ -25,14 +26,17 @@ describe('native account ownership gate', () => {
 
   it('宿主启动时预挂载 owner 的全部已支持账号，不依赖先点开 tab', () => {
     const accounts = [
-      { id: 'tg-1', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
-      { id: 'tg-2', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
-      { id: 'signal-1', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop' as const },
-      { id: 'wa-1', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'web_shell' as const },
-      { id: 'wa-old', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
-      { id: 'wa-api', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'cloud_api' as const },
-      { id: 'other-tg', platform: 'telegram', owner_user_id: 'user-2', connection_mode: 'adapter' as const },
-    ]
+      { id: 'tg-1', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' },
+      { id: 'tg-2', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' },
+      { id: 'signal-1', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop' },
+      { id: 'wa-1', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'web_shell' },
+      { id: 'wa-old', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'adapter' },
+      { id: 'wa-api', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'cloud_api' },
+      { id: 'other-tg', platform: 'telegram', owner_user_id: 'user-2', connection_mode: 'adapter' },
+    ] satisfies Array<Pick<
+      AccountRow,
+      'id' | 'platform' | 'owner_user_id' | 'connection_mode'
+    >>
 
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, true))
       .toEqual(['tg-1', 'tg-2', 'wa-1', 'wa-old'])
@@ -44,10 +48,13 @@ describe('native account ownership gate', () => {
 
   it('Signal Desktop 只挂载显式登记的原生桌面账号', () => {
     const accounts = [
-      { id: 'native', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop' as const },
-      { id: 'fallback', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'adapter' as const },
-      { id: 'other', platform: 'signal', owner_user_id: 'user-2', connection_mode: 'native_desktop' as const },
-    ]
+      { id: 'native', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop' },
+      { id: 'fallback', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'adapter' },
+      { id: 'other', platform: 'signal', owner_user_id: 'user-2', connection_mode: 'native_desktop' },
+    ] satisfies Array<Pick<
+      AccountRow,
+      'id' | 'platform' | 'owner_user_id' | 'connection_mode'
+    >>
     expect(signalDesktopAccountIdsToMount(
       accounts,
       { id: 'user-1', role: 'agent' },

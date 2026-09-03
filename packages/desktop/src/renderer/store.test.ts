@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { Platform } from '@im-hub/shared'
 import type { AccountRow } from './api/client.js'
 import { useStore } from './store.js'
 
-function account(id: string, platform: string): AccountRow {
+function account(id: string, platform: Platform): AccountRow {
   return {
     id,
     platform,
