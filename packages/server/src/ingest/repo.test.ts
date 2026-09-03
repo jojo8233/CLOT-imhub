@@ -290,6 +290,101 @@ describe('KyselyMessageRepo.insertMessage', () => {
     ])
   })
 
+  it('已存出向消息的已接受编辑不因事件误报入向而扫描', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-outbound',
+      direction: 'out',
+      body: 'Outbound initial',
+    }))
+
+    const accepted = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-outbound',
+      direction: 'in',
+      body: 'Outbound accepted edit',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 2,
+    }))
+    expect(accepted).toEqual({ id: first.id, isNew: false, contentChanged: true })
+
+    const stale = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-outbound',
+      direction: 'in',
+      body: 'Outbound stale edit',
+      editedAt: new Date('2026-08-24T03:00:00Z'),
+      editVersion: 1,
+    }))
+    expect(stale).toEqual({ id: first.id, isNew: false, contentChanged: false })
+
+    expect(await db.selectFrom('messages')
+      .select(['direction', 'body', 'edit_version'])
+      .where('id', '=', first.id)
+      .executeTakeFirstOrThrow()).toEqual({
+      direction: 'out',
+      body: 'Outbound accepted edit',
+      edit_version: 2,
+    })
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_revision', 'body_snapshot'])
+      .where('message_id', '=', first.id)
+      .orderBy('message_revision')
+      .execute()).toEqual([])
+  })
+
+  it('已存入向消息的已接受编辑不因事件误报出向而漏扫', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-inbound',
+      direction: 'in',
+      body: 'Inbound initial',
+    }))
+
+    const accepted = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-inbound',
+      direction: 'out',
+      body: 'Inbound accepted edit',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 2,
+    }))
+    expect(accepted).toEqual({ id: first.id, isNew: false, contentChanged: true })
+
+    const stale = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-inbound',
+      direction: 'out',
+      body: 'Inbound stale edit',
+      editedAt: new Date('2026-08-24T03:00:00Z'),
+      editVersion: 1,
+    }))
+    expect(stale).toEqual({ id: first.id, isNew: false, contentChanged: false })
+
+    expect(await db.selectFrom('messages')
+      .select(['direction', 'body', 'edit_version'])
+      .where('id', '=', first.id)
+      .executeTakeFirstOrThrow()).toEqual({
+      direction: 'in',
+      body: 'Inbound accepted edit',
+      edit_version: 2,
+    })
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_revision', 'body_snapshot'])
+      .where('message_id', '=', first.id)
+      .orderBy('message_revision')
+      .execute()).toEqual([
+      { message_revision: 'initial', body_snapshot: 'Inbound initial' },
+      { message_revision: 'version:2', body_snapshot: 'Inbound accepted edit' },
+    ])
+  })
+
   it('重复插入同一 platform_message_id 时 isNew 为 false 且返回既有 id', async () => {
     const { id: conversationId } = await repo.upsertConversation({
       accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,

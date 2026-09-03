@@ -1,4 +1,5 @@
 import { sql, type Kysely, type Transaction } from 'kysely'
+import type { Direction } from '@im-hub/shared'
 import type { Database } from '../db/types.js'
 import { recordTelegramShadowObservation } from '../shadow/telegram-repo.js'
 import type { TelegramShadowObservation } from '../shadow/telegram.js'
@@ -54,6 +55,7 @@ interface StoredMessageIdentity {
   id: string
   conversation_id: string
   platform_message_id: string
+  direction: Direction
   body: string
   body_lang: string | null
   edited_at: Date | null
@@ -215,7 +217,7 @@ export class KyselyMessageRepo implements MessageRepo {
         .executeTakeFirst()
 
       if (inserted) {
-        await this.enqueueKeywordAlertScan(trx, inserted.id, input)
+        await this.enqueueKeywordAlertScan(trx, inserted.id, input.direction, input)
         await this.recordShadowObservation(trx, input.shadowObservation)
         return { id: inserted.id, isNew: true, contentChanged: false }
       }
@@ -231,9 +233,10 @@ export class KyselyMessageRepo implements MessageRepo {
   private async enqueueKeywordAlertScan(
     trx: Transaction<Database>,
     messageId: string,
+    direction: Direction,
     input: InsertMessageInput,
   ): Promise<void> {
-    if (input.direction !== 'in' || input.body.trim() === '') return
+    if (direction !== 'in' || input.body.trim() === '') return
     await trx.insertInto('keyword_alert_scan_jobs').values({
       message_id: messageId,
       message_revision: messageRevision(input.editVersion, input.editedAt),
@@ -355,7 +358,7 @@ export class KyselyMessageRepo implements MessageRepo {
   ): Promise<StoredMessageIdentity | undefined> {
     const direct = await executor.selectFrom('messages')
       .select([
-        'id', 'conversation_id', 'platform_message_id', 'body', 'body_lang',
+        'id', 'conversation_id', 'platform_message_id', 'direction', 'body', 'body_lang',
         'edited_at', 'edit_version', 'deleted_at',
       ])
       .where('account_id', '=', accountId)
@@ -369,6 +372,7 @@ export class KyselyMessageRepo implements MessageRepo {
         'messages.id as id',
         'messages.conversation_id as conversation_id',
         'messages.platform_message_id as platform_message_id',
+        'messages.direction as direction',
         'messages.body as body',
         'messages.body_lang as body_lang',
         'messages.edited_at as edited_at',
@@ -382,7 +386,7 @@ export class KyselyMessageRepo implements MessageRepo {
 
   private async updateExistingMessage(
     trx: Transaction<Database>,
-    existing: { id: string; body: string; edited_at: Date | null; edit_version: number | null },
+    existing: StoredMessageIdentity,
     input: InsertMessageInput,
   ): Promise<InsertMessageResult> {
     if (!input.editedAt && input.editVersion === null) {
@@ -411,7 +415,9 @@ export class KyselyMessageRepo implements MessageRepo {
     const bodyChanged = existing.body !== input.body
 
     if (contentChanged) {
-      if (bodyChanged) await this.enqueueKeywordAlertScan(trx, existing.id, input)
+      if (bodyChanged) {
+        await this.enqueueKeywordAlertScan(trx, existing.id, existing.direction, input)
+      }
       // 旧正文的译文已经失效。删掉后由 ingestor 重新派发同一个 messageId 的翻译任务。
       await trx.deleteFrom('message_translations').where('message_id', '=', existing.id).execute()
     }
