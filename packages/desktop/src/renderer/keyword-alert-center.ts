@@ -12,6 +12,7 @@ export interface KeywordAlertCenterState {
   nextCursor: string | null
   activeLoad: { requestId: number; mode: KeywordAlertLoadMode } | null
   acknowledgingAlertId: string | null
+  acknowledgementRequestId: number | null
   error: string | null
   appendError: string | null
   ackError: { alertId: string; message: string } | null
@@ -34,14 +35,15 @@ export type KeywordAlertCenterAction =
     mode: KeywordAlertLoadMode
     message: string
   }
-  | { type: 'ack.started'; alertId: string }
+  | { type: 'ack.started'; requestId: number; alertId: string }
   | {
     type: 'ack.succeeded'
+    requestId: number
     alertId: string
     acknowledgedAt: string
     status?: KeywordAlertStatusFilter
   }
-  | { type: 'ack.failed'; alertId: string; message: string }
+  | { type: 'ack.failed'; requestId: number; alertId: string; message: string }
   | { type: 'realtime.received'; event: WsKeywordAlertEvent }
 
 export function initialKeywordAlertCenterState(): KeywordAlertCenterState {
@@ -50,6 +52,7 @@ export function initialKeywordAlertCenterState(): KeywordAlertCenterState {
     nextCursor: null,
     activeLoad: null,
     acknowledgingAlertId: null,
+    acknowledgementRequestId: null,
     error: null,
     appendError: null,
     ackError: null,
@@ -82,6 +85,14 @@ function appendUniqueItems(
     result.push({ ...item })
   }
   return result
+}
+
+function isActiveAcknowledgement(
+  state: KeywordAlertCenterState,
+  action: { requestId: number; alertId: string },
+): boolean {
+  return state.acknowledgingAlertId === action.alertId
+    && state.acknowledgementRequestId === action.requestId
 }
 
 export function reduceKeywordAlertCenter(
@@ -130,17 +141,19 @@ export function reduceKeywordAlertCenter(
 
     case 'ack.started':
       if (state.acknowledgingAlertId
+        || state.acknowledgementRequestId !== null
         || !state.items.some(item => item.alertId === action.alertId)) {
         return state
       }
       return {
         ...state,
         acknowledgingAlertId: action.alertId,
+        acknowledgementRequestId: action.requestId,
         ackError: null,
       }
 
     case 'ack.succeeded':
-      if (state.acknowledgingAlertId !== action.alertId) return state
+      if (!isActiveAcknowledgement(state, action)) return state
       return {
         ...state,
         items: action.status === 'all'
@@ -149,14 +162,16 @@ export function reduceKeywordAlertCenter(
             : item)
           : state.items.filter(item => item.alertId !== action.alertId),
         acknowledgingAlertId: null,
+        acknowledgementRequestId: null,
         ackError: null,
       }
 
     case 'ack.failed':
-      if (state.acknowledgingAlertId !== action.alertId) return state
+      if (!isActiveAcknowledgement(state, action)) return state
       return {
         ...state,
         acknowledgingAlertId: null,
+        acknowledgementRequestId: null,
         ackError: { alertId: action.alertId, message: action.message },
       }
 
