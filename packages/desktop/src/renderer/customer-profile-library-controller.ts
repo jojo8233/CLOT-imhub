@@ -15,6 +15,13 @@ export interface CustomerProfileQueryDebouncer {
   cancel(): void
 }
 
+export function shouldStartCustomerProfileReplacement(
+  queryInput: string,
+  committedQuery: string,
+): boolean {
+  return queryInput.trim() === committedQuery
+}
+
 export function createCustomerProfileQueryDebouncer(
   publish: (value: CustomerProfileDebouncedQuery) => void,
   clock?: CustomerProfileQueryDebounceClock,

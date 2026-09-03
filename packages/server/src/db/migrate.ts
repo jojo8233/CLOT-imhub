@@ -1,18 +1,14 @@
-import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FileMigrationProvider, Migrator } from 'kysely'
+import { Migrator } from 'kysely'
 import { db } from './client.js'
+import { createMigrationProvider } from './migration-provider.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 const migrator = new Migrator({
   db,
-  provider: new FileMigrationProvider({
-    fs,
-    path,
-    migrationFolder: path.join(here, 'migrations'),
-  }),
+  provider: createMigrationProvider(path.join(here, 'migrations')),
 })
 
 const { error, results } = await migrator.migrateToLatest()

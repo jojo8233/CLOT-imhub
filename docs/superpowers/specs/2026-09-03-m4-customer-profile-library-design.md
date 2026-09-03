@@ -1,7 +1,7 @@
 # M4-2 可检索客户档案库与审计功能移除设计
 
 日期：2026-09-03
-状态：实现完成，自动化验证通过；真实桌面验收待执行
+状态：实现与自动化验证完成；真实桌面交互验收已通过，owner/admin 全局可见范围因登录角色未知尚未验证
 
 ## 1. 决策摘要
 
@@ -302,3 +302,44 @@ guest context sync 或平台窗口切换。
 
 验证和文档中未记录档案值、搜索词、账号标识、消息正文/键、媒体引用、平台 profile/session、token、
 二维码、验证码或密钥。真实桌面验收完成前，不把自动化结果表述为人工验收通过。
+
+## 14. 新会话交接 checkpoint（2026-09-03）
+
+GitHub 状态已核对：
+
+- PR [#23](https://github.com/jojo8233/CLOT-imhub/pull/23) 已合并到 `main`，GitHub merge commit 为
+  `4995b744ebe769256f61a45ed8cb371c901d7067`；
+- Issue [#12](https://github.com/jojo8233/CLOT-imhub/issues/12) 仍为 Open；
+- PR #19 当前在 GitHub 显示为已合并；本轮 M4-2 没有对它执行合并或关闭操作；
+- 主 checkout 未修改；现有隔离 worktree `/private/tmp/im-hub-m3-outbox` 保留供新会话复核与后续工作。
+
+M4-2 当前边界：代码、自动化、生产构建、两轮审查及 GitHub 合并已经完成；开发数据库 migration 与
+真实桌面验收仍未执行。因此新会话不得把 M4-2 表述为已完成人工验收，也不需要重测或真实发送
+Telegram、Signal、WhatsApp 消息。
+
+新会话建议从以下顺序继续：
+
+1. 先读取本设计、`docs/RUNBOOK.md`、worktree 的 `AGENTS.md` 和当前 `package.json`；
+2. 核对 PR #23 / `origin/main`，并确认工作目录仍是现有隔离 worktree，不修改主 checkout；
+3. 如要进行运行态验收，先明确目标开发库后执行 `0014` migration；它会删除已由产品决策取消的
+   `audit_logs`，不要猜测数据库连接，也不要读取或输出 `.env`；
+4. 如需新测试包，从现有 a54 不透明配置生成 a55，不解析或输出平台 profile/session；
+5. 只验收档案库导航、管理员可见范围、关键词检索、平台/账号筛选、详情、编辑保存和“翻译历史”入口
+   已移除，不发送平台消息；
+6. 人工回报格式：`档案库：可打开；管理员可见范围：正确；关键词检索：命中；平台/账号筛选：正常；详情：正确；编辑保存：成功；翻译历史：无；错误提示：无`。
+
+继续遵守敏感数据边界：不读取、打印或提交 `.env`、平台 profile/session、数据库档案正文、账号标识、
+消息正文/键、媒体引用、token、二维码、验证码或密钥。
+
+## 15. 运行态验收 checkpoint（2026-09-03）
+
+- 已在明确确认的本地 `imhub` 开发数据库成功执行 migration `0014_customer_profile_library`；复核显示该
+  migration 有一条已应用记录、`audit_logs` 不存在，且
+  `customer_profiles_updated_conversation_idx` 存在。
+- 已从官方 Signal Desktop 8.25.0 与既有不透明 profile 源生成 a55 包；独立的 deep/strict codesign 验证
+  通过。用户确认 Telegram 连接正常。
+- 用户实际验收通过：客户档案库可正常打开，关键词搜索命中，平台/账号筛选正常，详情正确，编辑保存
+  成功，“翻译历史”入口不存在，且未显示错误。
+- 当前登录角色未知：界面只显示用户显示名。编辑成功仅可排除 `auditor`，不能区分 `owner`、`manager`
+  或 `agent`；因此 owner/admin 全局可见范围尚未验证，M4-2 不得表述为已完成 RBAC 或完整人工验收。
+- 本次验收未发送任何平台消息。

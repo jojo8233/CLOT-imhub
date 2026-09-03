@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createCustomerProfileQueryDebouncer,
   prepareCustomerProfileReplacement,
+  shouldStartCustomerProfileReplacement,
   type CustomerProfileDebouncedQuery,
 } from './customer-profile-library-controller.js'
 
@@ -43,5 +44,35 @@ describe('customer profile library controller', () => {
     events.length = 0
     prepareCustomerProfileReplacement('filters', cancelActive, resetVisibleResults)
     expect(events).toEqual(['cancel', 'reset'])
+  })
+
+  it('blocks a platform-change replacement with the stale committed keyword until debounce commits', () => {
+    vi.useFakeTimers()
+    let committed: CustomerProfileDebouncedQuery = { query: 'previous keyword', generation: 4 }
+    const startedQueries: string[] = []
+    const debouncer = createCustomerProfileQueryDebouncer(value => {
+      committed = value
+    }, {
+      set: (callback, delayMs) => setTimeout(callback, delayMs),
+      clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    }, committed.generation)
+    const queryInput = 'latest keyword'
+    const startReplacementForPlatformChange = () => {
+      if (shouldStartCustomerProfileReplacement(queryInput, committed.query)) {
+        startedQueries.push(committed.query)
+      }
+    }
+
+    debouncer.schedule(queryInput)
+    startReplacementForPlatformChange()
+    expect(startedQueries).toEqual([])
+
+    vi.advanceTimersByTime(300)
+    startReplacementForPlatformChange()
+    expect(startedQueries).toEqual(['latest keyword'])
+  })
+
+  it('allows a whitespace-equivalent input to use its committed query', () => {
+    expect(shouldStartCustomerProfileReplacement('  keyword  ', 'keyword')).toBe(true)
   })
 })

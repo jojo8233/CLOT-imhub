@@ -20,7 +20,7 @@ const searchBody = z.object({
 
 export async function customerProfileLibraryRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/customer-profiles/search', async (req, reply) => {
-    const parsed = searchBody.safeParse(req.body ?? {})
+    const parsed = searchBody.safeParse(req.body === undefined ? {} : req.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: '客户档案库查询无效' })
     }
