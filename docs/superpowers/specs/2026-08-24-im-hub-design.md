@@ -10,7 +10,7 @@
 1. **多平台多开** — 一个员工同时经营 Telegram / Signal / Zoom / WhatsApp 上的多个账号，互不串号
 2. **多引擎翻译** — DeepL / OpenAI / Claude 自主切换，收到的消息自动译成中文，发出的中文自动译成客户语言
 3. **团队管理** — 管理员分组带队，看得到组内员工的账号状态、客户档案与告警
-4. **客户沉淀** — 员工按会话维护客户档案；关键词命中时提醒管理员，避免销售漏接关键信号
+4. **客户沉淀** — 员工按会话维护客户档案；关键词命中时提醒当前有权限的内部接收人，避免销售漏接关键信号
 
 ## 2. 非目标（明确不做）
 
@@ -25,10 +25,10 @@
 
 | 角色 | 数据范围 | 配置权限 |
 |---|---|---|
-| `owner` | 全局 | 建账号、配平台、设关键词规则、决定员工能否收告警 |
-| `auditor` | 全局**只读**兼容角色 | 无 |
-| `manager` | 仅本人所带 team 内的员工 | 组内关键词规则 |
-| `agent` | 仅本人 | 无 |
+| `owner` | 全局 | 建账号、配平台、维护全公司关键词规则、确认本人的告警 |
+| `auditor` | 全局**只读**兼容角色 | 只读全公司告警流，不确认告警 |
+| `manager` | 仅本人所带 team 内的员工 | 无规则配置权限；确认本人的告警 |
+| `agent` | 仅本人 | 无规则配置权限；确认本人账号的告警 |
 
 查询层统一 scope 过滤器：
 
@@ -143,11 +143,11 @@ customer_profiles(conversation_id PRIMARY KEY,
                   name, age_location, occupation, family, interests, other,
                   revision, updated_by_user_id, created_at, updated_at)
 
--- 关键词告警
-keyword_rules(id, scope_team_id NULL, pattern, match_type, severity,
-              enabled, created_by, created_at)
-alerts(id, message_id, rule_id, severity, status, acked_by, acked_at, created_at)
-alert_permissions(user_id, granted, requested_at, decided_by, decided_at)
+-- 公司内部关键词告警（migration 0015）
+keyword_rules(...)
+keyword_alert_scan_jobs(...)
+keyword_alerts(...)
+keyword_alert_recipients(...)
 
 ```
 
@@ -195,13 +195,26 @@ interface TranslationProvider {
 
 ## 9. 关键词告警
 
-- **匹配**：字面量规则统一编译成 Aho-Corasick 自动机（规则变更时重建）；正则规则单独逐条跑
-- **命中**：写 `alerts`，按 severity 分级
-- **通知对象**：
-  - `manager`（本组）、`auditor`、`owner` 默认接收
-  - `agent` 默认**不**接收；员工可在客户端提交「申请获取告警权限」，由 `owner` 审批，写入 `alert_permissions`
-- **通道**：客户端 WS 实时推送 + 管理后台告警列表 + 可选邮件 / 企业微信 webhook
-- **必须支持确认闭环**：`status` 从 `open` → `acked`，记录 `acked_by` / `acked_at`。没有闭环的告警列表两周后就没人看
+M4-3 已实现公司内部关键词告警闭环，详细边界以
+`docs/superpowers/specs/2026-09-03-m4-keyword-alerts-design.md` 为准：
+
+- **规则**：只支持全公司字面量规则，由 `owner` 创建、编辑、启停和软删除；不支持团队级规则或正则。
+- **消息入口**：只匹配进入中央 `messages` 表的新客户入站文字与后续有效正文编辑；不回扫历史，
+  不匹配员工出站消息。WhatsApp Web 的 DOM 气泡不进入中央告警；配置并启用后的 WhatsApp
+  Business Platform Cloud API Webhook 入站文字会参加匹配。
+- **接收与确认**：所有 `owner`、账号所属团队的 lead `manager`、账号 owner 为 `agent` 时的本人，
+  都保存各自独立的确认状态；`auditor` 有全局只读告警流，但不需要确认，也没有未确认徽标。
+- **通道**：通过桌面 renderer 的 WebSocket 通用提示、列表和徽标形成应用内闭环；macOS 与 Windows
+  使用相同行为。不调用操作系统通知、不播放声音，也没有点击告警跳转平台会话的 deep-link。
+- **明确未实现**：邮件、企业微信 webhook、公开订阅、agent 申请/owner 审批告警权限均不存在。
+- **数据**：`0015_keyword_alerts` 创建四张表，不读取旧消息或生成历史扫描任务。
+
+当前用户告警接口为 `POST /api/keyword-alerts/search`、
+`GET /api/keyword-alerts/unacknowledged-count`、
+`PATCH /api/keyword-alerts/:id/acknowledge`。规则与异常扫描维护仅限 `owner`：
+`GET /api/keyword-rules`、`POST /api/keyword-rules`、
+`PATCH /api/keyword-rules/:id`、`DELETE /api/keyword-rules/:id`、
+`POST /api/keyword-alert-scans/retry`。
 
 ## 10. 客户端界面
 
@@ -244,7 +257,7 @@ interface TranslationProvider {
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
 | **P0** | 服务端骨架 + RBAC + Telegram 适配器 + 消息表 + 翻译网关 + 客户端基础 UI | 单个 Telegram 账号能收发并自动翻译，权限过滤生效 |
-| **P1** | Signal 扫码接入 + 关键词监控 + 告警闭环 + 员工申请权限 | Signal 多账号在线，关键词命中推达管理员并可确认 |
+| **P1** | Signal 扫码接入（关键词告警后续由 M4-3 独立交付） | Signal 多账号在线 |
 | **P2** | 人工客户档案库 + 管理后台 | 档案人工保存、冲突保护、RBAC 检索与只读角色可用 |
 | **P3** | WhatsApp 网页容器 + Zoom 接入 | 四平台全部可用 |
 

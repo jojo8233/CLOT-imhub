@@ -1,7 +1,7 @@
 # M4-3 公司内部关键词告警设计
 
 日期：2026-09-03
-状态：设计已确认，实施计划已编写，待实现
+状态：已实现并通过自动化验证；待开发/生产部署 migration 与真实平台消息验收
 
 ## 1. 决策摘要
 
@@ -257,8 +257,9 @@ owner 在同一页面额外看到“规则管理”页签，支持新增、编�
 
 ## 10. 数据迁移与发布
 
-新增向前 migration 创建四张表、检查约束、外键、唯一约束和查询索引。不得改写已提交 migration，也
-不得在 migration 中扫描现有 `messages` 或生成历史告警。
+向前 migration `0015_keyword_alerts` 创建 `keyword_rules`、`keyword_alert_scan_jobs`、
+`keyword_alerts`、`keyword_alert_recipients` 四张表，以及相应检查约束、外键、唯一约束和查询索引。
+不得改写已提交 migration，也不得在 migration 中扫描现有 `messages` 或生成历史告警。
 
 后台处理器在 migration 完成后启动。规则为空时消息入口仍只增加一个可快速清理的扫描任务；处理器
 发现无生效规则后直接删除任务。若需要回滚桌面入口，可停止规则与告警 API，但保留表内未完成任务，
@@ -319,3 +320,35 @@ owner 在同一页面额外看到“规则管理”页签，支持新增、编�
 
 所有实现采用红—绿 TDD 和聚焦提交。不得在本切片中修改平台 guest/preload、消息 ID、composer、发送
 attempt、翻译协调器、WhatsApp DOM 读取范围或原生平台渲染。
+
+## 13. 实施 checkpoint（2026-09-04）
+
+### 13.1 提交边界
+
+相对 `origin/main` 的设计与计划提交为 `d548c53`、`4295d93`。Tasks 1–10 的实现与修复提交按顺序为：
+
+- Task 1：`1a63109`；Task 2：`a7ea830`；
+- Task 3：`d51c359`、`3eda8ed`；Task 4：`f9c070d`、`08ef35f`；
+- Task 5：`2406a27`、`ea81219`；Task 6：`954b1a5`、`0e2315c`；
+- Task 7：`298f30e`、`c068743`；Task 8：`29a3201`、`18c91da`、`471c485`；
+- Task 9：`fe88159`、`f6ac928`；Task 10：`d84cf3e`、`952fe59`。
+
+因此文档提交前分支共有 21 个提交（2 个设计/计划提交、19 个 Tasks 1–10 实现/修复提交）。
+
+### 13.2 自动化验证
+
+- `testDatabaseUrl()` 固定 `_test` 后缀检查 exit 0；Task 11 列出的 focused suite 在沙箱外以完全相同
+  测试命令通过，21 个测试文件、221 passed、0 failed，exit 0。沙箱内首次运行仅因本机 PostgreSQL
+  连接被 `EPERM` 阻止而失败，未改变数据库目标；
+- `pnpm typecheck` exit 0；
+- `pnpm test` 在固定 `_test` 目标通过，102 个测试文件、880 passed、0 failed，exit 0；
+- `pnpm --filter @im-hub/desktop build` exit 0，main、preload、renderer 三个 production build 阶段
+  均完成；
+- `git diff origin/main...HEAD --check` exit 0。
+
+### 13.3 migration 与人工验收状态
+
+- 固定 `_test` 测试数据库已迁移到 `0015_keyword_alerts`，migration 测试确认四表创建且不扫描历史消息；
+- 开发数据库 migration 未执行；
+- 未进行真实平台消息验收；
+- 未打包桌面应用，未 push、未创建 PR、未 merge。

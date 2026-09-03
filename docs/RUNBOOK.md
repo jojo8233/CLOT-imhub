@@ -406,8 +406,8 @@ Telegram：
   URL；可搜索六个人工字段、会话显示名和账号显示名，并支持平台/账号筛选与稳定游标分页；
 - 档案库查询矩阵与右栏一致：owner 全局、manager 当前带队团队、agent 本人账号、auditor 全局只读；
   筛选不可见账号只返回空页，不返回可用于枚举账号的存在性信息；
-- 客户档案只支持人工维护；产品已取消自动提取、提取建议和“重新提取”入口。关键词告警、团队管理
-  界面和管理后台尚未实现；
+- 客户档案只支持人工维护；产品已取消自动提取、提取建议和“重新提取”入口。公司内部关键词告警
+  已按 5.5 节实现；团队管理界面和管理后台尚未实现；
 - “翻译历史”页面已从功能中心删除；当前消息译文仍在会话气泡内显示，`message_translations` 仍用于
   当前译文缓存与恢复，但系统不提供翻译版本历史页；
 - WhatsApp Web 的可见 DOM 正文不会因本功能上传或形成中央消息归档；本功能没有修改三平台翻译、
@@ -417,6 +417,41 @@ Telegram：
 `0014_customer_profile_library.ts` 删除已经取消的 `audit_logs` 及其既有记录，并增加档案库分页索引。
 审计删除不可恢复；`0014` 的 down 只会重建空表结构，不能当作数据恢复。客户档案表开始承载真实资料后
 同样不要通过 down migration 删除，应使用向前修复。
+
+### 5.5 公司内部关键词告警（M4-3）
+
+当前告警只供公司内部使用：全公司字面量规则仅由 `owner` 创建、编辑、启停和软删除。处理入口是
+中央 `messages` 表中新落库的非空客户入站文字及后续有效正文编辑；不扫描部署前历史，不匹配员工
+出站消息。WhatsApp Web 的可见 DOM 气泡不形成中央消息，因此不参加告警；配置并启用后的 WhatsApp
+Business Platform Cloud API Webhook 入站文字走统一消息仓储，会参加告警。
+
+接收人与确认按命中时快照生成：所有 `owner`、账号所属团队的 lead `manager`、账号 owner 为
+`agent` 时的本人都需要分别确认，各人的确认互不影响；`auditor` 有全局只读告警流，但不需要确认，
+桌面也不请求或显示其未确认徽标。当前通知只通过 WebSocket 驱动 Electron renderer 内的通用提示、
+列表刷新和徽标，macOS 与 Windows 行为一致；没有操作系统通知、声音或点击后跳转平台会话。
+
+当前用户告警接口共三个：
+
+- `POST /api/keyword-alerts/search`
+- `GET /api/keyword-alerts/unacknowledged-count`
+- `PATCH /api/keyword-alerts/:id/acknowledge`
+
+仅 `owner` 可使用的规则与异常扫描接口共五个：
+
+- `GET /api/keyword-rules`
+- `POST /api/keyword-rules`
+- `PATCH /api/keyword-rules/:id`
+- `DELETE /api/keyword-rules/:id`
+- `POST /api/keyword-alert-scans/retry`
+
+部署包含 M4-3 的版本时，在服务端启动前运行 `pnpm db:migrate`。`0015_keyword_alerts.ts` 创建
+`keyword_rules`、`keyword_alert_scan_jobs`、`keyword_alerts`、`keyword_alert_recipients` 四张表；
+它不会读取既有消息，也不会生成历史扫描任务。持续失败的扫描任务会在 `owner` 规则页显示数量，
+由上述 retry 接口重新调度；不要通过删除任务表或 down migration 冒充成功处理。
+
+首版没有正则、邮件、企业微信 webhook、公开订阅、agent 申请/owner 审批告警权限。迁移与自动化
+验证也不能替代真实平台消息验收；真实验收必须另行授权，并遵守不记录正文、规则、业务标识或平台
+会话资料的约束。
 
 ---
 

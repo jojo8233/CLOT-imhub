@@ -30,6 +30,18 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 
 原生客户端只负责平台交互体验，不能绕过 im-hub 的权限、归档和告警边界。
 
+### 2.1 M4-3 关键词告警当前边界
+
+M4-3 已实现公司内部、全公司范围的字面量关键词规则，仅由 `owner` 管理。系统只处理进入中央
+`messages` 表的新客户入站文字和后续有效正文编辑，不回填历史，也不匹配员工出站消息。
+`owner`、当前带队 `manager` 与账号所属 `agent` 分别确认自己的接收人行；`auditor` 只有全局
+只读告警流，不确认告警，也没有未确认徽标。
+
+通知只存在于 Electron 应用内，macOS 与 Windows 使用同一 renderer 行为；没有正则、邮件、企业微信
+webhook、操作系统通知、声音、deep-link 跳转或 agent 申请/owner 审批流程。WhatsApp Web 可见 DOM
+不进入中央告警；配置并启用后的 WhatsApp Business Platform Cloud API Webhook 入站文字进入同一
+中央消息边界并参加匹配。
+
 ## 3. 界面信息架构
 
 只保留一个“会话”功能，不再向用户同时展示“会话工作台”和“原生界面”两个入口。
@@ -70,7 +82,7 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 |---|---|---|---|
 | Telegram | 补丁版 `telegram-tt` + Electron webview | bridge/composer/outbox 与约定范围真实故障矩阵已完成；shadow 账本已接线，真实对账和切换门槛待完成 | M3 |
 | Signal | 补丁版 Signal Desktop，以独立 profile 多开 | `signal-cli` 适配器与统一会话 UI 作为首检点；真实关联/收发待验，原生交付路线尚未完成 | M5（与 M6 并行） |
-| WhatsApp | 官方 Web `web_shell` 仅保留原生页面；统一消息使用 Business Platform `cloud_api` | owner-only 隔离壳、登录与页面内原生收发首检已完成；Cloud API 仅预留模式，尚无授权、Webhook、翻译或中央回传 | M6（与 M5 并行） |
+| WhatsApp | 官方 Web `web_shell` 与 Business Platform `cloud_api` 明确分离 | `web_shell` 已有隔离页面、可见 DOM 双语和发送桥接，但不形成中央 DOM 消息归档；`cloud_api` 授权/Webhook/纯文字收发代码与自动化已完成、默认关闭，尚无真实 Meta 配置或平台验收；配置启用后的 Webhook 入站文字会进入中央告警 | M6（与 M5 并行） |
 | Zoom | 后续单独评估 Team Chat 官方能力 | 只有平台类型预留 | M8 |
 
 `packages/server/src/adapters/` 的现有适配器路线暂时保留。只有当对应原生客户端的
@@ -100,7 +112,7 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 | M1 | 统一外壳、单一会话入口、平台/账号两级导航与固定翻译输入坞布局 |
 | M2 | 原生客户端宿主、消息回传和当前会话桥接 |
 | M3 | Telegram 多开、翻译、媒体、回传和存档完整闭环 |
-| M4 | 可检索客户档案库、关键词告警、团队和管理后台 |
+| M4 | 可检索客户档案库与公司内部关键词告警已实现；团队和管理后台仍待后续 |
 | M5 | Signal 首检点与原生多开完整闭环；与 M6 并行推进 |
 | M6 | WhatsApp 官方 Web 隔离壳；另以 Business Platform Cloud API 完成统一消息闭环；与 M5 并行推进 |
 | M7 | 集成测试、安装包、更新、部署和正式交付 |
