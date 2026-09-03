@@ -262,6 +262,15 @@ describe('KyselyMessageRepo.insertMessage', () => {
       editedAt: new Date('2026-08-24T04:00:00Z'),
       editVersion: 2,
     }))
+    const sameBodyNewerVersion = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'edited',
+      direction: 'in',
+      body: 'Version two',
+      editedAt: new Date('2026-08-24T05:00:00Z'),
+      editVersion: 3,
+    }))
+    expect(sameBodyNewerVersion.contentChanged).toBe(true)
     await repo.markMessageDeleted(accountId, 'edited', new Date('2026-08-24T05:00:00Z'))
 
     expect(await db.selectFrom('keyword_alert_scan_jobs')

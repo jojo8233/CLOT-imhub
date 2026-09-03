@@ -382,7 +382,7 @@ export class KyselyMessageRepo implements MessageRepo {
 
   private async updateExistingMessage(
     trx: Transaction<Database>,
-    existing: { id: string; edited_at: Date | null; edit_version: number | null },
+    existing: { id: string; body: string; edited_at: Date | null; edit_version: number | null },
     input: InsertMessageInput,
   ): Promise<InsertMessageResult> {
     if (!input.editedAt && input.editVersion === null) {
@@ -408,9 +408,10 @@ export class KyselyMessageRepo implements MessageRepo {
       .where(isNewerEdit)
       .executeTakeFirst()
     const contentChanged = (updated.numUpdatedRows ?? 0n) > 0n
+    const bodyChanged = existing.body !== input.body
 
     if (contentChanged) {
-      await this.enqueueKeywordAlertScan(trx, existing.id, input)
+      if (bodyChanged) await this.enqueueKeywordAlertScan(trx, existing.id, input)
       // 旧正文的译文已经失效。删掉后由 ingestor 重新派发同一个 messageId 的翻译任务。
       await trx.deleteFrom('message_translations').where('message_id', '=', existing.id).execute()
     }
