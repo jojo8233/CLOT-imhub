@@ -174,6 +174,28 @@ describe('KeywordRuleRepo', () => {
     expect(await repo.remove(created.rule.id, ownerId, 2)).toEqual({ kind: 'not_found' })
   })
 
+  it('软删竞态后旧 revision 仍返回删除版本 conflict，当前删除 revision 才返回 not_found', async () => {
+    const ownerId = await insertUser('deleted-conflict-owner')
+    const created = await repo.create(ownerId, {
+      pattern: 'shipment delay', severity: 'important', enabled: true,
+    })
+    if (created.kind !== 'created') throw new Error('expected created rule')
+    expect(await repo.update(created.rule.id, ownerId, {
+      baseRevision: 1, enabled: false,
+    })).toMatchObject({ kind: 'updated', rule: { revision: 2 } })
+    expect(await repo.remove(created.rule.id, ownerId, 2)).toEqual({ kind: 'removed' })
+
+    expect(await repo.update(created.rule.id, ownerId, {
+      baseRevision: 1, severity: 'urgent',
+    })).toEqual({ kind: 'conflict', currentRevision: 3 })
+    expect(await repo.remove(created.rule.id, ownerId, 2))
+      .toEqual({ kind: 'conflict', currentRevision: 3 })
+    expect(await repo.update(created.rule.id, ownerId, {
+      baseRevision: 3, enabled: true,
+    })).toEqual({ kind: 'not_found' })
+    expect(await repo.remove(created.rule.id, ownerId, 3)).toEqual({ kind: 'not_found' })
+  })
+
   it('list 和 retry 只通过注入的 scan maintenance 暴露 degraded 状态', async () => {
     expect(await repo.list()).toEqual({ rules: [], degradedScanCount: 2 })
     expect(await repo.retryDegraded(new Date('2026-09-03T10:00:00.000Z')))

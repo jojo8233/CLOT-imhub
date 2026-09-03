@@ -113,32 +113,40 @@ export class KeywordRuleRepo {
           pattern: input.pattern.trim(),
           normalized_pattern: normalizeKeywordPattern(input.pattern),
         }
-    const changedAt = new Date()
     try {
-      const row = await this.db.updateTable('keyword_rules').set({
-        ...patternChanges,
-        ...(input.severity === undefined ? {} : { severity: input.severity }),
-        ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-        revision: sql<number>`revision + 1`,
-        effective_at: changedAt,
-        updated_at: changedAt,
-        updated_by_user_id: actorUserId,
+      return await this.db.transaction().execute(async trx => {
+        const current = await trx.selectFrom('keyword_rules')
+          .select(['revision', 'deleted_at'])
+          .where('id', '=', id)
+          .forUpdate()
+          .executeTakeFirst()
+        if (!current) return { kind: 'not_found' }
+        if (current.revision !== input.baseRevision) {
+          return { kind: 'conflict', currentRevision: current.revision }
+        }
+        if (current.deleted_at !== null) return { kind: 'not_found' }
+
+        const changedAt = new Date()
+        const row = await trx.updateTable('keyword_rules').set({
+          ...patternChanges,
+          ...(input.severity === undefined ? {} : { severity: input.severity }),
+          ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+          revision: sql<number>`revision + 1`,
+          effective_at: changedAt,
+          updated_at: changedAt,
+          updated_by_user_id: actorUserId,
+        })
+          .where('id', '=', id)
+          .where('deleted_at', 'is', null)
+          .where('revision', '=', input.baseRevision)
+          .returningAll()
+          .executeTakeFirstOrThrow()
+        return { kind: 'updated', rule: rowToRule(row) }
       })
-        .where('id', '=', id)
-        .where('deleted_at', 'is', null)
-        .where('revision', '=', input.baseRevision)
-        .returningAll()
-        .executeTakeFirst()
-      if (row) return { kind: 'updated', rule: rowToRule(row) }
     } catch (error) {
       if (isActivePatternConflict(error)) return { kind: 'duplicate' }
       throw error
     }
-
-    const current = await this.currentRevision(id)
-    return current === null
-      ? { kind: 'not_found' }
-      : { kind: 'conflict', currentRevision: current }
   }
 
   async remove(
@@ -146,38 +154,36 @@ export class KeywordRuleRepo {
     actorUserId: string,
     baseRevision: number,
   ): Promise<RemoveKeywordRuleResult> {
-    const changedAt = new Date()
-    const removed = await this.db.updateTable('keyword_rules').set({
-      enabled: false,
-      revision: sql<number>`revision + 1`,
-      effective_at: changedAt,
-      updated_at: changedAt,
-      updated_by_user_id: actorUserId,
-      deleted_at: changedAt,
-    })
-      .where('id', '=', id)
-      .where('deleted_at', 'is', null)
-      .where('revision', '=', baseRevision)
-      .returning('id')
-      .executeTakeFirst()
-    if (removed) return { kind: 'removed' }
+    return this.db.transaction().execute(async trx => {
+      const current = await trx.selectFrom('keyword_rules')
+        .select(['revision', 'deleted_at'])
+        .where('id', '=', id)
+        .forUpdate()
+        .executeTakeFirst()
+      if (!current) return { kind: 'not_found' }
+      if (current.revision !== baseRevision) {
+        return { kind: 'conflict', currentRevision: current.revision }
+      }
+      if (current.deleted_at !== null) return { kind: 'not_found' }
 
-    const current = await this.currentRevision(id)
-    return current === null
-      ? { kind: 'not_found' }
-      : { kind: 'conflict', currentRevision: current }
+      const changedAt = new Date()
+      await trx.updateTable('keyword_rules').set({
+        enabled: false,
+        revision: sql<number>`revision + 1`,
+        effective_at: changedAt,
+        updated_at: changedAt,
+        updated_by_user_id: actorUserId,
+        deleted_at: changedAt,
+      })
+        .where('id', '=', id)
+        .where('deleted_at', 'is', null)
+        .where('revision', '=', baseRevision)
+        .executeTakeFirstOrThrow()
+      return { kind: 'removed' }
+    })
   }
 
   async retryDegraded(now: Date): Promise<{ retried: number }> {
     return { retried: await this.scans.retryDegraded(now) }
-  }
-
-  private async currentRevision(id: string): Promise<number | null> {
-    const row = await this.db.selectFrom('keyword_rules')
-      .select('revision')
-      .where('id', '=', id)
-      .where('deleted_at', 'is', null)
-      .executeTakeFirst()
-    return row?.revision ?? null
   }
 }
