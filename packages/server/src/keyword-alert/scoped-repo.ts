@@ -17,6 +17,19 @@ import {
   keywordAlertFilterFingerprint,
 } from './query.js'
 
+function preciseUtcTimestampFor(reference: string) {
+  return sql<string>`
+    to_char(
+      ${sql.ref(reference)} at time zone 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+    )
+  `
+}
+
+function timestampParameter(value: string) {
+  return sql<Date>`cast(${value} as timestamptz)`
+}
+
 export class ScopedKeywordAlertRepo {
   constructor(
     private readonly db: Kysely<Database>,
@@ -57,6 +70,7 @@ export class ScopedKeywordAlertRepo {
         'messages.edit_version as current_edit_version',
         'messages.edited_at as current_edited_at',
         'messages.deleted_at as message_deleted_at',
+        preciseUtcTimestampFor('keyword_alerts.created_at').as('cursor_created_at'),
       ])
 
     switch (request.status) {
@@ -83,11 +97,10 @@ export class ScopedKeywordAlertRepo {
       query = query.where('accounts.id', '=', request.accountId)
     }
     if (cursor !== undefined) {
-      const cursorDate = new Date(cursor.createdAt)
       query = query.where(eb => eb.or([
-        eb('keyword_alerts.created_at', '<', cursorDate),
+        eb('keyword_alerts.created_at', '<', timestampParameter(cursor.createdAt)),
         eb.and([
-          eb('keyword_alerts.created_at', '=', cursorDate),
+          eb('keyword_alerts.created_at', '=', timestampParameter(cursor.createdAt)),
           eb('keyword_alerts.id', '<', cursor.alertId),
         ]),
       ]))
@@ -103,7 +116,7 @@ export class ScopedKeywordAlertRepo {
     const lastRow = pageRows.at(-1)
     const nextCursor = rows.length > limit && lastRow !== undefined
       ? encodeKeywordAlertCursor({
-        createdAt: lastRow.matched_at.toISOString(),
+        createdAt: lastRow.cursor_created_at,
         alertId: lastRow.alert_id,
         fingerprint,
       })
@@ -124,11 +137,10 @@ export class ScopedKeywordAlertRepo {
     alertId: string,
     at: Date,
   ): Promise<{ acknowledgedAt: string } | null> {
-    const visible = await this.visibleRecipients()
-      .select('keyword_alert_recipients.requires_ack as requires_ack')
+    const visibleRecipient = this.visibleRecipients()
+      .select('keyword_alerts.id')
       .where('keyword_alerts.id', '=', alertId)
-      .executeTakeFirst()
-    if (!visible?.requires_ack) return null
+      .where('keyword_alert_recipients.requires_ack', '=', true)
 
     const updated = await this.db.updateTable('keyword_alert_recipients')
       .set({
@@ -136,6 +148,8 @@ export class ScopedKeywordAlertRepo {
       })
       .where('alert_id', '=', alertId)
       .where('user_id', '=', this.actorUserId)
+      .where('requires_ack', '=', true)
+      .where(({ exists }) => exists(visibleRecipient))
       .returning('acknowledged_at')
       .executeTakeFirst()
     if (updated?.acknowledged_at === null || updated === undefined) return null

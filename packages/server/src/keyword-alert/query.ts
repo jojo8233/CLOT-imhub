@@ -10,6 +10,7 @@ import type {
 const CURSOR_VERSION = 1
 const SHA256_HEX = /^[a-f0-9]{64}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6}Z$/
 
 export interface KeywordAlertFilterIdentity {
   actorUserId: string
@@ -113,6 +114,8 @@ function isCursorPayload(value: unknown): value is KeywordAlertCursorPayload {
 }
 
 function validIsoDate(value: string): boolean {
-  const date = new Date(value)
-  return Number.isFinite(date.getTime()) && date.toISOString() === value
+  if (!UTC_TIMESTAMP.test(value)) return false
+  const millisecondValue = `${value.slice(0, 23)}Z`
+  const date = new Date(millisecondValue)
+  return Number.isFinite(date.getTime()) && date.toISOString() === millisecondValue
 }

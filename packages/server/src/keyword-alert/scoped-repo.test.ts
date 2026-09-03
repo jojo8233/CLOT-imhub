@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { Kysely, PostgresDialect } from 'kysely'
+import {
+  Kysely,
+  PostgresDialect,
+  sql,
+  type CompiledQuery,
+  type DatabaseConnection,
+  type Dialect,
+  type Driver,
+  type QueryResult,
+} from 'kysely'
 import pg from 'pg'
 import type { KeywordAlertListItem, Role, ScopeFilter } from '@im-hub/shared'
 import type { Database } from '../db/types.js'
@@ -17,6 +26,7 @@ const matchedAt = new Date('2026-09-03T10:00:00.000Z')
 const acknowledgedAt = new Date('2026-09-03T10:05:00.000Z')
 const lowerAlertId = '00000000-0000-4000-8000-000000000001'
 const higherAlertId = '00000000-0000-4000-8000-000000000002'
+const sameTimestampHigherAlertId = '00000000-0000-4000-8000-000000000003'
 
 interface Fixture {
   ownerId: string
@@ -289,6 +299,90 @@ function itemKeys(item: KeywordAlertListItem): string[] {
   return Object.keys(item).sort()
 }
 
+function createAcknowledgeBoundaryDatabase(): {
+  database: Kysely<Database>
+  reached: Promise<void>
+  release: () => void
+} {
+  const postgresDialect = new PostgresDialect({
+    pool: new pg.Pool({ connectionString: testDatabaseUrl() }),
+  })
+  const underlyingDriver = postgresDialect.createDriver()
+  const underlyingConnections = new WeakMap<DatabaseConnection, DatabaseConnection>()
+  let signalReached: (() => void) | undefined
+  const reached = new Promise<void>(resolve => {
+    signalReached = resolve
+  })
+  let resumeQuery: (() => void) | undefined
+  const released = new Promise<void>(resolve => {
+    resumeQuery = resolve
+  })
+  let boundaryUsed = false
+
+  const pauseAtBoundary = async (): Promise<void> => {
+    const signal = signalReached
+    if (signal === undefined) throw new Error('acknowledgement boundary signal unavailable')
+    signal()
+    await released
+  }
+  const originalConnection = (connection: DatabaseConnection): DatabaseConnection => (
+    underlyingConnections.get(connection) ?? connection
+  )
+  const driver: Driver = {
+    init: () => underlyingDriver.init(),
+    async acquireConnection() {
+      const connection = await underlyingDriver.acquireConnection()
+      const wrapped: DatabaseConnection = {
+        async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+          if (boundaryUsed) return connection.executeQuery<R>(compiledQuery)
+          boundaryUsed = true
+          if (compiledQuery.sql.trimStart().startsWith('select')) {
+            const result = await connection.executeQuery<R>(compiledQuery)
+            await pauseAtBoundary()
+            return result
+          }
+          await pauseAtBoundary()
+          return connection.executeQuery<R>(compiledQuery)
+        },
+        streamQuery<R>(compiledQuery: CompiledQuery, chunkSize?: number) {
+          return connection.streamQuery<R>(compiledQuery, chunkSize)
+        },
+      }
+      underlyingConnections.set(wrapped, connection)
+      return wrapped
+    },
+    beginTransaction: (connection, settings) => underlyingDriver.beginTransaction(
+      originalConnection(connection),
+      settings,
+    ),
+    commitTransaction: connection => underlyingDriver.commitTransaction(
+      originalConnection(connection),
+    ),
+    rollbackTransaction: connection => underlyingDriver.rollbackTransaction(
+      originalConnection(connection),
+    ),
+    releaseConnection: connection => underlyingDriver.releaseConnection(
+      originalConnection(connection),
+    ),
+    destroy: () => underlyingDriver.destroy(),
+  }
+  const dialect: Dialect = {
+    createDriver: () => driver,
+    createQueryCompiler: () => postgresDialect.createQueryCompiler(),
+    createAdapter: () => postgresDialect.createAdapter(),
+    createIntrospector: database => postgresDialect.createIntrospector(database),
+  }
+  return {
+    database: new Kysely<Database>({ dialect }),
+    reached,
+    release: () => {
+      const resume = resumeQuery
+      if (resume === undefined) throw new Error('acknowledgement boundary release unavailable')
+      resume()
+    },
+  }
+}
+
 describe('ScopedKeywordAlertRepo visibility and filters', () => {
   it('当前 recipient 与当前 account scope 必须同时满足，新增 manager 不继承旧告警', async () => {
     const fixture = await seedFixture()
@@ -432,6 +526,48 @@ describe('ScopedKeywordAlertRepo DTO and pagination', () => {
 
   })
 
+  it('跨页保留 PostgreSQL 微秒精度并按相同 timestamp 的 alert UUID 降序续页', async () => {
+    const fixture = await seedFixture()
+    await insertAlert({
+      id: sameTimestampHigherAlertId,
+      ownerId: fixture.ownerId,
+      accountId: fixture.accountAId,
+      conversationId: (await db.selectFrom('conversations').select('id')
+        .where('account_id', '=', fixture.accountAId).executeTakeFirstOrThrow()).id,
+      platform: 'telegram',
+      body: 'customer asks for another REFUND',
+      pattern: 'Refund again',
+      severity: 'normal',
+      recipients: [{ userId: fixture.ownerId, requiresAck: true }],
+    })
+    await db.updateTable('keyword_alerts')
+      .set({ created_at: sql<Date>`${'2026-09-03T10:00:00.123456Z'}::timestamptz` })
+      .where('id', '=', higherAlertId)
+      .execute()
+    await db.updateTable('keyword_alerts')
+      .set({ created_at: sql<Date>`${'2026-09-03T10:00:00.123123Z'}::timestamptz` })
+      .where('id', 'in', [sameTimestampHigherAlertId, lowerAlertId])
+      .execute()
+
+    const ownerRepo = repo({ kind: 'all' }, fixture.ownerId)
+    const first = await ownerRepo.list({ status: 'all', limit: 1 })
+    if (first.nextCursor === null) throw new Error('expected first cursor')
+    const second = await ownerRepo.list({ status: 'all', limit: 1, cursor: first.nextCursor })
+    if (second.nextCursor === null) throw new Error('expected second cursor')
+    const third = await ownerRepo.list({ status: 'all', limit: 1, cursor: second.nextCursor })
+
+    expect([
+      ...first.items,
+      ...second.items,
+      ...third.items,
+    ].map(item => item.alertId)).toEqual([
+      higherAlertId,
+      sameTimestampHigherAlertId,
+      lowerAlertId,
+    ])
+    expect(third.nextCursor).toBeNull()
+  })
+
   it('limit 缺失或小于 1 使用 50，超过 100 时封顶为 100', async () => {
     const fixture = await seedFixture()
     await insertBulkAlerts(fixture, 101)
@@ -505,5 +641,36 @@ describe('ScopedKeywordAlertRepo acknowledgement', () => {
       .acknowledge(fixture.alertBId, at)).resolves.toBeNull()
     await expect(repo({ kind: 'all' }, fixture.ownerId)
       .acknowledge(randomUUID(), at)).resolves.toBeNull()
+  })
+
+  it('scope 在确认语句边界失效时不得更新历史 recipient', async () => {
+    const fixture = await seedFixture()
+    const boundary = createAcknowledgeBoundaryDatabase()
+    const at = new Date('2026-09-03T11:00:00.000Z')
+    const acknowledgePromise = new ScopedKeywordAlertRepo(
+      boundary.database,
+      { kind: 'self', userId: fixture.agentAId },
+      fixture.agentAId,
+    ).acknowledge(fixture.alertAId, at)
+
+    try {
+      await boundary.reached
+      await db.updateTable('accounts')
+        .set({ owner_user_id: fixture.agentBId })
+        .where('id', '=', fixture.accountAId)
+        .execute()
+      boundary.release()
+
+      await expect(acknowledgePromise).resolves.toBeNull()
+      await expect(db.selectFrom('keyword_alert_recipients')
+        .select('acknowledged_at')
+        .where('alert_id', '=', fixture.alertAId)
+        .where('user_id', '=', fixture.agentAId)
+        .executeTakeFirstOrThrow()).resolves.toMatchObject({ acknowledged_at: null })
+    } finally {
+      boundary.release()
+      await acknowledgePromise.catch(() => undefined)
+      await boundary.database.destroy()
+    }
   })
 })
