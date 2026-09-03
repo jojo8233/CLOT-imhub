@@ -215,6 +215,7 @@ export class KyselyMessageRepo implements MessageRepo {
         .executeTakeFirst()
 
       if (inserted) {
+        await this.enqueueKeywordAlertScan(trx, inserted.id, input)
         await this.recordShadowObservation(trx, input.shadowObservation)
         return { id: inserted.id, isNew: true, contentChanged: false }
       }
@@ -225,6 +226,19 @@ export class KyselyMessageRepo implements MessageRepo {
       await this.recordShadowObservation(trx, input.shadowObservation)
       return result
     }))
+  }
+
+  private async enqueueKeywordAlertScan(
+    trx: Transaction<Database>,
+    messageId: string,
+    input: InsertMessageInput,
+  ): Promise<void> {
+    if (input.direction !== 'in' || input.body.trim() === '') return
+    await trx.insertInto('keyword_alert_scan_jobs').values({
+      message_id: messageId,
+      message_revision: messageRevision(input.editVersion, input.editedAt),
+      body_snapshot: input.body,
+    }).onConflict(oc => oc.columns(['message_id', 'message_revision']).doNothing()).execute()
   }
 
   async saveTranslationIfCurrent(input: SaveTranslationIfCurrentInput): Promise<boolean> {
@@ -396,6 +410,7 @@ export class KyselyMessageRepo implements MessageRepo {
     const contentChanged = (updated.numUpdatedRows ?? 0n) > 0n
 
     if (contentChanged) {
+      await this.enqueueKeywordAlertScan(trx, existing.id, input)
       // 旧正文的译文已经失效。删掉后由 ingestor 重新派发同一个 messageId 的翻译任务。
       await trx.deleteFrom('message_translations').where('message_id', '=', existing.id).execute()
     }
