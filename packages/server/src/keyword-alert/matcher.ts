@@ -11,7 +11,8 @@ interface TrieNode {
 interface NormalizedTextMapping {
   normalizedText: string
   originalCharacters: string[]
-  originalIndexByNormalizedIndex: number[]
+  originalStartByNormalizedIndex: Array<number | undefined>
+  originalEndByNormalizedIndex: Array<number | undefined>
 }
 
 export class KeywordPatternError extends Error {
@@ -218,13 +219,12 @@ export function keywordAlertExcerpt(
 
   const normalizedStart = Array.from(mapping.normalizedText.slice(0, matchOffset)).length
   const normalizedLength = Array.from(normalizedPattern).length
-  const originalStart = mapping.originalIndexByNormalizedIndex[normalizedStart]
-  const originalEnd = mapping.originalIndexByNormalizedIndex[normalizedStart + normalizedLength - 1]
-  if (originalStart === undefined || originalEnd === undefined) {
+  const originalRange = originalRangeForNormalizedHit(mapping, normalizedStart, normalizedLength)
+  if (originalRange === null) {
     return currentBodyPrefix(mapping.originalCharacters)
   }
 
-  return excerptAroundMatch(mapping.originalCharacters, originalStart, originalEnd + 1)
+  return excerptAroundMatch(mapping.originalCharacters, originalRange.start, originalRange.end)
 }
 
 function containsControlCharacter(value: string): boolean {
@@ -240,29 +240,143 @@ function containsControlCharacter(value: string): boolean {
 function mapNormalizedText(value: string): NormalizedTextMapping {
   const originalCharacters = Array.from(value)
   const normalizedText = normalizeKeywordText(value)
-  const mappedNormalizedCharacters: string[] = []
-  const originalIndexByNormalizedIndex: number[] = []
+  const normalizedCharacters = Array.from(normalizedText)
+  const locallyNormalizedCharacters: string[] = []
+  const localOriginalStarts: number[] = []
+  const localOriginalEnds: number[] = []
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  let originalIndex = 0
 
-  for (const [originalIndex, character] of originalCharacters.entries()) {
-    for (const normalizedCharacter of Array.from(normalizeKeywordText(character))) {
-      mappedNormalizedCharacters.push(normalizedCharacter)
-      originalIndexByNormalizedIndex.push(originalIndex)
+  for (const { segment } of segmenter.segment(value)) {
+    const segmentLength = Array.from(segment).length
+    const normalizedSegment = Array.from(normalizeKeywordText(segment))
+    for (const normalizedCharacter of normalizedSegment) {
+      locallyNormalizedCharacters.push(normalizedCharacter)
+      localOriginalStarts.push(originalIndex)
+      localOriginalEnds.push(originalIndex + segmentLength)
     }
+    originalIndex += segmentLength
   }
 
-  if (mappedNormalizedCharacters.join('') !== normalizedText) {
-    return {
-      normalizedText,
-      originalCharacters,
-      originalIndexByNormalizedIndex: [],
+  const originalStartByNormalizedIndex: Array<number | undefined> = []
+  const originalEndByNormalizedIndex: Array<number | undefined> = []
+  if (locallyNormalizedCharacters.length === normalizedCharacters.length) {
+    for (const [index, normalizedCharacter] of normalizedCharacters.entries()) {
+      if (locallyNormalizedCharacters[index] === normalizedCharacter) {
+        originalStartByNormalizedIndex.push(localOriginalStarts[index])
+        originalEndByNormalizedIndex.push(localOriginalEnds[index])
+      } else {
+        originalStartByNormalizedIndex.push(undefined)
+        originalEndByNormalizedIndex.push(undefined)
+      }
     }
+  } else {
+    mapCommonNormalizedEdges(
+      normalizedCharacters,
+      locallyNormalizedCharacters,
+      localOriginalStarts,
+      localOriginalEnds,
+      originalStartByNormalizedIndex,
+      originalEndByNormalizedIndex,
+    )
   }
 
   return {
     normalizedText,
     originalCharacters,
-    originalIndexByNormalizedIndex,
+    originalStartByNormalizedIndex,
+    originalEndByNormalizedIndex,
   }
+}
+
+function mapCommonNormalizedEdges(
+  normalizedCharacters: readonly string[],
+  locallyNormalizedCharacters: readonly string[],
+  localOriginalStarts: readonly number[],
+  localOriginalEnds: readonly number[],
+  originalStartByNormalizedIndex: Array<number | undefined>,
+  originalEndByNormalizedIndex: Array<number | undefined>,
+): void {
+  for (let index = 0; index < normalizedCharacters.length; index += 1) {
+    originalStartByNormalizedIndex.push(undefined)
+    originalEndByNormalizedIndex.push(undefined)
+  }
+
+  let sharedPrefixLength = 0
+  while (
+    sharedPrefixLength < normalizedCharacters.length
+    && sharedPrefixLength < locallyNormalizedCharacters.length
+    && normalizedCharacters[sharedPrefixLength] === locallyNormalizedCharacters[sharedPrefixLength]
+  ) {
+    mapLocalNormalizedIndex(
+      sharedPrefixLength,
+      sharedPrefixLength,
+      localOriginalStarts,
+      localOriginalEnds,
+      originalStartByNormalizedIndex,
+      originalEndByNormalizedIndex,
+    )
+    sharedPrefixLength += 1
+  }
+
+  let sharedSuffixLength = 0
+  while (
+    sharedSuffixLength < normalizedCharacters.length - sharedPrefixLength
+    && sharedSuffixLength < locallyNormalizedCharacters.length - sharedPrefixLength
+    && normalizedCharacters[normalizedCharacters.length - sharedSuffixLength - 1]
+      === locallyNormalizedCharacters[locallyNormalizedCharacters.length - sharedSuffixLength - 1]
+  ) {
+    const normalizedIndex = normalizedCharacters.length - sharedSuffixLength - 1
+    const localIndex = locallyNormalizedCharacters.length - sharedSuffixLength - 1
+    mapLocalNormalizedIndex(
+      normalizedIndex,
+      localIndex,
+      localOriginalStarts,
+      localOriginalEnds,
+      originalStartByNormalizedIndex,
+      originalEndByNormalizedIndex,
+    )
+    sharedSuffixLength += 1
+  }
+}
+
+function mapLocalNormalizedIndex(
+  normalizedIndex: number,
+  localIndex: number,
+  localOriginalStarts: readonly number[],
+  localOriginalEnds: readonly number[],
+  originalStartByNormalizedIndex: Array<number | undefined>,
+  originalEndByNormalizedIndex: Array<number | undefined>,
+): void {
+  originalStartByNormalizedIndex[normalizedIndex] = localOriginalStarts[localIndex]
+  originalEndByNormalizedIndex[normalizedIndex] = localOriginalEnds[localIndex]
+}
+
+function originalRangeForNormalizedHit(
+  mapping: NormalizedTextMapping,
+  normalizedStart: number,
+  normalizedLength: number,
+): { start: number, end: number } | null {
+  let originalStart: number | undefined
+  let originalEnd: number | undefined
+
+  for (let offset = 0; offset < normalizedLength; offset += 1) {
+    const normalizedIndex = normalizedStart + offset
+    const mappedStart = mapping.originalStartByNormalizedIndex[normalizedIndex]
+    const mappedEnd = mapping.originalEndByNormalizedIndex[normalizedIndex]
+    if (mappedStart === undefined || mappedEnd === undefined) {
+      return null
+    }
+    if (originalStart === undefined) {
+      originalStart = mappedStart
+    }
+    originalEnd = mappedEnd
+  }
+
+  if (originalStart === undefined || originalEnd === undefined) {
+    return null
+  }
+  return { start: originalStart, end: originalEnd }
 }
 
 function excerptAroundMatch(

@@ -89,6 +89,13 @@ describe('keywordAlertExcerpt', () => {
       .toContain('ＲＥＦＵＮＤ')
   })
 
+  it('无关位置跨字符 NFKC 归一化时仍围绕远处命中截取当前原文', () => {
+    const currentBody = 'e\u0301' + '前'.repeat(200) + 'ＲＥＦＵＮＤ' + '后'.repeat(200)
+
+    expect(keywordAlertExcerpt(currentBody, 'refund', false))
+      .toBe('前'.repeat(77) + 'ＲＥＦＵＮＤ' + '后'.repeat(77))
+  })
+
   it('编辑后当前正文不再含旧字面量时只回退到当前正文前缀', () => {
     expect(keywordAlertExcerpt('edited body without old literal', 'old literal', false))
       .toBe('edited body without old literal')
