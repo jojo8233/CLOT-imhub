@@ -29,6 +29,7 @@ import {
 import {
   createCustomerProfileQueryDebouncer,
   prepareCustomerProfileReplacement,
+  shouldStartCustomerProfileReplacement,
   type CustomerProfileDebouncedQuery,
 } from '../customer-profile-library-controller.js'
 import { useStore } from '../store.js'
@@ -83,6 +84,7 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
   const [accountId, setAccountId] = useState<string | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const requestIdRef = useRef(0)
+  const queryInputRef = useRef(queryInput)
   const lastScheduledQueryInputRef = useRef(queryInput)
   const queryDebouncerRef = useRef<ReturnType<typeof createCustomerProfileQueryDebouncer> | null>(
     null,
@@ -127,6 +129,7 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
     mode: CustomerProfileLibraryLoadMode,
     cursor: string | null = null,
   ) => {
+    if (!shouldStartCustomerProfileReplacement(queryInputRef.current, debouncedSearch.query)) return
     if (mode === 'append' && controllerRef.current) return
     if (mode === 'replace') {
       prepareCustomerProfileReplacement('same-filter', cancelActiveLoad, () => {
@@ -172,6 +175,7 @@ export function CustomerProfileLibraryView({ readOnly }: { readOnly: boolean }) 
 
   const handleQueryInputChange = useCallback((value: string) => {
     if (value.trim() !== debouncedSearch.query) invalidateVisibleResults()
+    queryInputRef.current = value
     setQueryInput(value)
   }, [debouncedSearch.query, invalidateVisibleResults])
 

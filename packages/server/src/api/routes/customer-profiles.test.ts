@@ -242,6 +242,18 @@ describe('customer profile library routes', () => {
     expect(response.body).toBe('{"error":"客户档案库查询无效"}')
   })
 
+  it('rejects an explicit JSON null body without echoing it', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/customer-profiles/search',
+      headers: { ...auth(ownerToken), 'content-type': 'application/json' },
+      payload: 'null',
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.body).toBe('{"error":"客户档案库查询无效"}')
+  })
+
   it('returns an empty page instead of revealing an invisible account', async () => {
     const response = await app.inject({
       method: 'POST',
