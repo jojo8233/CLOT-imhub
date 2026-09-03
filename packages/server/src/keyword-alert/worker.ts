@@ -101,6 +101,7 @@ export class KeywordAlertWorker {
   start(): void {
     if (this.started) return
     this.started = true
+    if (this.timer !== undefined || this.currentDrain !== undefined) return
     this.scheduleNextDrain()
   }
 

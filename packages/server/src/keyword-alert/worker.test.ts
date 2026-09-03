@@ -273,4 +273,53 @@ describe('KeywordAlertWorker lifecycle', () => {
     expect(stopped).toBe(true)
     expect(claimCount).toBe(1)
   })
+
+  it('stop 等待旧 drain 时重启只由旧 drain 安排一次后续轮询', async () => {
+    vi.useFakeTimers()
+    const releases: Array<() => void> = []
+    let claimCount = 0
+    let inFlightClaims = 0
+    let maxInFlightClaims = 0
+    const repo: KeywordAlertWorkerRepo = {
+      claimBatch: async () => {
+        claimCount += 1
+        inFlightClaims += 1
+        maxInFlightClaims = Math.max(maxInFlightClaims, inFlightClaims)
+        return new Promise<KeywordAlertScanJob[]>(resolve => {
+          releases.push(() => {
+            inFlightClaims -= 1
+            resolve([])
+          })
+        })
+      },
+      loadActiveRules: async () => [],
+      complete: async () => [],
+      fail: async () => undefined,
+    }
+    const worker = new KeywordAlertWorker({ repo, publish: () => undefined })
+
+    try {
+      worker.start()
+      await vi.advanceTimersByTimeAsync(250)
+      expect(claimCount).toBe(1)
+
+      const stopping = worker.stop()
+      worker.start()
+      const releaseFirstClaim = releases.shift()
+      if (releaseFirstClaim === undefined) throw new Error('expected initial drain release')
+      releaseFirstClaim()
+      await stopping
+
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(claimCount).toBe(2)
+      expect(maxInFlightClaims).toBe(1)
+    } finally {
+      const cleanup = worker.stop()
+      for (const release of releases.splice(0)) release()
+      await cleanup
+      await Promise.resolve()
+      vi.clearAllTimers()
+    }
+  })
 })
