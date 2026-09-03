@@ -5,7 +5,6 @@ import type {
   Direction,
   Platform,
   Role,
-  CustomerProfileField,
 } from '@im-hub/shared'
 import type { TelegramShadowEventType, TelegramShadowSource } from '../shadow/telegram.js'
 
@@ -83,16 +82,6 @@ export interface CustomerProfilesTable {
   updated_by_user_id: string | null
   created_at: Timestamp
   updated_at: Timestamp
-}
-
-export interface AuditLogsTable {
-  id: Generated<string>
-  actor_user_id: string | null
-  account_id: string
-  conversation_id: string
-  action: string
-  changed_fields: JSONColumnType<CustomerProfileField[]>
-  created_at: Timestamp
 }
 
 export interface MessagesTable {
@@ -221,7 +210,6 @@ export interface Database {
   accounts: AccountsTable
   conversations: ConversationsTable
   customer_profiles: CustomerProfilesTable
-  audit_logs: AuditLogsTable
   messages: MessagesTable
   message_translations: MessageTranslationsTable
   message_reactions: MessageReactionsTable

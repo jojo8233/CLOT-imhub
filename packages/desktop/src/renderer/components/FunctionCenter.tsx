@@ -12,9 +12,9 @@ import { IconButton, NotWired } from './ui.js'
  * 顺带这份名单也就是路线图，接完一个把 view 填上、ready 改 true。
  */
 
-export type ViewKey = 'chat' | 'accounts'
+export type ViewKey = 'chat' | 'accounts' | 'customerProfiles'
 
-interface Entry {
+export interface FunctionCenterEntry {
   /** 图标块里的字。参考稿用的就是单字，比抽象图形更好认 */
   glyph: string
   tint: string
@@ -25,14 +25,13 @@ interface Entry {
   action?: 'addAccount'
 }
 
-const ENTRIES: Entry[] = [
+export const FUNCTION_CENTER_ENTRIES: FunctionCenterEntry[] = [
   { glyph: '+', tint: '#0a6fe8', title: '添加账号', desc: '接入新的聊天平台账号', action: 'addAccount' },
   { glyph: '话', tint: '#101a5c', title: '会话', desc: '平台原生界面、翻译与客户资料', view: 'chat' },
   { glyph: '号', tint: '#22b573', title: '账号状态', desc: '各账号在线情况与历史起点', view: 'accounts' },
   { glyph: '警', tint: '#e0364a', title: '关键词警报', desc: '命中敏感词时通知管理员' },
-  { glyph: '译', tint: '#e79a1a', title: '翻译历史', desc: '原文、译文与回译留痕' },
   { glyph: '词', tint: '#8b5cf6', title: '术语表', desc: '固定人名、品牌与产品译法' },
-  { glyph: '档', tint: '#0891b2', title: '客户档案库', desc: '跨会话汇总的客户信息' },
+  { glyph: '档', tint: '#0891b2', title: '客户档案库', desc: '搜索并维护跨会话客户资料', view: 'customerProfiles' },
   { glyph: '搜', tint: '#64748b', title: '全局搜索', desc: '跨账号检索消息与联系人' },
 ]
 
@@ -48,7 +47,7 @@ export function FunctionCenter({ view, onSelectView, onAddAccount, compact = fal
   const open = useStore(s => s.panelOpen) && !compact
   const togglePanel = useStore(s => s.togglePanel)
 
-  function activate(e: Entry): void {
+  function activate(e: FunctionCenterEntry): void {
     if (e.action === 'addAccount') onAddAccount()
     else if (e.view) onSelectView(e.view)
   }
@@ -68,7 +67,7 @@ export function FunctionCenter({ view, onSelectView, onAddAccount, compact = fal
           <div>
             <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>功能中心</div>
             <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint, marginTop: 1 }}>
-              {ENTRIES.filter(e => e.view ?? e.action).length} / {ENTRIES.length} 项已接入
+              {FUNCTION_CENTER_ENTRIES.filter(e => e.view ?? e.action).length} / {FUNCTION_CENTER_ENTRIES.length} 项已接入
             </div>
           </div>
         )}
@@ -81,7 +80,7 @@ export function FunctionCenter({ view, onSelectView, onAddAccount, compact = fal
       </div>
 
       <div className="ih-scroll" style={{ flex: 1, padding: `0 ${open ? theme.space.md : 8}px ${theme.space.md}px` }}>
-        {ENTRIES.map(e => {
+        {FUNCTION_CENTER_ENTRIES.map(e => {
           const wired = Boolean(e.view ?? e.action)
           const active = e.view !== undefined && e.view === view
           return (

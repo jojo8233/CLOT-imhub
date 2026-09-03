@@ -14,7 +14,6 @@ import { ScopedCustomerProfileRepo } from '../customer-profile/repo.js'
 export class ScopedDb {
   constructor(
     private readonly db: Kysely<Database>,
-    /** 供需要写审计日志的调用方判断 requiresAudit（P2 接入） */
     readonly scope: ScopeFilter,
   ) {}
 

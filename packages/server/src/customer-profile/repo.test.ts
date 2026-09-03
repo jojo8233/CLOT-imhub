@@ -49,7 +49,6 @@ function saveSyntheticProfile(
 }
 
 beforeEach(async () => {
-  await db.deleteFrom('audit_logs').execute()
   await db.deleteFrom('customer_profiles').execute()
   await db.deleteFrom('conversations').execute()
   await db.deleteFrom('accounts').execute()
@@ -82,12 +81,10 @@ beforeEach(async () => {
   ownerRepo = new ScopedCustomerProfileRepo(db, {
     kind: 'self',
     userId: ownerId,
-    requiresAudit: false,
   })
   outsiderRepo = new ScopedCustomerProfileRepo(db, {
     kind: 'self',
     userId: outsiderId,
-    requiresAudit: false,
   })
 })
 
@@ -108,54 +105,42 @@ describe('ScopedCustomerProfileRepo', () => {
     })
   })
 
-  it('首建档案与字段名审计在同一结果中完成', async () => {
+  it('首建档案返回 revision 1 的完整快照', async () => {
     const result = await saveSyntheticProfile(ownerRepo, conversationId, ownerId, 0)
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       kind: 'saved',
-      profile: { revision: 1 },
-      changedFields: ['name', 'occupation'],
+      profile: expect.objectContaining({
+        conversationId,
+        name: 'Synthetic Name',
+        occupation: 'Synthetic Occupation',
+        revision: 1,
+      }),
     })
-    const audit = await db.selectFrom('audit_logs').selectAll().executeTakeFirstOrThrow()
-    expect(audit.action).toBe('customer_profile.updated')
-    expect(audit.changed_fields).toEqual(['name', 'occupation'])
-    expect(JSON.stringify(audit)).not.toContain('Synthetic Name')
-    expect(JSON.stringify(audit)).not.toContain('Synthetic Occupation')
   })
 
-  it('相同内容重复保存不加 revision 且不制造审计', async () => {
+  it('相同内容重复保存不增加 revision', async () => {
     const first = await saveSyntheticProfile(ownerRepo, conversationId, ownerId, 0)
     expect(first).toMatchObject({ kind: 'saved', profile: { revision: 1 } })
     const second = await saveSyntheticProfile(ownerRepo, conversationId, ownerId, 1)
-    expect(second).toMatchObject({
+    expect(second).toEqual({
       kind: 'saved',
-      profile: { revision: 1 },
-      changedFields: [],
+      profile: expect.objectContaining({ revision: 1 }),
     })
-    const count = await db.selectFrom('audit_logs')
-      .select(({ fn }) => fn.countAll<number>().as('count'))
-      .executeTakeFirstOrThrow()
-    expect(Number(count.count)).toBe(1)
   })
 
-  it('修改已有档案只审计实际变化字段并增加 revision', async () => {
+  it('修改已有档案增加 revision 并返回新快照', async () => {
     await saveSyntheticProfile(ownerRepo, conversationId, ownerId, 0)
     const result = await ownerRepo.save(conversationId, ownerId, {
       ...syntheticUpdate(1),
       family: 'Synthetic Family Note',
     })
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       kind: 'saved',
-      profile: { revision: 2 },
-      changedFields: ['family'],
+      profile: expect.objectContaining({
+        family: 'Synthetic Family Note',
+        revision: 2,
+      }),
     })
-    const audits = await db.selectFrom('audit_logs')
-      .select('changed_fields')
-      .orderBy('created_at')
-      .execute()
-    expect(audits.map(row => row.changed_fields)).toEqual([
-      ['name', 'occupation'],
-      ['family'],
-    ])
   })
 
   it('旧 revision 返回冲突且不覆盖服务器档案', async () => {
@@ -176,11 +161,10 @@ describe('ScopedCustomerProfileRepo', () => {
     expect([left.kind, right.kind].sort()).toEqual(['conflict', 'saved'])
   })
 
-  it('不可见会话既读不到也写不入审计', async () => {
+  it('不可见会话既读不到也写不入档案', async () => {
     expect(await outsiderRepo.get(conversationId)).toBeNull()
     expect(await outsiderRepo.save(conversationId, outsiderId, syntheticUpdate(0)))
       .toEqual({ kind: 'not_found' })
-    expect(await db.selectFrom('audit_logs').selectAll().execute()).toEqual([])
   })
 
   it('写入步骤失败时整个事务回滚', async () => {
@@ -188,13 +172,11 @@ describe('ScopedCustomerProfileRepo', () => {
     await expect(ownerRepo.save(conversationId, unknownActorId, syntheticUpdate(0)))
       .rejects.toThrow()
     expect(await ownerRepo.get(conversationId)).toEqual(emptyCustomerProfile(conversationId))
-    expect(await db.selectFrom('audit_logs').selectAll().execute()).toEqual([])
   })
 
-  it('删除会话会级联删除档案与最小审计', async () => {
+  it('删除会话会级联删除档案', async () => {
     await saveSyntheticProfile(ownerRepo, conversationId, ownerId, 0)
     await db.deleteFrom('conversations').where('id', '=', conversationId).execute()
     expect(await db.selectFrom('customer_profiles').selectAll().execute()).toEqual([])
-    expect(await db.selectFrom('audit_logs').selectAll().execute()).toEqual([])
   })
 })

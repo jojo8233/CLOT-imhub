@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import {
   CUSTOMER_PROFILE_MAX_CODE_POINTS,
+  type CustomerProfile,
   type CustomerProfileField,
 } from '@im-hub/shared'
 import { api, HttpError, NetworkError } from '../api/client.js'
 import {
   initialCustomerProfileEditorState,
   reduceCustomerProfileEditor,
+  type CustomerProfileEditorAction,
   type CustomerProfileEditorState,
 } from '../customer-profile-editor.js'
 import { theme } from '../theme.js'
@@ -38,6 +40,15 @@ export interface CustomerProfileSaveAttempt {
   requestId: number
 }
 
+export function completeCustomerProfileSave(
+  dispatch: (action: CustomerProfileEditorAction) => void,
+  onSaved: ((profile: CustomerProfile) => void) | undefined,
+  event: Extract<CustomerProfileEditorAction, { type: 'save.succeeded' }>,
+): void {
+  dispatch(event)
+  onSaved?.(event.profile)
+}
+
 export function reserveCustomerProfileSaveAttempt(
   activeSaveRef: { current: CustomerProfileSaveAttempt | null },
   requestIdRef: { current: number },
@@ -65,9 +76,11 @@ export function reserveCustomerProfileSaveAttempt(
 export function CustomerProfileSection({
   conversationId,
   readOnly,
+  onSaved,
 }: {
   conversationId: string
   readOnly: boolean
+  onSaved?: (profile: CustomerProfile) => void
 }) {
   const [state, dispatch] = useReducer(
     reduceCustomerProfileEditor,
@@ -147,7 +160,7 @@ export function CustomerProfileSection({
         || activeSaveRef.current?.conversationId !== capturedConversationId
         || activeSaveRef.current.requestId !== requestId) return
       activeSaveRef.current = null
-      dispatch({
+      completeCustomerProfileSave(dispatch, onSaved, {
         type: 'save.succeeded',
         conversationId: capturedConversationId,
         requestId,
@@ -169,7 +182,7 @@ export function CustomerProfileSection({
         message: customerProfileErrorMessage(error),
       })
     }
-  }, [conversationId, loadProfile, readOnly, state.activeLoad, state.draft, state.snapshot, state.status])
+  }, [conversationId, loadProfile, onSaved, readOnly, state.activeLoad, state.draft, state.snapshot, state.status])
 
   const retry = useCallback(() => {
     if (!state.retryLoadMode || activeConversationIdRef.current !== conversationId) return

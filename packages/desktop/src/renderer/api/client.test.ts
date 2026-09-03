@@ -83,4 +83,32 @@ describe('desktop API request headers', () => {
       expectedRevision: 0,
     })
   })
+
+  it('档案库搜索只把关键词放进 POST JSON 并支持取消', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        token: 'test-token',
+        user: { id: 'user-1', role: 'owner', displayName: 'Test' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ items: [], nextCursor: null }))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+
+    await api.login('owner@example.test', 'synthetic-password')
+    await api.searchCustomerProfiles(
+      { q: 'Synthetic query', limit: 50 },
+      controller.signal,
+    )
+
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('/api/customer-profiles/search')
+    expect(fetchMock.mock.calls[1]?.[0]).not.toContain('Synthetic')
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'POST',
+      signal: controller.signal,
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      q: 'Synthetic query',
+      limit: 50,
+    })
+  })
 })

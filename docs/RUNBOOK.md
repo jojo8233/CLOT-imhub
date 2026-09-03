@@ -317,7 +317,7 @@ Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 att
 | 邮箱 | 角色 | 可见范围 | 说明 |
 |---|---|---|---|
 | `owner@example.com` | owner | 全部账号（2 个） | 老板，无限制 |
-| `auditor@example.com` | auditor | 全部账号（2 个），只读 | 风控/审计，`resolveScope` 里 `requiresAudit: true`；M4-1 只落客户档案写入的最小审计，auditor 读取审计和完整查询仍未实现 |
+| `auditor@example.com` | auditor | 全部账号（2 个），只读 | 全局只读兼容角色；可检索和查看全部可见档案，档案写入固定返回 `403` |
 | `manager@example.com` | manager | 仅自己**带队**（`is_lead=true`）的组内账号（1 个） | 只是组员（`is_lead=false`）不算带队，看不到组内账号——这是刻意设计，见 `rbac/scope.ts` 的注释 |
 | `agent@example.com` | agent | 仅自己名下的账号（1 个） | 属于"默认组"，manager 能看到他 |
 | `outsider@example.com` | agent | 仅自己名下的账号（1 个），和 agent 的不是同一个 | 不属于任何组，用来证明 agent 之间互相看不到、manager 也看不到组外人 |
@@ -391,7 +391,7 @@ Telegram：
 - [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
 
-### 5.4 客户档案（M4-1）
+### 5.4 客户档案库（M4-1/M4-2）
 
 右侧“客户档案”已经接通人工读取、编辑和保存。档案始终绑定 im-hub 内部
 `conversations.id`，不会把 Telegram、Signal 或 WhatsApp 的平台会话标识当成内部主键，也不会
@@ -402,16 +402,21 @@ Telegram：
 - 保存携带当前 `revision` 和本地单调请求编号，同一时刻只允许一个保存。遇到其他员工先保存时
   返回冲突，界面保留用户实际改过的字段、把未改字段合并为服务器最新值，并逐字段展示最新快照，
   避免完整表单重存时静默覆盖他人的无关修改；
-- 每次实际变化都在同一数据库事务内记录最小审计事实。审计只包含操作者、内部账号/会话、动作、
-  发生变化的字段名和时间，不保存字段旧值、新值、聊天正文或平台联系人标识；重复保存相同内容
-  不增加 revision，也不制造审计记录；
-- 客户档案只支持人工维护；产品已取消自动提取、提取建议和“重新提取”入口。客户档案库、审计查询
-  界面、关键词告警和管理后台尚未实现；
+- 功能中心“客户档案库”使用 `POST /api/customer-profiles/search`，关键词只放在 JSON 请求体，不进入
+  URL；可搜索六个人工字段、会话显示名和账号显示名，并支持平台/账号筛选与稳定游标分页；
+- 档案库查询矩阵与右栏一致：owner 全局、manager 当前带队团队、agent 本人账号、auditor 全局只读；
+  筛选不可见账号只返回空页，不返回可用于枚举账号的存在性信息；
+- 客户档案只支持人工维护；产品已取消自动提取、提取建议和“重新提取”入口。关键词告警、团队管理
+  界面和管理后台尚未实现；
+- “翻译历史”页面已从功能中心删除；当前消息译文仍在会话气泡内显示，`message_translations` 仍用于
+  当前译文缓存与恢复，但系统不提供翻译版本历史页；
 - WhatsApp Web 的可见 DOM 正文不会因本功能上传或形成中央消息归档；本功能没有修改三平台翻译、
   composer、发送 attempt 或平台消息 ID，也不需要新的真实平台发送验收。
 
-部署包含 M4-1 的版本前先执行数据库 migration `0013_customer_profiles.ts`。如果 UI 需要回滚，停止
-调用档案 API 即可；档案开始承载真实资料后，不要通过 down migration 删除表，应使用向前修复。
+部署包含 M4-2 的版本前按顺序执行数据库 migration：`0013_customer_profiles.ts` 建立档案表，
+`0014_customer_profile_library.ts` 删除已经取消的 `audit_logs` 及其既有记录，并增加档案库分页索引。
+审计删除不可恢复；`0014` 的 down 只会重建空表结构，不能当作数据恢复。客户档案表开始承载真实资料后
+同样不要通过 down migration 删除，应使用向前修复。
 
 ---
 
@@ -625,4 +630,3 @@ TELEGRAM_TDLIB_SHADOW_ACCOUNT_IDS=
 - **`senderDisplayName` 恒为 `null`**：`NormalizedMessage.senderDisplayName` 这个字段在归一化层定义了，但 Telegram adapter 目前没有回填联系人的展示名，所有消息的这个字段都是 `null`。
 - **翻译失败时 UI 会一直显示"翻译中…"**：如果配置的翻译引擎全部失败（比如三个 key 都没填、或者都失效了），`translate-job` 会记录失败但客户端没有对应的"翻译失败"状态展示，前端会停在乐观的"翻译中…"文案，不会主动提示用户翻译已经放弃。
 - **WebSocket 断线不自动重连**：`/ws` 连接一旦断开（网络抖动、服务端重启），客户端不会自动重连，需要用户手动刷新/重启客户端才能恢复实时推送。
-- **审计能力名不副实**：`resolveScope` 给 auditor 角色算出 `requiresAudit: true`，但 `packages/server/src/rbac/scope.ts` 里明确写了 TODO——这个字段目前没有任何调用方消费，系统并不真的在记录审计日志，只是预留了这个信号位。
