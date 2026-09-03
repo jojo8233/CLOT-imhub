@@ -332,23 +332,36 @@ attempt、翻译协调器、WhatsApp DOM 读取范围或原生平台渲染。
 - Task 5：`2406a27`、`ea81219`；Task 6：`954b1a5`、`0e2315c`；
 - Task 7：`298f30e`、`c068743`；Task 8：`29a3201`、`18c91da`、`471c485`；
 - Task 9：`fe88159`、`f6ac928`；Task 10：`d84cf3e`、`952fe59`。
+- Task 11 文档：`4195274`；最终整分支 review 修复：`10d0e44`。
 
-因此文档提交前分支共有 21 个提交（2 个设计/计划提交、19 个 Tasks 1–10 实现/修复提交）。
+因此本 checkpoint 更新前分支共有 23 个提交：2 个设计/计划提交、19 个 Tasks 1–10 实现/修复
+提交、1 个 Task 11 文档提交和 1 个最终 review 修复提交。`10d0e44` 的范围仅为 ingest repo
+及其测试，共 2 个文件。
 
 ### 13.2 自动化验证
 
-- `testDatabaseUrl()` 固定 `_test` 后缀检查 exit 0；Task 11 列出的 focused suite 在沙箱外以完全相同
-  测试命令通过，21 个测试文件、221 passed、0 failed，exit 0。沙箱内首次运行仅因本机 PostgreSQL
-  连接被 `EPERM` 阻止而失败，未改变数据库目标；
+- `testDatabaseUrl()` 固定 `_test` 后缀的 fresh 检查 exit 0；
+- 最终 review 修复相关的 7 个测试文件通过，123 passed、0 failed，exit 0，其中 ingest repo
+  30 passed；
+- Task 11 列出的完整 focused suite 在固定 `_test` 目标通过，21 个测试文件、223 passed、
+  0 failed，exit 0，包含新增的 2 条编辑方向回归测试；
 - `pnpm typecheck` exit 0；
-- `pnpm test` 在固定 `_test` 目标通过，102 个测试文件、880 passed、0 failed，exit 0；
+- `pnpm test` 在固定 `_test` 目标通过，102 个测试文件、882 passed、0 failed，exit 0；
 - `pnpm --filter @im-hub/desktop build` exit 0，main、preload、renderer 三个 production build 阶段
   均完成；
 - `git diff origin/main...HEAD --check` exit 0。
 
 ### 13.3 migration 与人工验收状态
 
-- 固定 `_test` 测试数据库已迁移到 `0015_keyword_alerts`，migration 测试确认四表创建且不扫描历史消息；
+- 固定 `_test` 测试数据库的 `0015_keyword_alerts` migration 记录经 fresh 只读检查确认存在；migration
+  测试确认四表创建且不扫描历史消息；
 - 开发数据库 migration 未执行；
 - 未进行真实平台消息验收；
 - 未打包桌面应用，未 push、未创建 PR、未 merge。
+
+### 13.4 最终整分支 review 修复
+
+最终 review 发现编辑事件携带的方向可能与既有消息的已存方向不一致；若扫描判断使用事件方向，可能
+错误扫描已存出站消息，或漏扫已存入站消息的有效正文编辑。`10d0e44` 改为以已存方向决定编辑是否
+进入告警扫描，并增加两个相反方向的回归用例。13.2 的所有结果均在该修复提交之后重新取得；没有
+扩大到历史回填或出站匹配。
