@@ -22,6 +22,10 @@ describe('createMigrationProvider', () => {
       path.join(migrationFolder, '0001_throws.test.mjs'),
       "throw new Error('test module must not be imported')\n",
     )
+    await writeFile(
+      path.join(migrationFolder, '0001_throws.test.integration.mjs'),
+      "throw new Error('nested test module must not be imported')\n",
+    )
 
     const migrations = await createMigrationProvider(migrationFolder).getMigrations()
 
