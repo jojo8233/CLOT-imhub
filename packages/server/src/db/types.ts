@@ -211,11 +211,11 @@ export interface KeywordRulesTable {
   severity: KeywordAlertSeverity
   enabled: Generated<boolean>
   revision: Generated<number>
-  effective_at: Generated<Timestamp>
+  effective_at: Timestamp
   created_by_user_id: string
   updated_by_user_id: string
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
   deleted_at: Timestamp | null
 }
 
@@ -224,12 +224,12 @@ export interface KeywordAlertScanJobsTable {
   message_id: string
   message_revision: string
   body_snapshot: string
-  available_at: Generated<Timestamp>
+  available_at: Timestamp
   attempt_count: Generated<number>
   lease_owner: string | null
   lease_expires_at: Timestamp | null
   last_error_code: string | null
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
 }
 
 export interface KeywordAlertsTable {
@@ -239,7 +239,7 @@ export interface KeywordAlertsTable {
   pattern_snapshot: string
   severity_snapshot: KeywordAlertSeverity
   matched_message_revision: string
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
 }
 
 export interface KeywordAlertRecipientsTable {
@@ -247,7 +247,7 @@ export interface KeywordAlertRecipientsTable {
   user_id: string
   requires_ack: boolean
   acknowledged_at: Timestamp | null
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
 }
 
 export interface Database {
