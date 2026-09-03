@@ -18,6 +18,7 @@ import { OpenAiProvider } from './translation/providers/openai.js'
 import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
+import { startKeywordAlertRuntime } from './keyword-alert/runtime.js'
 import {
   buildTelegramDeleteObservation,
   buildTelegramRemapObservation,
@@ -396,6 +397,10 @@ const app = await buildServer({
   },
 }, hub)
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
+const keywordAlertRuntime = startKeywordAlertRuntime({
+  db,
+  publish: (userId, event) => hub.publishTo(userId, event),
+})
 
 // TDLib 被强杀时可能来不及走完 authorizationStateClosed，本地 session 数据库
 // 会留下未完整落盘的状态。退出前逐个断开，给它落盘的机会。
@@ -405,6 +410,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     void (async () => {
       console.log(`[server] 收到 ${signal}，正在断开所有账号…`)
+      await keywordAlertRuntime.stop()
       const connected = await db.selectFrom('accounts')
         .select(['id', 'connection_mode'])
         .where('status', '=', 'connected')

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { WsKeywordAlertEvent } from '@im-hub/shared'
 import { WsHub } from './ws.js'
 
 const OPEN = 1
@@ -48,6 +49,53 @@ describe('WsHub', () => {
     hub.add('u1', s as never)
     hub.publishTo('u2', event)
     expect(s.send).not.toHaveBeenCalled()
+  })
+
+  it('关键词告警只发给目标用户并序列化为五字段无敏感正文提示', () => {
+    const hub = new WsHub()
+    const recipient = fakeSocket()
+    const otherUser = fakeSocket()
+    const contextSentinels = {
+      recipientId: 'RECIPIENT-ID-MUST-NOT-BE-PAYLOAD',
+      body: 'BODY-MUST-NOT-LEAK',
+      pattern: 'PATTERN-MUST-NOT-LEAK',
+      accountId: 'ACCOUNT-ID-MUST-NOT-LEAK',
+      conversationId: 'CONVERSATION-ID-MUST-NOT-LEAK',
+      messageId: 'MESSAGE-ID-MUST-NOT-LEAK',
+      ruleId: 'RULE-ID-MUST-NOT-LEAK',
+    }
+    const keywordAlertEvent: WsKeywordAlertEvent = {
+      type: 'keyword_alert',
+      alertId: 'alert-1',
+      severity: 'urgent',
+      requiresAcknowledgement: true,
+      createdAt: '2026-09-03T10:00:00.000Z',
+    }
+    hub.add(contextSentinels.recipientId, recipient as never)
+    hub.add('other-user', otherUser as never)
+
+    hub.publishTo(contextSentinels.recipientId, keywordAlertEvent)
+
+    expect(recipient.send).toHaveBeenCalledOnce()
+    expect(otherUser.send).not.toHaveBeenCalled()
+    const rawPayload = recipient.send.mock.calls[0]?.[0]
+    if (typeof rawPayload !== 'string') throw new Error('expected serialized WebSocket payload')
+    const parsedPayload: unknown = JSON.parse(rawPayload)
+    if (typeof parsedPayload !== 'object' || parsedPayload === null || Array.isArray(parsedPayload)) {
+      throw new Error('expected object WebSocket payload')
+    }
+    const payload = parsedPayload as Record<string, unknown>
+    expect(Object.keys(payload).sort()).toEqual([
+      'alertId',
+      'createdAt',
+      'requiresAcknowledgement',
+      'severity',
+      'type',
+    ])
+    expect(payload).toEqual(keywordAlertEvent)
+    for (const sentinel of Object.values(contextSentinels)) {
+      expect(rawPayload).not.toContain(sentinel)
+    }
   })
 
   it('推给不存在的用户不抛错', () => {
