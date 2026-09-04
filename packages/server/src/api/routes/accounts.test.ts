@@ -22,6 +22,7 @@ const db = new Kysely<Database>({
 let AGENT_ID: string
 let MANAGER_ID: string
 let AUDITOR_ID: string
+let OWNER_ID: string
 let TEAM_ID: string
 let agentAccountId: string
 
@@ -33,6 +34,7 @@ function fakeActorRepo(): ActorRepo {
       roles[AGENT_ID] = 'agent'
       roles[MANAGER_ID] = 'manager'
       roles[AUDITOR_ID] = 'auditor'
+      roles[OWNER_ID] = 'owner'
       const role = roles[userId]
       return role ? { id: userId, role, disabled_at: null, session_version: 1 } : null
     },
@@ -54,6 +56,7 @@ let app: FastifyInstance
 let agentToken: string
 let managerToken: string
 let auditorToken: string
+let ownerToken: string
 
 beforeEach(async () => {
   adapters.connect.mockClear()
@@ -83,6 +86,7 @@ beforeEach(async () => {
   AGENT_ID = await mk('agent-acct-route@example.com', 'agent')
   MANAGER_ID = await mk('manager-acct-route@example.com', 'manager')
   AUDITOR_ID = await mk('auditor-acct-route@example.com', 'auditor')
+  OWNER_ID = await mk('owner-acct-route@example.com', 'owner')
 
   await db.insertInto('team_members').values([
     { team_id: TEAM_ID, user_id: AGENT_ID, is_lead: false },
@@ -102,6 +106,7 @@ beforeEach(async () => {
   agentToken = await signSession({ userId: AGENT_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
   managerToken = await signSession({ userId: MANAGER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
   auditorToken = await signSession({ userId: AUDITOR_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  ownerToken = await signSession({ userId: OWNER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
 })
 
 afterAll(async () => {
@@ -189,6 +194,45 @@ describe('POST /api/accounts', () => {
     expect(row.owner_user_id).toBe(AGENT_ID)
   })
 
+  it('agent 即使提交 teamId 也强制使用自己唯一的团队', async () => {
+    const otherTeamId = (await db.insertInto('teams').values({ name: 'Other active team' })
+      .returning('id').executeTakeFirstOrThrow()).id
+    const res = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(agentToken),
+      payload: { platform: 'telegram', displayName: 'Agent forced team', teamId: otherTeamId },
+    })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().account).toMatchObject({ owner_user_id: AGENT_ID, team_id: TEAM_ID })
+  })
+
+  it('manager 必须明确选择自己负责的启用团队', async () => {
+    expect((await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(managerToken),
+      payload: { platform: 'telegram', displayName: 'Manager missing team' },
+    })).statusCode).toBe(400)
+    const created = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(managerToken),
+      payload: { platform: 'telegram', displayName: 'Manager account', teamId: TEAM_ID },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json().account).toMatchObject({ owner_user_id: MANAGER_ID, team_id: TEAM_ID })
+  })
+
+  it('owner 可选择任一启用团队或未分组', async () => {
+    const grouped = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(ownerToken),
+      payload: { platform: 'telegram', displayName: 'Owner grouped', teamId: TEAM_ID },
+    })
+    expect(grouped.statusCode).toBe(201)
+    expect(grouped.json().account).toMatchObject({ owner_user_id: OWNER_ID, team_id: TEAM_ID })
+    const ungrouped = await app.inject({
+      method: 'POST', url: '/api/accounts', headers: auth(ownerToken),
+      payload: { platform: 'telegram', displayName: 'Owner ungrouped', teamId: null },
+    })
+    expect(ungrouped.statusCode).toBe(201)
+    expect(ungrouped.json().account).toMatchObject({ owner_user_id: OWNER_ID, team_id: null })
+  })
+
   it('auditor 是只读角色，建不了账号', async () => {
     const res = await app.inject({
       method: 'POST', url: '/api/accounts', headers: auth(auditorToken),
@@ -247,6 +291,40 @@ describe('POST /api/accounts', () => {
       payload: { platform: 'telegram', displayName: '   ' },
     })
     expect(res.statusCode).toBe(400)
+  })
+})
+
+describe('GET /api/account-creation-context', () => {
+  it('按角色只返回可选启用团队和选择要求', async () => {
+    const agent = await app.inject({
+      method: 'GET', url: '/api/account-creation-context', headers: auth(agentToken),
+    })
+    expect(agent.statusCode).toBe(200)
+    expect(agent.json()).toEqual({
+      selectableTeams: [{ id: TEAM_ID, name: '测试组' }],
+      requiresTeamSelection: false,
+      allowsUngrouped: false,
+    })
+
+    const manager = await app.inject({
+      method: 'GET', url: '/api/account-creation-context', headers: auth(managerToken),
+    })
+    expect(manager.json()).toEqual({
+      selectableTeams: [{ id: TEAM_ID, name: '测试组' }],
+      requiresTeamSelection: true,
+      allowsUngrouped: false,
+    })
+    const owner = await app.inject({
+      method: 'GET', url: '/api/account-creation-context', headers: auth(ownerToken),
+    })
+    expect(owner.json()).toEqual({
+      selectableTeams: [{ id: TEAM_ID, name: '测试组' }],
+      requiresTeamSelection: false,
+      allowsUngrouped: true,
+    })
+    expect((await app.inject({
+      method: 'GET', url: '/api/account-creation-context', headers: auth(auditorToken),
+    })).statusCode).toBe(403)
   })
 })
 

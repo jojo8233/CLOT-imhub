@@ -36,6 +36,9 @@ import { desktopInstallationRoutes } from './routes/desktop-installations.js'
 import { OrganizationReadRepo } from '../organization-admin/read-repo.js'
 import { UserAdminService } from '../organization-admin/user-service.js'
 import { adminUserRoutes } from './routes/admin-users.js'
+import { AdminOperationTokenService } from '../organization-admin/operation-token.js'
+import { TeamAdminService } from '../organization-admin/team-service.js'
+import { adminTeamRoutes } from './routes/admin-teams.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -75,8 +78,9 @@ export interface BuildServerDeps extends MessageRouteDeps {
   telegramShadowRefresh?: TelegramShadowRefreshRouteDeps
   whatsappCloudRoutes?: WhatsAppCloudRouteDeps
   organizationAdmin?: {
-    readRepo: OrganizationReadRepo
-    userService: UserAdminService
+    readRepo?: OrganizationReadRepo
+    userService?: UserAdminService
+    teamService?: TeamAdminService
     writesEnabled: boolean
   }
 }
@@ -88,10 +92,19 @@ export async function buildServer(
 ): Promise<FastifyInstance> {
   const actorRepo = options.actorRepo ?? defaultActorRepo
   const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
-  const organizationAdmin = deps.organizationAdmin ?? {
-    readRepo: new OrganizationReadRepo(db),
-    userService: new UserAdminService(db),
-    writesEnabled: config.ORGANIZATION_ADMIN_WRITES_ENABLED,
+  const readRepo = deps.organizationAdmin?.readRepo ?? new OrganizationReadRepo(db)
+  const userService = deps.organizationAdmin?.userService ?? new UserAdminService(db)
+  const teamService = deps.organizationAdmin?.teamService ?? new TeamAdminService(
+    db,
+    deviceService,
+    new AdminOperationTokenService(config.JWT_SECRET),
+  )
+  const organizationAdmin = {
+    readRepo,
+    userService,
+    teamService,
+    writesEnabled: deps.organizationAdmin?.writesEnabled
+      ?? config.ORGANIZATION_ADMIN_WRITES_ENABLED,
   }
   const app = Fastify({
     logger: {
@@ -162,6 +175,9 @@ export async function buildServer(
   })
   await app.register(async instance => {
     await adminUserRoutes(instance, { ...organizationAdmin, hub })
+  })
+  await app.register(async instance => {
+    await adminTeamRoutes(instance, { ...organizationAdmin, hub })
   })
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
