@@ -27,9 +27,9 @@ let AUDITOR_ID: string
 function fakeActorRepo(): ActorRepo {
   return {
     findUser: async (userId) => userId === OWNER_ID
-      ? { id: OWNER_ID, role: 'owner' as Role, disabled_at: null }
+      ? { id: OWNER_ID, role: 'owner' as Role, disabled_at: null, session_version: 1 }
       : userId === AUDITOR_ID
-        ? { id: AUDITOR_ID, role: 'auditor' as Role, disabled_at: null }
+        ? { id: AUDITOR_ID, role: 'auditor' as Role, disabled_at: null, session_version: 1 }
         : null,
     findMemberships: async () => [],
   }
@@ -87,8 +87,8 @@ beforeEach(async () => {
   ;({ buildServer } = await import('../server.js'))
   ;({ signSession } = await import('../../auth/session.js'))
   app = await buildServer(deps, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
-  token = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
-  auditorToken = await signSession({ userId: AUDITOR_ID }, process.env.JWT_SECRET!)
+  token = await signSession({ userId: OWNER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  auditorToken = await signSession({ userId: AUDITOR_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
 })
 
 afterAll(async () => {

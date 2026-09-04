@@ -31,7 +31,7 @@ export interface UsersTable {
   must_change_password: Generated<boolean>
   temporary_password_expires_at: Timestamp | null
   revision: Generated<number>
-  updated_at: Generated<Timestamp>
+  updated_at: Timestamp
 }
 
 export interface TeamsTable {
@@ -40,7 +40,7 @@ export interface TeamsTable {
   created_at: Generated<Timestamp>
   disabled_at: Timestamp | null
   revision: Generated<number>
-  updated_at: Generated<Timestamp>
+  updated_at: Timestamp
 }
 
 export interface TeamMembersTable {

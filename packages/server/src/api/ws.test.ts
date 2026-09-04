@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { WsKeywordAlertEvent } from '@im-hub/shared'
-import { WsHub } from './ws.js'
+import { signSession } from '../auth/session.js'
+import { authenticateWsSession, WsHub } from './ws.js'
 
 const OPEN = 1
 
@@ -10,6 +11,7 @@ function fakeSocket(readyState = OPEN) {
     readyState,
     OPEN,
     send: vi.fn(),
+    close: vi.fn(),
     on: vi.fn((event: string, cb: () => void) => {
       if (event === 'close') closeHandlers.push(cb)
     }),
@@ -138,5 +140,43 @@ describe('WsHub', () => {
     hub.add('u1', good as never)
     expect(() => hub.publishTo('u1', event)).not.toThrow()
     expect(good.send).toHaveBeenCalledOnce()
+  })
+
+  it('撤权先发送固定事件再关闭同一用户的全部连接', () => {
+    const hub = new WsHub()
+    const first = fakeSocket()
+    const second = fakeSocket()
+    const other = fakeSocket()
+    hub.add('u1', first as never)
+    hub.add('u1', second as never)
+    hub.add('u2', other as never)
+
+    hub.revokeUser('u1')
+
+    for (const socket of [first, second]) {
+      expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'session_revoked' }))
+      expect(socket.close).toHaveBeenCalledWith(4001, 'session revoked')
+      expect(socket.send.mock.invocationCallOrder[0])
+        .toBeLessThan(socket.close.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER)
+    }
+    expect(other.send).not.toHaveBeenCalled()
+    expect(other.close).not.toHaveBeenCalled()
+  })
+
+  it('WebSocket 首帧拒绝数据库版本已经变化的旧会话', async () => {
+    const token = await signSession({ userId: 'u1', sessionVersion: 1 }, 'ws-auth-secret-at-least-16-chars')
+    const repo = {
+      findUser: vi.fn().mockResolvedValue({
+        id: 'u1', role: 'agent', disabled_at: null, session_version: 2,
+      }),
+      findMemberships: vi.fn(),
+    }
+
+    await expect(authenticateWsSession(
+      token,
+      'ws-auth-secret-at-least-16-chars',
+      repo,
+    )).rejects.toThrow('invalid session actor')
+    expect(repo.findMemberships).not.toHaveBeenCalled()
   })
 })

@@ -104,7 +104,7 @@ function fakeActorRepo(): ActorRepo {
   return {
     findUser: async (userId) => {
       const role = roles.get(userId)
-      return role ? { id: userId, role, disabled_at: null } : null
+      return role ? { id: userId, role, disabled_at: null, session_version: 1 } : null
     },
     findMemberships: async (userId) => userId === managerId
       ? [{ team_id: teamId, is_lead: true }]
@@ -182,9 +182,9 @@ beforeEach(async () => {
   }, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
   const secret = process.env.JWT_SECRET
   if (!secret) throw new Error('test JWT secret missing')
-  ownerToken = await signSession({ userId: ownerId }, secret)
-  managerToken = await signSession({ userId: managerId }, secret)
-  auditorToken = await signSession({ userId: auditorId }, secret)
+  ownerToken = await signSession({ userId: ownerId, sessionVersion: 1 }, secret)
+  managerToken = await signSession({ userId: managerId, sessionVersion: 1 }, secret)
+  auditorToken = await signSession({ userId: auditorId, sessionVersion: 1 }, secret)
 })
 
 afterAll(async () => {

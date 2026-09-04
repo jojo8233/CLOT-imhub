@@ -34,7 +34,7 @@ function fakeActorRepo(): ActorRepo {
       roles[MANAGER_ID] = 'manager'
       roles[AUDITOR_ID] = 'auditor'
       const role = roles[userId]
-      return role ? { id: userId, role, disabled_at: null } : null
+      return role ? { id: userId, role, disabled_at: null, session_version: 1 } : null
     },
     findMemberships: async (userId) =>
       userId === MANAGER_ID ? [{ team_id: TEAM_ID, is_lead: true }]
@@ -99,9 +99,9 @@ beforeEach(async () => {
   ;({ buildServer } = await import('../server.js'))
   ;({ signSession } = await import('../../auth/session.js'))
   app = await buildServer(deps, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
-  agentToken = await signSession({ userId: AGENT_ID }, process.env.JWT_SECRET!)
-  managerToken = await signSession({ userId: MANAGER_ID }, process.env.JWT_SECRET!)
-  auditorToken = await signSession({ userId: AUDITOR_ID }, process.env.JWT_SECRET!)
+  agentToken = await signSession({ userId: AGENT_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  managerToken = await signSession({ userId: MANAGER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  auditorToken = await signSession({ userId: AUDITOR_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
 })
 
 afterAll(async () => {

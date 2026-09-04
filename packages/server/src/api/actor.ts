@@ -1,7 +1,12 @@
 import type { Actor, Role } from '@im-hub/shared'
 
 export interface ActorRepo {
-  findUser(userId: string): Promise<{ id: string; role: Role; disabled_at: Date | null } | null>
+  findUser(userId: string): Promise<{
+    id: string
+    role: Role
+    disabled_at: Date | null
+    session_version: number
+  } | null>
   findMemberships(userId: string): Promise<{ team_id: string; is_lead: boolean }[]>
 }
 
@@ -14,10 +19,15 @@ export interface ActorRepo {
  * leadTeamIds 只对 manager 生效：其他角色即使在 team_members 里被误标了
  * is_lead 也不给，免得一行脏数据把 agent 提权成组长。
  */
-export async function loadActor(userId: string, repo: ActorRepo): Promise<Actor> {
+export async function loadActor(
+  userId: string,
+  expectedSessionVersion: number,
+  repo: ActorRepo,
+): Promise<Actor> {
   const user = await repo.findUser(userId)
-  if (!user) throw new Error('user not found')
-  if (user.disabled_at) throw new Error('user is disabled')
+  if (!user || user.disabled_at || user.session_version !== expectedSessionVersion) {
+    throw new Error('invalid session actor')
+  }
 
   const leadTeamIds =
     user.role === 'manager'

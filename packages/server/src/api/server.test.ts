@@ -20,9 +20,19 @@ const OWNER_ID = 'owner-1'
 const DISABLED_ID = 'disabled-1'
 
 function fakeActorRepo(): ActorRepo {
-  const users: Record<string, { id: string; role: Role; disabled_at: Date | null }> = {
-    [OWNER_ID]: { id: OWNER_ID, role: 'owner', disabled_at: null },
-    [DISABLED_ID]: { id: DISABLED_ID, role: 'agent', disabled_at: new Date() },
+  const users: Record<string, {
+    id: string
+    role: Role
+    disabled_at: Date | null
+    session_version: number
+  }> = {
+    [OWNER_ID]: { id: OWNER_ID, role: 'owner', disabled_at: null, session_version: 1 },
+    [DISABLED_ID]: {
+      id: DISABLED_ID,
+      role: 'agent',
+      disabled_at: new Date(),
+      session_version: 1,
+    },
   }
   return {
     findUser: async (userId) => users[userId] ?? null,
@@ -75,7 +85,7 @@ describe('buildServer 鉴权钩子', () => {
   })
 
   it('合法 token 能通过钩子并挂上 req.actor / req.scoped', async () => {
-    const token = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
+    const token = await signSession({ userId: OWNER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
     const res = await app.inject({
       method: 'GET',
       url: '/api/accounts',
@@ -88,7 +98,7 @@ describe('buildServer 鉴权钩子', () => {
   })
 
   it('/api/session/me 返回服务端实时加载的用户角色', async () => {
-    const token = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
+    const token = await signSession({ userId: OWNER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
     const res = await app.inject({
       method: 'GET',
       url: '/api/session/me',
@@ -99,7 +109,21 @@ describe('buildServer 鉴权钩子', () => {
   })
 
   it('token 合法但用户已停用时返回 401', async () => {
-    const token = await signSession({ userId: DISABLED_ID }, process.env.JWT_SECRET!)
+    const token = await signSession({ userId: DISABLED_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/accounts',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.statusCode).toBe(401)
+    expect(res.json()).toEqual({ error: 'unauthorized' })
+  })
+
+  it('token 的会话版本落后于数据库时返回 401', async () => {
+    const token = await signSession({
+      userId: OWNER_ID,
+      sessionVersion: 2,
+    }, process.env.JWT_SECRET!)
     const res = await app.inject({
       method: 'GET',
       url: '/api/accounts',

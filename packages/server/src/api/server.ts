@@ -8,7 +8,7 @@ import { verifySession } from '../auth/session.js'
 import { loadActor, type ActorRepo } from './actor.js'
 import { resolveScope } from '../rbac/scope.js'
 import { ScopedDb } from '../rbac/scoped-db.js'
-import type { WsHub } from './ws.js'
+import { authenticateWsSession, type WsHub } from './ws.js'
 import { authRoutes } from './routes/auth.js'
 import { accountRoutes } from './routes/accounts.js'
 import { conversationRoutes } from './routes/conversations.js'
@@ -42,14 +42,16 @@ declare module 'fastify' {
 const defaultActorRepo: ActorRepo = {
   findUser: async (userId) => {
     const row = await db.selectFrom('users')
-      .select(['id', 'role', 'disabled_at'])
+      .select(['id', 'role', 'disabled_at', 'session_version'])
       .where('id', '=', userId)
       .executeTakeFirst()
     return row ?? null
   },
-  findMemberships: (userId) => db.selectFrom('team_members')
-    .select(['team_id', 'is_lead'])
-    .where('user_id', '=', userId)
+  findMemberships: (userId) => db.selectFrom('team_members as member')
+    .innerJoin('teams as team', 'team.id', 'member.team_id')
+    .select(['member.team_id', 'member.is_lead'])
+    .where('member.user_id', '=', userId)
+    .where('team.disabled_at', 'is', null)
     .execute(),
 }
 
@@ -108,7 +110,7 @@ export async function buildServer(
     if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'unauthorized' })
     try {
       const claims = await verifySession(header.slice(7), config.JWT_SECRET)
-      req.actor = await loadActor(claims.userId, actorRepo)
+      req.actor = await loadActor(claims.userId, claims.sessionVersion, actorRepo)
       req.scoped = new ScopedDb(db, resolveScope(req.actor), req.actor.userId)
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })
@@ -164,10 +166,10 @@ export async function buildServer(
       try {
         const msg = JSON.parse(data.toString()) as { type?: string; token?: string }
         if (msg.type !== 'auth' || !msg.token) throw new Error('expected auth frame')
-        const claims = await verifySession(msg.token, config.JWT_SECRET)
+        const actor = await authenticateWsSession(msg.token, config.JWT_SECRET, actorRepo)
         authed = true
         clearTimeout(deadline)
-        hub.add(claims.userId, socket as never)
+        hub.add(actor.userId, socket as never)
         socket.send(JSON.stringify({ type: 'auth_ok' }))
       } catch {
         clearTimeout(deadline)
