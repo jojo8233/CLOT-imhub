@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { emptyCustomerProfile, type KeywordRule } from '@im-hub/shared'
-import { api, logout } from './client.js'
+import { api, logout, UnauthorizedError } from './client.js'
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -8,6 +8,126 @@ function jsonResponse(body: unknown): Response {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+function statusResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function sessionFixture() {
+  const session = {
+    save: vi.fn().mockResolvedValue(true),
+    load: vi.fn().mockResolvedValue(null),
+    clear: vi.fn().mockResolvedValue(undefined),
+  }
+  ;(globalThis as { imHub?: unknown }).imHub = {
+    serverUrl: 'http://localhost:4000',
+    session,
+  }
+  return session
+}
+
+describe('desktop auth session lifecycle', () => {
+  afterEach(async () => {
+    await logout()
+    delete (globalThis as { imHub?: unknown }).imHub
+    vi.unstubAllGlobals()
+  })
+
+  it('临时密码登录只保留内存 setup token，绝不持久化', async () => {
+    const session = sessionFixture()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      kind: 'password_change_required',
+      setupToken: 'setup-token-must-not-persist',
+      user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+    })))
+
+    const result = await api.login('agent@example.test', 'temporary-password')
+
+    expect(result.kind).toBe('password_change_required')
+    expect(session.save).not.toHaveBeenCalled()
+    expect(JSON.stringify(session.save.mock.calls)).not.toContain('setup-token-must-not-persist')
+  })
+
+  it('首次改密用专用授权完成，并只持久化返回的普通会话', async () => {
+    const session = sessionFixture()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'password_change_required',
+        setupToken: 'setup-token-main-memory-only',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated',
+        token: 'ordinary-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.login('agent@example.test', 'temporary-password')
+    const user = await api.completeInitialPassword('replacement-password')
+
+    expect(user).toEqual({ id: 'user-1', role: 'agent', displayName: 'Agent' })
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({
+      Authorization: 'InitialPassword setup-token-main-memory-only',
+    })
+    expect(session.save).toHaveBeenCalledWith({
+      token: 'ordinary-session-token',
+      user,
+    })
+    expect(JSON.stringify(session.save.mock.calls)).not.toContain('setup-token-main-memory-only')
+  })
+
+  it('普通改密先持久化替换会话，之后请求只使用新 token', async () => {
+    const session = sessionFixture()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated',
+        token: 'old-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated',
+        token: 'new-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ accounts: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const login = await api.login('agent@example.test', 'old-password-value')
+    if (login.kind !== 'authenticated') throw new Error('expected authenticated login')
+    await api.changePassword('old-password-value', 'replacement-password')
+    await api.listAccounts()
+
+    expect(session.save).toHaveBeenLastCalledWith({
+      token: 'new-session-token',
+      user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+    })
+    expect(fetchMock.mock.calls[2]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer new-session-token',
+    })
+  })
+
+  it('任何普通会话 401 都清除内存和加密存档', async () => {
+    const session = sessionFixture()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated',
+        token: 'soon-revoked-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockResolvedValueOnce(statusResponse(401, { error: 'unauthorized' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const login = await api.login('agent@example.test', 'valid-password')
+    if (login.kind !== 'authenticated') throw new Error('expected authenticated login')
+    session.clear.mockClear()
+
+    await expect(api.listAccounts()).rejects.toBeInstanceOf(UnauthorizedError)
+    expect(session.clear).toHaveBeenCalledOnce()
+  })
+})
 
 function authenticatedFetch(responseBody: unknown) {
   const fetchMock = vi.fn()

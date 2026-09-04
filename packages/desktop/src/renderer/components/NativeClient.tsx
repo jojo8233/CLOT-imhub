@@ -104,7 +104,7 @@ export function nativeAccountControllable(
  */
 export function nativeAccountIdsToMount(
   accounts: ReadonlyArray<Pick<AccountRow,
-    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode' | 'desktop_mount_state'>>,
   user: Pick<SessionUser, 'id' | 'role'> | null,
   supportsWebview: boolean,
 ): string[] {
@@ -114,13 +114,14 @@ export function nativeAccountIdsToMount(
       && (account.platform !== 'whatsapp'
         || account.connection_mode === 'adapter'
         || account.connection_mode === 'web_shell')
-      && nativeAccountControllable(account, user))
+      && nativeAccountControllable(account, user)
+      && desktopMountAllowed(account))
     .map(account => account.id)
 }
 
 export function signalDesktopAccountIdsToMount(
   accounts: ReadonlyArray<Pick<AccountRow,
-    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode' | 'desktop_mount_state'>>,
   user: Pick<SessionUser, 'id' | 'role'> | null,
   supportsSignalDesktop: boolean,
 ): string[] {
@@ -128,8 +129,31 @@ export function signalDesktopAccountIdsToMount(
   return accounts
     .filter(account => account.platform === 'signal'
       && account.connection_mode === 'native_desktop'
-      && nativeAccountControllable(account, user))
+      && nativeAccountControllable(account, user)
+      && desktopMountAllowed(account))
     .map(account => account.id)
+}
+
+export function ownedLocalAccountIds(
+  accounts: ReadonlyArray<Pick<AccountRow,
+    'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
+  user: Pick<SessionUser, 'id' | 'role'> | null,
+  capabilities: { webview: boolean; signalDesktop: boolean },
+): string[] {
+  return accounts.filter(account => nativeAccountControllable(account, user)
+    && ((capabilities.webview
+      && nativeClientSupported(account.platform)
+      && (account.platform !== 'whatsapp'
+        || account.connection_mode === 'adapter'
+        || account.connection_mode === 'web_shell'))
+      || (capabilities.signalDesktop
+        && account.platform === 'signal'
+        && account.connection_mode === 'native_desktop')))
+    .map(account => account.id)
+}
+
+function desktopMountAllowed(account: Pick<AccountRow, 'desktop_mount_state'>): boolean {
+  return account.desktop_mount_state === undefined || account.desktop_mount_state === 'ready'
 }
 
 export function signalOutboxStatusError(
@@ -263,6 +287,15 @@ export function NativeClient() {
   let overlay: ReactNode = null
   if (!active) {
     overlay = <EmptyHint>从顶栏选一个账号<br />这里会打开它的原生界面</EmptyHint>
+  } else if (active.desktop_mount_state && active.desktop_mount_state !== 'ready') {
+    overlay = (
+      <EmptyHint>
+        {active.desktop_mount_notice
+          ?? (active.desktop_mount_state === 'pending'
+            ? '正在核对本机账号挂载与清理任务。'
+            : '本机账号清理尚未完成，当前暂不开放原生界面。')}
+      </EmptyHint>
+    )
   } else if (active.platform === 'signal' && active.connection_mode !== 'native_desktop') {
     overlay = (
       <EmptyHint>

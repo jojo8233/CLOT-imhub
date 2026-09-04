@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { api, NetworkError, type WhatsAppOnboardingStatus } from '../api/client.js'
+import { api, NetworkError, type AccountRow, type WhatsAppOnboardingStatus } from '../api/client.js'
 import type { ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
@@ -29,9 +29,10 @@ interface RelinkAccount {
  * TDLib 的二维码 token 过期后会自动下发新的链接，所以这里不用计时刷新，
  * 跟着事件走就行。
  */
-export function AddAccountDialog({ initialPlatform, onClose }: {
+export function AddAccountDialog({ initialPlatform, onClose, onAccountsChanged }: {
   initialPlatform: ChatPlatform
   onClose(): void
+  onAccountsChanged(accounts: AccountRow[]): Promise<void>
 }) {
   const [platform, setPlatform] = useState<ChatPlatform>(initialPlatform)
   const [name, setName] = useState('')
@@ -50,7 +51,6 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   const challenge = useStore(s => s.authChallenge)
   const done = useStore(s => s.authDone)
   const clearAuth = useStore(s => s.clearAuth)
-  const setAccounts = useStore(s => s.setAccounts)
   const setActivePlatform = useStore(s => s.setActivePlatform)
   const setActiveAccount = useStore(s => s.setActiveAccount)
 
@@ -93,7 +93,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
         if (status.state === 'completed' && status.accountId) {
           const accounts = (await api.listAccounts()).accounts
           if (stopped) return
-          setAccounts(accounts)
+          await onAccountsChanged(accounts)
           setActivePlatform('whatsapp')
           setActiveAccount(status.accountId)
           return
@@ -118,7 +118,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   }, [
     cloudExpiresAt,
     cloudSessionId,
-    setAccounts,
+    onAccountsChanged,
     setActiveAccount,
     setActivePlatform,
     step,
@@ -155,7 +155,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
       setLinkingPlatform(platform)
       setStep('linking')
       // 新账号此刻还不在列表里，补一次
-      setAccounts((await api.listAccounts()).accounts)
+      await onAccountsChanged((await api.listAccounts()).accounts)
       if (platform === 'signal' || platform === 'whatsapp') {
         setActivePlatform(platform)
         setActiveAccount(account.id)

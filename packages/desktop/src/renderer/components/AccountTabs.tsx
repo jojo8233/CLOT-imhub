@@ -7,10 +7,11 @@ import { Avatar, PlatformIcon, StatusDot } from './ui.js'
 interface Props {
   currentUserName: string | null
   onLogout(): void
+  onChangePassword(): void
   onAddAccount(platform: ChatPlatform): void
 }
 
-export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) {
+export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAddAccount }: Props) {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const activePlatform = useStore(s => s.activePlatform)
@@ -81,7 +82,11 @@ export function AccountTabs({ currentUserName, onLogout, onAddAccount }: Props) 
         </div>
       </div>
 
-      <CurrentUser currentUserName={currentUserName} onLogout={onLogout} />
+      <CurrentUser
+        currentUserName={currentUserName}
+        onLogout={onLogout}
+        onChangePassword={onChangePassword}
+      />
     </header>
   )
 }
@@ -109,9 +114,10 @@ function Brand() {
   )
 }
 
-function CurrentUser({ currentUserName, onLogout }: {
+function CurrentUser({ currentUserName, onLogout, onChangePassword }: {
   currentUserName: string | null
   onLogout(): void
+  onChangePassword(): void
 }) {
   return (
     <div style={{
@@ -126,15 +132,26 @@ function CurrentUser({ currentUserName, onLogout }: {
         }}>
           {currentUserName ?? '—'}
         </div>
-        <button
-          onClick={onLogout}
-          style={{
-            padding: 0, border: 'none', background: 'none',
-            fontSize: theme.font.size.xs, color: theme.color.textFaint,
-          }}
-        >
-          登出
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={onChangePassword}
+            style={{
+              padding: 0, border: 'none', background: 'none',
+              fontSize: theme.font.size.xs, color: theme.color.textFaint,
+            }}
+          >
+            修改密码
+          </button>
+          <button
+            onClick={onLogout}
+            style={{
+              padding: 0, border: 'none', background: 'none',
+              fontSize: theme.font.size.xs, color: theme.color.textFaint,
+            }}
+          >
+            登出
+          </button>
+        </div>
       </div>
     </div>
   )

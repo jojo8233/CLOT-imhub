@@ -11,6 +11,7 @@ import type {
   KeywordRuleCreate,
   KeywordRuleListResponse,
   KeywordRuleUpdate,
+  LoginResponse,
   NativeControlGrantResponse,
   Platform,
   Role,
@@ -35,7 +36,12 @@ if (!injected?.serverUrl) {
 const BASE = injected?.serverUrl ?? 'http://localhost:4000'
 // 可能为 undefined（比如以后有非 Electron 的渲染宿主）。所有用法都做了空值兜底：
 // 拿不到就是"这次不持久化"，不是崩溃。
-const sessionBridge = injected?.session
+const initialSessionBridge = injected?.session
+
+function currentSessionBridge(): SessionBridge | undefined {
+  return (globalThis as { imHub?: { session?: SessionBridge } }).imHub?.session
+    ?? initialSessionBridge
+}
 
 export interface SessionUser {
   id: string
@@ -85,6 +91,7 @@ export class HttpError extends Error {
 // console。持久化只走 preload 的 session.save/load/clear（主进程 safeStorage）。
 let token: string | null = null
 let currentUser: SessionUser | null = null
+let initialPasswordSetupToken: string | null = null
 
 export function hasToken(): boolean {
   return token !== null
@@ -96,6 +103,7 @@ export function getCurrentUser(): SessionUser | null {
 
 /** 应用启动时调用：有加密存档就恢复登录态，没有（或解不出来）就返回 null，交给调用方显示登录页。 */
 export async function restoreSession(): Promise<SessionUser | null> {
+  const sessionBridge = currentSessionBridge()
   if (!sessionBridge) return null
   const saved = await sessionBridge.load()
   if (!saved) return null
@@ -110,18 +118,20 @@ export async function restoreSession(): Promise<SessionUser | null> {
  * 后果只是下次启动要求重新登录。
  */
 async function persistSession(): Promise<void> {
+  const sessionBridge = currentSessionBridge()
   if (!sessionBridge || !token || !currentUser) return
   await sessionBridge.save({ token, user: currentUser })
 }
 
 async function clearPersistedSession(): Promise<void> {
-  await sessionBridge?.clear()
+  await currentSessionBridge()?.clear()
 }
 
 /** 登出：清内存 token/user，清磁盘存档。调用方（App.tsx）另外负责关 WS、清 store。 */
 export async function logout(): Promise<void> {
   token = null
   currentUser = null
+  initialPasswordSetupToken = null
   await clearPersistedSession()
 }
 
@@ -180,6 +190,9 @@ export interface AccountRow {
   status: string
   history_available_from: string | null
   connection_mode: AccountConnectionMode
+  /** 仅存在于 renderer 内存；服务端账号响应不会持久化本机挂载状态。 */
+  desktop_mount_state?: 'pending' | 'ready' | 'blocked'
+  desktop_mount_notice?: string
 }
 
 export interface CreateAccountInput {
@@ -223,11 +236,48 @@ export const api = {
    * 登录成功后立即尝试加密持久化（safeStorage 不可用时 persistSession 静默跳过，
    * 不算失败）。返回服务端给的 user，登录页/App.tsx 用它展示姓名、驱动后续流程。
    */
-  async login(email: string, password: string): Promise<SessionUser> {
-    const res = await request<{ token: string; user: SessionUser }>('/api/auth/login', {
+  async login(email: string, password: string): Promise<LoginResponse> {
+    const res = await request<LoginResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     })
+    if (res.kind === 'password_change_required') {
+      token = null
+      currentUser = null
+      initialPasswordSetupToken = res.setupToken
+      await clearPersistedSession()
+      return res
+    }
+    initialPasswordSetupToken = null
+    token = res.token
+    currentUser = res.user
+    await persistSession()
+    return res
+  },
+  async completeInitialPassword(newPassword: string): Promise<SessionUser> {
+    const setupToken = initialPasswordSetupToken
+    if (!setupToken) throw new Error('首次改密流程已失效，请重新登录')
+    try {
+      const res = await request<LoginResponse>('/api/auth/initial-password/complete', {
+        method: 'POST',
+        headers: { Authorization: `InitialPassword ${setupToken}` },
+        body: JSON.stringify({ newPassword }),
+      })
+      if (res.kind !== 'authenticated') throw new Error('首次改密响应无效')
+      token = res.token
+      currentUser = res.user
+      await persistSession()
+      return res.user
+    } finally {
+      initialPasswordSetupToken = null
+    }
+  },
+  async changePassword(currentPassword: string, newPassword: string): Promise<SessionUser> {
+    const res = await request<LoginResponse>('/api/session/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    })
+    if (res.kind !== 'authenticated') throw new Error('改密响应无效')
     token = res.token
     currentUser = res.user
     await persistSession()

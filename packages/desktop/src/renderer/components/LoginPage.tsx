@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { api, NetworkError, UnauthorizedError, type SessionUser } from '../api/client.js'
+import type { LoginResponse } from '@im-hub/shared'
+import { api, NetworkError, UnauthorizedError } from '../api/client.js'
 import { theme } from '../theme.js'
 
 interface Props {
-  onLoginSuccess(user: SessionUser): void
+  onLoginSuccess(result: LoginResponse): void
 }
 
 export function LoginPage({ onLoginSuccess }: Props) {
@@ -18,8 +19,9 @@ export function LoginPage({ onLoginSuccess }: Props) {
     setSubmitting(true)
     setError(null)
     try {
-      const user = await api.login(email.trim(), password)
-      onLoginSuccess(user)
+      const result = await api.login(email.trim(), password)
+      setPassword('')
+      onLoginSuccess(result)
     } catch (err) {
       if (err instanceof UnauthorizedError) {
         setError('邮箱或密码不对')

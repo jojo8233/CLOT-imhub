@@ -5,6 +5,7 @@ import {
   createSingleFlight,
   nativeAccountControllable,
   nativeAccountIdsToMount,
+  ownedLocalAccountIds,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
   nativeWebviewNeedsComposerFocus,
@@ -65,6 +66,27 @@ describe('native account ownership gate', () => {
       { id: 'user-1', role: 'agent' },
       false,
     )).toEqual([])
+  })
+
+  it('挂载同步完成前不创建本地 pane，但仍上报所有受支持的本人本地账号', () => {
+    const accounts = [
+      { id: 'tg-pending', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter', desktop_mount_state: 'pending' },
+      { id: 'wa-blocked', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'web_shell', desktop_mount_state: 'blocked' },
+      { id: 'signal-ready', platform: 'signal', owner_user_id: 'user-1', connection_mode: 'native_desktop', desktop_mount_state: 'ready' },
+      { id: 'cloud', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'cloud_api' },
+    ] satisfies Array<Pick<AccountRow,
+      'id' | 'platform' | 'owner_user_id' | 'connection_mode' | 'desktop_mount_state'>>
+
+    expect(ownedLocalAccountIds(accounts, { id: 'user-1', role: 'agent' }, {
+      webview: true,
+      signalDesktop: true,
+    })).toEqual(['tg-pending', 'wa-blocked', 'signal-ready'])
+    expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, true)).toEqual([])
+    expect(signalDesktopAccountIdsToMount(
+      accounts,
+      { id: 'user-1', role: 'agent' },
+      true,
+    )).toEqual(['signal-ready'])
   })
 })
 

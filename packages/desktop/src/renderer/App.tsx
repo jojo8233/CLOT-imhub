@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { functionCenterCompact } from './layout.js'
 import {
   api,
@@ -16,6 +17,8 @@ import { AddAccountDialog, RelinkAccountDialog } from './components/AddAccountDi
 import { NativeConversationWorkspace } from './components/NativeConversationWorkspace.js'
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
+import { InitialPasswordPage } from './components/InitialPasswordPage.js'
+import { ChangePasswordDialog } from './components/ChangePasswordDialog.js'
 import { CustomerProfileLibraryView } from './components/CustomerProfileLibraryView.js'
 import { KeywordAlertCenterView } from './components/KeywordAlertCenterView.js'
 import type { ChatPlatform } from './navigation.js'
@@ -26,8 +29,10 @@ import {
   nativeMessageTranslationBridge,
   nativeMessageTranslationsFromRows,
 } from './native-bridge.js'
+import { ownedLocalAccountIds } from './components/NativeClient.js'
+import type { AccountRow } from './api/client.js'
 
-type AuthState = 'checking' | 'loggedOut' | 'loggedIn'
+type AuthState = 'checking' | 'loggedOut' | 'changingInitialPassword' | 'loggedIn'
 
 export function App() {
   const setAccounts = useStore(s => s.setAccounts)
@@ -53,6 +58,7 @@ export function App() {
     platform: ChatPlatform
     displayName: string
   } | null>(null)
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   // 整排的宽度。只用来决定功能中心要不要强制收成图标栏——
   // 三栏自己的宽度由 ChatWorkspace 量，两处各管各的，不互相牵连。
   const [rowWidth, setRowWidth] = useState(0)
@@ -86,6 +92,7 @@ export function App() {
   const messageLoadGenerationRef = useRef(0)
   const keywordAlertCountRequestIdRef = useRef(0)
   const keywordAlertToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const desktopSyncGenerationRef = useRef(0)
 
   const clearKeywordAlertToastTimer = useCallback(() => {
     if (keywordAlertToastTimerRef.current === null) return
@@ -164,6 +171,7 @@ export function App() {
   // 清理动作（关 WS、清 store、清 user）完全一致，不会有一条漏做。
   const backToLogin = useCallback(() => {
     authGenerationRef.current += 1
+    desktopSyncGenerationRef.current += 1
     messageLoadGenerationRef.current += 1
     resetKeywordAlertState()
     bootRetryRef.current?.reset()
@@ -177,6 +185,7 @@ export function App() {
     })
     resetStore()
     setUser(null)
+    setChangePasswordOpen(false)
     setBootError(null)
     setAuthState('loggedOut')
   }, [resetKeywordAlertState, resetStore])
@@ -187,6 +196,76 @@ export function App() {
     onUnauthorized(backToLogin)
     return () => onUnauthorized(null)
   }, [backToLogin])
+
+  const syncOwnedLocalMounts = useCallback(async (
+    accounts: AccountRow[],
+    sessionUser: SessionUser,
+    authGeneration: number,
+  ): Promise<void> => {
+    const syncGeneration = ++desktopSyncGenerationRef.current
+    const accountIds = ownedLocalAccountIds(accounts, sessionUser, {
+      webview: window.imHub?.nativeBridgePreload !== undefined,
+      signalDesktop: window.imHub?.signalDesktop !== undefined,
+    })
+    const localIds = new Set(accountIds)
+    const pendingAccounts = accounts.map(account => localIds.has(account.id)
+      ? {
+          ...account,
+          desktop_mount_state: 'pending' as const,
+          desktop_mount_notice: '正在核对本机账号挂载与清理任务。',
+        }
+      : account)
+
+    // 先落新账号归属，让已经失权的 webview / Signal view 立即卸载；随后主进程
+    // 才领取清理任务。新获得的账号在服务端确认 ready 前也不会提前挂载。
+    flushSync(() => { setAccounts(pendingAccounts) })
+    const bridge = window.imHub?.desktopInstallation
+    if (!bridge) {
+      if (accountIds.length === 0) return
+      if (authGeneration !== authGenerationRef.current
+        || syncGeneration !== desktopSyncGenerationRef.current) return
+      setAccounts(markDesktopMountsBlocked(
+        pendingAccounts,
+        localIds,
+        '当前客户端缺少本机安装登记能力，请升级后重试。',
+      ))
+      return
+    }
+
+    try {
+      const result = await bridge.syncMounts(accountIds)
+      if (authGeneration !== authGenerationRef.current
+        || syncGeneration !== desktopSyncGenerationRef.current) return
+      const ready = new Set(result.readyAccountIds)
+      const manual = new Set(result.manualRequiredAccountIds)
+      const blocked = new Set(result.blockedAccountIds)
+      setAccounts(pendingAccounts.map(account => {
+        if (!localIds.has(account.id)) return account
+        if (ready.has(account.id) && !blocked.has(account.id)) {
+          return {
+            ...account,
+            desktop_mount_state: 'ready' as const,
+            desktop_mount_notice: undefined,
+          }
+        }
+        return {
+          ...account,
+          desktop_mount_state: 'blocked' as const,
+          desktop_mount_notice: manual.has(account.id)
+            ? '该账号仍需由公司在平台官方设备列表中人工解除旧设备关联。'
+            : '本机账号清理尚未完成；应用会在下次同步时重试。',
+        }
+      }))
+    } catch {
+      if (authGeneration !== authGenerationRef.current
+        || syncGeneration !== desktopSyncGenerationRef.current) return
+      setAccounts(markDesktopMountsBlocked(
+        pendingAccounts,
+        localIds,
+        '本机安装登记或清理同步失败；当前账号暂不开放，应用会稍后重试。',
+      ))
+    }
+  }, [setAccounts])
 
   const bootstrap = useCallback(async (loggedInUser: SessionUser) => {
     bootRetryRef.current?.cancel()
@@ -204,7 +283,8 @@ export function App() {
       refreshKeywordAlertCount(generation, currentSessionUser.role)
       const accounts = await api.listAccounts()
       if (generation !== authGenerationRef.current) return
-      setAccounts(accounts.accounts)
+      await syncOwnedLocalMounts(accounts.accounts, currentSessionUser, generation)
+      if (generation !== authGenerationRef.current) return
       const conversations = await api.listConversations()
       if (generation !== authGenerationRef.current) return
       setConversations(conversations.conversations)
@@ -231,6 +311,22 @@ export function App() {
     }
     wsRef.current = api.connectWs((event) => {
       if (generation !== authGenerationRef.current) return
+      if (event.type === 'session_revoked') {
+        void apiLogout()
+        backToLogin()
+        return
+      }
+      if (event.type === 'organization_changed') {
+        void bootstrapRef.current?.(activeSessionUser)
+        return
+      }
+      if (event.type === 'desktop_cleanup_requested') {
+        void api.listAccounts().then(async result => {
+          if (generation !== authGenerationRef.current) return
+          await syncOwnedLocalMounts(result.accounts, activeSessionUser, generation)
+        }).catch(() => {})
+        return
+      }
       if (event.type === 'keyword_alert') {
         const notification = keywordAlertNotification(event)
         showKeywordAlertToast(notification.message)
@@ -269,8 +365,9 @@ export function App() {
           accountId: event.accountId, ok: event.ok, reason: event.reason,
         })
         // 关联成功的账号此刻才带上最终状态，整表重拉最省事
-        void api.listAccounts().then((r) => {
-          if (generation === authGenerationRef.current) setAccounts(r.accounts)
+        void api.listAccounts().then(async (r) => {
+          if (generation !== authGenerationRef.current) return
+          await syncOwnedLocalMounts(r.accounts, activeSessionUser, generation)
         }).catch(() => {})
         return
       }
@@ -323,13 +420,17 @@ export function App() {
           // 直接重拉规范快照才能覆盖任意 WS 到达顺序。
           void refreshMessages(event.conversationId)
         }
+        return
       }
+      const exhaustive: never = event
+      void exhaustive
     })
     if (generation === authGenerationRef.current) setAuthState('loggedIn')
   }, [
     setAccounts, setConversations, applyTranslation, setAccountStatus,
     appendMessage, updateMessage, removeMessage, refreshMessages,
     refreshKeywordAlertCount, resetKeywordAlertState, showKeywordAlertToast,
+    backToLogin, syncOwnedLocalMounts,
   ])
   bootstrapRef.current = bootstrap
 
@@ -379,7 +480,25 @@ export function App() {
   }
 
   if (authState === 'loggedOut') {
-    return <LoginPage onLoginSuccess={(u) => void bootstrap(u)} />
+    return <LoginPage onLoginSuccess={(result) => {
+      if (result.kind === 'password_change_required') {
+        setUser(result.user)
+        setAuthState('changingInitialPassword')
+        return
+      }
+      void bootstrap(result.user)
+    }} />
+  }
+
+  if (authState === 'changingInitialPassword' && user) {
+    return <InitialPasswordPage
+      displayName={user.displayName}
+      onCompleted={completedUser => void bootstrap(completedUser)}
+      onBackToLogin={() => {
+        void apiLogout()
+        backToLogin()
+      }}
+    />
   }
 
   return (
@@ -396,6 +515,7 @@ export function App() {
         <AccountTabs
           currentUserName={user?.displayName ?? null}
           onLogout={() => void handleLogout()}
+          onChangePassword={() => setChangePasswordOpen(true)}
           onAddAccount={(platform) => {
             setAddPlatform(platform)
             setAddOpen(true)
@@ -442,6 +562,9 @@ export function App() {
                 setAddPlatform(activePlatform)
                 setAddOpen(true)
               }}
+              onAccountsChanged={accounts => user
+                ? syncOwnedLocalMounts(accounts, user, authGenerationRef.current)
+                : Promise.resolve()}
             />
           )}
           {view === 'customerProfiles' && (
@@ -487,11 +610,33 @@ export function App() {
       </div>
 
       {addOpen && (
-        <AddAccountDialog initialPlatform={addPlatform} onClose={() => setAddOpen(false)} />
+        <AddAccountDialog
+          initialPlatform={addPlatform}
+          onClose={() => setAddOpen(false)}
+          onAccountsChanged={accounts => user
+            ? syncOwnedLocalMounts(accounts, user, authGenerationRef.current)
+            : Promise.resolve()}
+        />
       )}
       {relinkAccount && (
         <RelinkAccountDialog account={relinkAccount} onClose={() => setRelinkAccount(null)} />
       )}
+      {changePasswordOpen && (
+        <ChangePasswordDialog
+          onChanged={changedUser => void bootstrap(changedUser)}
+          onClose={() => setChangePasswordOpen(false)}
+        />
+      )}
     </div>
   )
+}
+
+function markDesktopMountsBlocked(
+  accounts: AccountRow[],
+  localIds: Set<string>,
+  notice: string,
+): AccountRow[] {
+  return accounts.map(account => localIds.has(account.id)
+    ? { ...account, desktop_mount_state: 'blocked', desktop_mount_notice: notice }
+    : account)
 }

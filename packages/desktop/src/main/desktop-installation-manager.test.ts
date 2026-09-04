@@ -117,6 +117,33 @@ describe('DesktopInstallationManager', () => {
     expect(calls).toEqual(['sync'])
   })
 
+  it('当前已无本人账号时仍领取并执行这台安装上的遗留清理任务', async () => {
+    const calls: string[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/register')) return json({ registered: true })
+      if (url.endsWith('/claim')) return json({ tasks: [task()] })
+      if (url.endsWith(`/${CLEANUP_TASK_ID}/complete`)) {
+        calls.push('complete')
+        return json({ completed: true })
+      }
+      calls.push('sync')
+      return json(successfulSync([]))
+    })
+    const purgeAccount = vi.fn().mockResolvedValue(undefined)
+    const manager = new DesktopInstallationManager({
+      serverUrl: 'http://localhost:4000',
+      clientVersion: '1.2.3',
+      identity: { installationId: INSTALLATION_ID, credential: CREDENTIAL },
+      fetch: fetcher,
+      purgeAccount,
+    })
+
+    await expect(manager.syncMounts(TOKEN, [])).resolves.toEqual(successfulSync([]))
+    expect(purgeAccount).toHaveBeenCalledWith(WEB_ACCOUNT_ID)
+    expect(calls).toEqual(['complete', 'sync'])
+  })
+
   it('忽略已完成的重复任务，Signal/人工任务从不传给分区清理器', async () => {
     const purgeAccount = vi.fn().mockResolvedValue(undefined)
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

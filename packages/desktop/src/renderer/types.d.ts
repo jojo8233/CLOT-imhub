@@ -8,6 +8,7 @@ import type {
   NativeTranslationBatchInput,
   NativeTranslationBatchResult,
   DesktopInstallationSyncResult,
+  AuthenticatedUser,
 } from '@im-hub/shared'
 import type {
   SignalDesktopRect,
@@ -49,6 +50,11 @@ declare global {
     imHub?: {
       platform?: string
       serverUrl?: string
+      session?: {
+        save(payload: { token: string; user: AuthenticatedUser }): Promise<boolean>
+        load(): Promise<{ token: string; user: AuthenticatedUser } | null>
+        clear(): Promise<void>
+      }
       external?: { open(url: string): Promise<void> }
       desktopInstallation?: {
         syncMounts(accountIds: string[]): Promise<DesktopInstallationSyncResult>
