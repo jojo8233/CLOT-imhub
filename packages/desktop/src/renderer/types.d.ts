@@ -7,6 +7,7 @@ import type {
   NativeHostCommand,
   NativeTranslationBatchInput,
   NativeTranslationBatchResult,
+  DesktopInstallationSyncResult,
 } from '@im-hub/shared'
 import type {
   SignalDesktopRect,
@@ -49,6 +50,9 @@ declare global {
       platform?: string
       serverUrl?: string
       external?: { open(url: string): Promise<void> }
+      desktopInstallation?: {
+        syncMounts(accountIds: string[]): Promise<DesktopInstallationSyncResult>
+      }
       nativeBridgePreload?: string
       nativeControl?: NativeControlBridge
       signalDesktop?: SignalDesktopBridge
