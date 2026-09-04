@@ -17,9 +17,11 @@ import { NativeConversationWorkspace } from './components/NativeConversationWork
 import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import { CustomerProfileLibraryView } from './components/CustomerProfileLibraryView.js'
+import { KeywordAlertCenterView } from './components/KeywordAlertCenterView.js'
 import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
 import { BootstrapRetryController } from './bootstrap-retry.js'
+import { keywordAlertNotification } from './keyword-alert-notification.js'
 import {
   nativeMessageTranslationBridge,
   nativeMessageTranslationsFromRows,
@@ -41,6 +43,9 @@ export function App() {
   const activePlatform = useStore(s => s.activePlatform)
 
   const [view, setView] = useState<ViewKey>('chat')
+  const [keywordAlertCount, setKeywordAlertCount] = useState<number | null>(null)
+  const [keywordAlertRealtimeRevision, setKeywordAlertRealtimeRevision] = useState(0)
+  const [keywordAlertToast, setKeywordAlertToast] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [addPlatform, setAddPlatform] = useState<ChatPlatform>('telegram')
   const [relinkAccount, setRelinkAccount] = useState<{
@@ -79,6 +84,51 @@ export function App() {
   const authGenerationRef = useRef(0)
   const messageMutationRevisionRef = useRef(0)
   const messageLoadGenerationRef = useRef(0)
+  const keywordAlertCountRequestIdRef = useRef(0)
+  const keywordAlertToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearKeywordAlertToastTimer = useCallback(() => {
+    if (keywordAlertToastTimerRef.current === null) return
+    clearTimeout(keywordAlertToastTimerRef.current)
+    keywordAlertToastTimerRef.current = null
+  }, [])
+
+  const resetKeywordAlertState = useCallback(() => {
+    keywordAlertCountRequestIdRef.current += 1
+    clearKeywordAlertToastTimer()
+    setKeywordAlertCount(null)
+    setKeywordAlertRealtimeRevision(0)
+    setKeywordAlertToast(null)
+  }, [clearKeywordAlertToastTimer])
+
+  const showKeywordAlertToast = useCallback((message: string) => {
+    clearKeywordAlertToastTimer()
+    setKeywordAlertToast(message)
+    keywordAlertToastTimerRef.current = setTimeout(() => {
+      keywordAlertToastTimerRef.current = null
+      setKeywordAlertToast(null)
+    }, 5_000)
+  }, [clearKeywordAlertToastTimer])
+
+  const refreshKeywordAlertCount = useCallback((
+    generation: number,
+    role: SessionUser['role'],
+  ) => {
+    const requestId = ++keywordAlertCountRequestIdRef.current
+    if (role === 'auditor') {
+      if (generation === authGenerationRef.current) setKeywordAlertCount(null)
+      return
+    }
+    void api.getKeywordAlertUnacknowledgedCount().then(result => {
+      if (generation !== authGenerationRef.current
+        || requestId !== keywordAlertCountRequestIdRef.current) return
+      setKeywordAlertCount(result.count)
+    }).catch(() => {
+      // 徽标是列表的内存提示；失败时保留当前值，由下次登录、确认或 WS 告警恢复。
+    })
+  }, [])
+
+  useEffect(() => clearKeywordAlertToastTimer, [clearKeywordAlertToastTimer])
 
   // HTTP 列表响应可能比期间收到的 WS 事件更旧。若请求期间有消息
   // 变更，重拉一次；只有一份在途加载有权落入 store，避免旧快照覆盖新增/编辑/删除/译文。
@@ -115,6 +165,7 @@ export function App() {
   const backToLogin = useCallback(() => {
     authGenerationRef.current += 1
     messageLoadGenerationRef.current += 1
+    resetKeywordAlertState()
     bootRetryRef.current?.reset()
     wsRef.current?.close()
     wsRef.current = null
@@ -128,7 +179,7 @@ export function App() {
     setUser(null)
     setBootError(null)
     setAuthState('loggedOut')
-  }, [resetStore])
+  }, [resetKeywordAlertState, resetStore])
 
   // 任何请求收到 401（token 过期/失效）都会触发这个回调，不管是哪个组件发起的——
   // Composer 的翻译/发送、切会话时的拉消息，都不需要各自处理 UnauthorizedError。
@@ -140,13 +191,17 @@ export function App() {
   const bootstrap = useCallback(async (loggedInUser: SessionUser) => {
     bootRetryRef.current?.cancel()
     const generation = ++authGenerationRef.current
+    resetKeywordAlertState()
     wsRef.current?.close()
     wsRef.current = null
     setUser(loggedInUser)
+    let activeSessionUser = loggedInUser
     try {
       const currentSessionUser = await api.refreshSessionUser()
       if (generation !== authGenerationRef.current) return
+      activeSessionUser = currentSessionUser
       setUser(currentSessionUser)
+      refreshKeywordAlertCount(generation, currentSessionUser.role)
       const accounts = await api.listAccounts()
       if (generation !== authGenerationRef.current) return
       setAccounts(accounts.accounts)
@@ -176,6 +231,15 @@ export function App() {
     }
     wsRef.current = api.connectWs((event) => {
       if (generation !== authGenerationRef.current) return
+      if (event.type === 'keyword_alert') {
+        const notification = keywordAlertNotification(event)
+        showKeywordAlertToast(notification.message)
+        setKeywordAlertRealtimeRevision(revision => revision + 1)
+        if (notification.refreshCount) {
+          refreshKeywordAlertCount(generation, activeSessionUser.role)
+        }
+        return
+      }
       if (event.type === 'translation') {
         if (event.conversationId === useStore.getState().activeConversationId) {
           messageMutationRevisionRef.current += 1
@@ -265,6 +329,7 @@ export function App() {
   }, [
     setAccounts, setConversations, applyTranslation, setAccountStatus,
     appendMessage, updateMessage, removeMessage, refreshMessages,
+    refreshKeywordAlertCount, resetKeywordAlertState, showKeywordAlertToast,
   ])
   bootstrapRef.current = bootstrap
 
@@ -326,7 +391,7 @@ export function App() {
       <div style={{
         height: '100%', display: 'flex', flexDirection: 'column',
         background: theme.color.bg, borderRadius: theme.radius.xxl,
-        boxShadow: theme.shadow.app, overflow: 'hidden',
+        boxShadow: theme.shadow.app, overflow: 'hidden', position: 'relative',
       }}>
         <AccountTabs
           currentUserName={user?.displayName ?? null}
@@ -350,6 +415,7 @@ export function App() {
         <div ref={attachRow} style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           <FunctionCenter
             view={view}
+            keywordAlertCount={keywordAlertCount}
             onSelectView={setView}
             onAddAccount={() => {
               setAddPlatform(activePlatform)
@@ -383,7 +449,41 @@ export function App() {
               <CustomerProfileLibraryView readOnly={user?.role === 'auditor'} />
             </div>
           )}
+          {view === 'keywordAlerts' && user && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+              <KeywordAlertCenterView
+                role={user.role}
+                realtimeRevision={keywordAlertRealtimeRevision}
+                onAcknowledged={() => {
+                  refreshKeywordAlertCount(authGenerationRef.current, user.role)
+                }}
+              />
+            </div>
+          )}
         </div>
+
+        {keywordAlertToast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="ih-fade"
+            style={{
+              position: 'absolute',
+              right: 30,
+              bottom: 28,
+              zIndex: 20,
+              maxWidth: 360,
+              padding: '11px 16px',
+              borderRadius: theme.radius.md,
+              background: theme.color.inkDeep,
+              color: theme.color.onInk,
+              boxShadow: theme.shadow.lg,
+              fontSize: theme.font.size.sm,
+            }}
+          >
+            {keywordAlertToast}
+          </div>
+        )}
       </div>
 
       {addOpen && (

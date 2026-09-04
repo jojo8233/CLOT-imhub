@@ -19,6 +19,12 @@ import { ClaudeProvider } from './translation/providers/claude.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
 import {
+  createKeywordAlertShutdownSignalHandler,
+  startKeywordAlertRuntime,
+  startKeywordAlertServerLifecycle,
+  stopKeywordAlertAdapters,
+} from './keyword-alert/runtime.js'
+import {
   buildTelegramDeleteObservation,
   buildTelegramRemapObservation,
   buildTelegramUpsertObservation,
@@ -401,24 +407,38 @@ await app.listen({ port: config.PORT, host: '0.0.0.0' })
 // 会留下未完整落盘的状态。退出前逐个断开，给它落盘的机会。
 // adapters.disconnect 对从未 connect 过的账号是安全的空操作——AdapterManager
 // 内部按 accountId 查连接映射表，查不到直接 return，不会抛错也不会误触发平台调用。
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => {
-    void (async () => {
-      console.log(`[server] 收到 ${signal}，正在断开所有账号…`)
-      const connected = await db.selectFrom('accounts')
-        .select(['id', 'connection_mode'])
-        .where('status', '=', 'connected')
-        .execute()
-      await Promise.allSettled(connected
-        .filter(a => a.connection_mode === 'adapter')
-        .map(a => adapters.disconnect(a.id)))
-      await app.close()
-      await redis.quit()
-      await db.destroy()
-      process.exit(0)
-    })()
-  })
-}
+const keywordAlertServer = await startKeywordAlertServerLifecycle({
+  startRuntime: () => startKeywordAlertRuntime({
+    db,
+    publish: (userId, event) => hub.publishTo(userId, event),
+  }),
+  stopAdapters: async () => {
+    const connected = await db.selectFrom('accounts')
+      .select(['id', 'connection_mode'])
+      .where('status', '=', 'connected')
+      .execute()
+    await stopKeywordAlertAdapters(connected
+      .filter(a => a.connection_mode === 'adapter')
+      .map(a => () => adapters.disconnect(a.id)))
+  },
+  closeApp: () => app.close(),
+  quitRedis: () => redis.quit(),
+  destroyDb: () => db.destroy(),
+  onError: (code, count) => {
+    console.error(`[server-lifecycle] code=${code} count=${count}`)
+  },
+})
+if (!keywordAlertServer.ok) process.exit(1)
+
+const handleShutdownSignal = createKeywordAlertShutdownSignalHandler({
+  lifecycle: keywordAlertServer.lifecycle,
+  onSignal: signal => {
+    console.log(`[server] 收到 ${signal}，正在断开所有账号…`)
+  },
+  exit: code => { process.exit(code) },
+})
+process.on('SIGINT', handleShutdownSignal)
+process.on('SIGTERM', handleShutdownSignal)
 
 /**
  * 启动后连接数据库里已登记的平台账号。

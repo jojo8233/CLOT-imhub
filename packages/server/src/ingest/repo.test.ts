@@ -20,6 +20,9 @@ beforeEach(async () => {
   // 每个用例从干净状态开始；顺序按外键依赖倒序
   await db.deleteFrom('message_translations').execute()
   await db.deleteFrom('message_reactions').execute()
+  await db.deleteFrom('keyword_alert_recipients').execute()
+  await db.deleteFrom('keyword_alerts').execute()
+  await db.deleteFrom('keyword_alert_scan_jobs').execute()
   await db.deleteFrom('messages').execute()
   await db.deleteFrom('conversations').execute()
   await db.deleteFrom('accounts').execute()
@@ -161,6 +164,225 @@ describe('KyselyMessageRepo.insertMessage', () => {
     const r = await repo.insertMessage(msg({ conversationId }))
     expect(r.isNew).toBe(true)
     expect(r.id).toBeTruthy()
+  })
+
+  it('为每个已接受的非空入向正文 revision 原子创建一条关键词扫描任务', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({
+      conversationId, direction: 'in', body: 'Synthetic body',
+    }))
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_id', 'message_revision', 'body_snapshot'])
+      .orderBy('message_revision')
+      .execute()).toEqual([{
+      message_id: first.id,
+      message_revision: 'initial',
+      body_snapshot: 'Synthetic body',
+    }])
+
+    await repo.insertMessage(msg({
+      conversationId, direction: 'in', body: 'Synthetic body',
+    }))
+    await repo.insertMessage(msg({
+      conversationId,
+      direction: 'in',
+      body: 'Version one',
+      editedAt: new Date('2026-08-24T01:00:00Z'),
+      editVersion: 1,
+    }))
+    await repo.insertMessage(msg({
+      conversationId,
+      direction: 'in',
+      body: 'Version two',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 2,
+    }))
+
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_id', 'message_revision', 'body_snapshot'])
+      .orderBy('message_revision')
+      .execute()).toEqual([
+      {
+        message_id: first.id,
+        message_revision: 'initial',
+        body_snapshot: 'Synthetic body',
+      },
+      {
+        message_id: first.id,
+        message_revision: 'version:1',
+        body_snapshot: 'Version one',
+      },
+      {
+        message_id: first.id,
+        message_revision: 'version:2',
+        body_snapshot: 'Version two',
+      },
+    ])
+  })
+
+  it('不为出向、空白、重复或过时的正文事件创建关键词扫描任务', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'outbound', direction: 'out', body: 'Outbound body',
+    }))
+    await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'blank', direction: 'in', body: '  \n\t ',
+    }))
+    const first = await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'edited', direction: 'in', body: 'Initial body',
+    }))
+    await repo.insertMessage(msg({
+      conversationId, platformMessageId: 'edited', direction: 'in', body: 'Initial body',
+    }))
+    await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'edited',
+      direction: 'in',
+      body: 'Version two',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 2,
+    }))
+    await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'edited',
+      direction: 'in',
+      body: 'Stale version one',
+      editedAt: new Date('2026-08-24T03:00:00Z'),
+      editVersion: 1,
+    }))
+    await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'edited',
+      direction: 'in',
+      body: 'Duplicate version two',
+      editedAt: new Date('2026-08-24T04:00:00Z'),
+      editVersion: 2,
+    }))
+    const sameBodyNewerVersion = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'edited',
+      direction: 'in',
+      body: 'Version two',
+      editedAt: new Date('2026-08-24T05:00:00Z'),
+      editVersion: 3,
+    }))
+    expect(sameBodyNewerVersion.contentChanged).toBe(true)
+    await repo.markMessageDeleted(accountId, 'edited', new Date('2026-08-24T05:00:00Z'))
+
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_id', 'message_revision', 'body_snapshot'])
+      .orderBy('message_revision')
+      .execute()).toEqual([
+      {
+        message_id: first.id,
+        message_revision: 'initial',
+        body_snapshot: 'Initial body',
+      },
+      {
+        message_id: first.id,
+        message_revision: 'version:2',
+        body_snapshot: 'Version two',
+      },
+    ])
+  })
+
+  it('已存出向消息的已接受编辑不因事件误报入向而扫描', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-outbound',
+      direction: 'out',
+      body: 'Outbound initial',
+    }))
+
+    const accepted = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-outbound',
+      direction: 'in',
+      body: 'Outbound accepted edit',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 2,
+    }))
+    expect(accepted).toEqual({ id: first.id, isNew: false, contentChanged: true })
+
+    const stale = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-outbound',
+      direction: 'in',
+      body: 'Outbound stale edit',
+      editedAt: new Date('2026-08-24T03:00:00Z'),
+      editVersion: 1,
+    }))
+    expect(stale).toEqual({ id: first.id, isNew: false, contentChanged: false })
+
+    expect(await db.selectFrom('messages')
+      .select(['direction', 'body', 'edit_version'])
+      .where('id', '=', first.id)
+      .executeTakeFirstOrThrow()).toEqual({
+      direction: 'out',
+      body: 'Outbound accepted edit',
+      edit_version: 2,
+    })
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_revision', 'body_snapshot'])
+      .where('message_id', '=', first.id)
+      .orderBy('message_revision')
+      .execute()).toEqual([])
+  })
+
+  it('已存入向消息的已接受编辑不因事件误报出向而漏扫', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const first = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-inbound',
+      direction: 'in',
+      body: 'Inbound initial',
+    }))
+
+    const accepted = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-inbound',
+      direction: 'out',
+      body: 'Inbound accepted edit',
+      editedAt: new Date('2026-08-24T02:00:00Z'),
+      editVersion: 2,
+    }))
+    expect(accepted).toEqual({ id: first.id, isNew: false, contentChanged: true })
+
+    const stale = await repo.insertMessage(msg({
+      conversationId,
+      platformMessageId: 'stored-inbound',
+      direction: 'out',
+      body: 'Inbound stale edit',
+      editedAt: new Date('2026-08-24T03:00:00Z'),
+      editVersion: 1,
+    }))
+    expect(stale).toEqual({ id: first.id, isNew: false, contentChanged: false })
+
+    expect(await db.selectFrom('messages')
+      .select(['direction', 'body', 'edit_version'])
+      .where('id', '=', first.id)
+      .executeTakeFirstOrThrow()).toEqual({
+      direction: 'in',
+      body: 'Inbound accepted edit',
+      edit_version: 2,
+    })
+    expect(await db.selectFrom('keyword_alert_scan_jobs')
+      .select(['message_revision', 'body_snapshot'])
+      .where('message_id', '=', first.id)
+      .orderBy('message_revision')
+      .execute()).toEqual([
+      { message_revision: 'initial', body_snapshot: 'Inbound initial' },
+      { message_revision: 'version:2', body_snapshot: 'Inbound accepted edit' },
+    ])
   })
 
   it('重复插入同一 platform_message_id 时 isNew 为 false 且返回既有 id', async () => {

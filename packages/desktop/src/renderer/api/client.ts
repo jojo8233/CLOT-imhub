@@ -4,7 +4,16 @@ import type {
   CustomerProfileListPage,
   CustomerProfileSearchRequest,
   CustomerProfileUpdate,
+  KeywordAlertListPage,
+  KeywordAlertSearchRequest,
+  KeywordAlertUnacknowledgedCount,
+  KeywordRule,
+  KeywordRuleCreate,
+  KeywordRuleListResponse,
+  KeywordRuleUpdate,
   NativeControlGrantResponse,
+  Platform,
+  Role,
   WsServerEvent,
 } from '@im-hub/shared'
 
@@ -30,7 +39,7 @@ const sessionBridge = injected?.session
 
 export interface SessionUser {
   id: string
-  role: string
+  role: Role
   displayName: string
 }
 
@@ -165,7 +174,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export interface AccountRow {
   id: string
-  platform: string
+  platform: Platform
   owner_user_id: string
   display_name: string
   status: string
@@ -225,7 +234,7 @@ export const api = {
     return res.user
   },
   async refreshSessionUser(): Promise<SessionUser> {
-    const res = await request<{ user: { id: string; role: string } }>('/api/session/me')
+    const res = await request<{ user: { id: string; role: Role } }>('/api/session/me')
     if (!currentUser || currentUser.id !== res.user.id) {
       throw new Error('服务端会话身份与本地快照不一致')
     }
@@ -248,6 +257,40 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(search),
       signal,
+    }),
+  searchKeywordAlerts: (search: KeywordAlertSearchRequest, signal?: AbortSignal) =>
+    request<KeywordAlertListPage>('/api/keyword-alerts/search', {
+      method: 'POST',
+      body: JSON.stringify(search),
+      signal,
+    }),
+  getKeywordAlertUnacknowledgedCount: () =>
+    request<KeywordAlertUnacknowledgedCount>('/api/keyword-alerts/unacknowledged-count'),
+  acknowledgeKeywordAlert: (alertId: string) =>
+    request<{ acknowledgedAt: string }>(`/api/keyword-alerts/${alertId}/acknowledge`, {
+      method: 'PATCH',
+    }),
+  listKeywordRules: () =>
+    request<KeywordRuleListResponse>('/api/keyword-rules'),
+  createKeywordRule: (rule: KeywordRuleCreate) =>
+    request<KeywordRule>('/api/keyword-rules', {
+      method: 'POST',
+      body: JSON.stringify(rule),
+    }),
+  updateKeywordRule: (ruleId: string, update: KeywordRuleUpdate) =>
+    request<KeywordRule>(`/api/keyword-rules/${ruleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(update),
+    }),
+  deleteKeywordRule: (ruleId: string, baseRevision: number) =>
+    request<{ deleted: true }>(`/api/keyword-rules/${ruleId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ baseRevision }),
+    }),
+  retryKeywordAlertScans: () =>
+    request<{ retried: number }>('/api/keyword-alert-scans/retry', {
+      method: 'POST',
+      body: JSON.stringify({}),
     }),
   getWhatsAppCloudConfig: () => request<{
     appId: string

@@ -13,6 +13,8 @@ import { authRoutes } from './routes/auth.js'
 import { accountRoutes } from './routes/accounts.js'
 import { conversationRoutes } from './routes/conversations.js'
 import { customerProfileLibraryRoutes } from './routes/customer-profiles.js'
+import { keywordRuleRoutes } from './routes/keyword-rules.js'
+import { keywordAlertRoutes } from './routes/keyword-alerts.js'
 import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
 import { translateRoutes } from './routes/translate.js'
 import { nativeRoutes, type NativeRouteDeps } from './routes/native.js'
@@ -107,7 +109,7 @@ export async function buildServer(
     try {
       const claims = await verifySession(header.slice(7), config.JWT_SECRET)
       req.actor = await loadActor(claims.userId, actorRepo)
-      req.scoped = new ScopedDb(db, resolveScope(req.actor))
+      req.scoped = new ScopedDb(db, resolveScope(req.actor), req.actor.userId)
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })
     }
@@ -130,6 +132,8 @@ export async function buildServer(
   await app.register(nativeControlRoutes)
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
+  await app.register(keywordRuleRoutes)
+  await app.register(keywordAlertRoutes)
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
   await app.register(async (instance) => { await translateRoutes(instance, deps) })
   const telegramShadowRefresh = deps.telegramShadowRefresh
