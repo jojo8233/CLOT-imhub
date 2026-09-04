@@ -131,7 +131,8 @@ keyword_alerts、平台最终消息 id 或服务器端凭证引用。
 
 - `desktop_installations`：安装实例 id、设备凭证哈希、客户端版本、能力集合、最近在线时间和撤销时间；
 - `account_device_mounts`：某安装实例曾挂载的本地型账号、当时负责人和最后上报时间；
-- `desktop_cleanup_tasks`：账号转移后应在指定安装实例清理的账号、原因、创建时间、确认时间和状态。
+- `desktop_cleanup_tasks`：账号转移后的清理义务。自动清理任务绑定指定安装实例；Signal 或尚无已知
+  挂载设备的人工清理义务允许 `installation_id` 为空，并记录账号、原因、创建时间、确认时间和状态。
 
 设备随机凭证由 Electron 主进程生成并经 `safeStorage` 保存；服务端只保存不可逆哈希。设备登记和任务
 领取必须同时具备有效员工会话与设备凭证。表中不存平台 token、二维码、验证码、2FA 密码、session
@@ -232,6 +233,8 @@ desktop 收到撤权或后续 401 时关闭 WS、卸载受控平台 pane、清�
 
 Signal cleanup task 不进入自动领取/完成流程，而是保持 `manual_required`，直到 owner 在管理中心确认
 公司已经从 Signal 官方设备列表解除旧设备。确认只关闭待办，不得声称 im-hub 擦除了 Signal profile。
+同一安装实例在旧 cleanup task 完成或被确认前不能重新上报该账号挂载；其他没有该待办的新安装实例
+不受影响，仍可由新负责人重新关联。
 
 永不再联网的电脑无法远程擦除。任务保持“待本机清理”，界面提示公司回收设备，并在 Telegram、
 Signal 或 WhatsApp 官方设备列表解除旧设备。该限制必须明确展示，不能把“服务端已转移”表述为
@@ -294,10 +297,13 @@ owner 转让使用独立高风险命令，不复用普通角色更新：
 - `POST /api/admin/accounts/search`
 - `POST /api/admin/accounts/:id/assignment-preview`
 - `POST /api/admin/accounts/:id/assign`
+- `GET /api/account-creation-context`
 - `POST /api/desktop/installations/register`
 - `POST /api/desktop/installations/heartbeat`
+- `POST /api/desktop/installations/sync-mounts`
 - `POST /api/desktop/cleanup-tasks/claim`
 - `POST /api/desktop/cleanup-tasks/:id/complete`
+- `POST /api/admin/desktop/cleanup-tasks/:id/confirm-manual`
 
 ### 9.4 首次改密与自助改密
 
@@ -308,7 +314,8 @@ owner 转让使用独立高风险命令，不复用普通角色更新：
 员工、团队和账号查询使用 JSON 请求体承载关键词、筛选与游标，避免邮箱、姓名和内部组织信息进入
 URL/代理访问日志。分页排序必须稳定，并以 opaque cursor 继续。
 
-所有写命令携带 `baseRevision`；批量/高风险命令先提供 preview，execute 请求携带 preview 返回的
+所有修改现有资源的命令携带 `baseRevision`；创建命令没有可绑定的既有资源 revision。批量/高风险
+命令先提供 preview，execute 请求携带 preview 返回的
 短时 `operationToken`。token 绑定当前 owner、输入规范化摘要、相关 revision 与到期时间，防止确认页
 加载后数据变化仍执行旧方案。execute 仍在事务内重验全部事实，不能只信 token。
 
@@ -321,6 +328,7 @@ URL/代理访问日志。分页排序必须稳定，并以 opaque cursor 继续�
 - `409 REVISION_CONFLICT`：乐观版本冲突，并返回最新非敏感快照；
 - `409 ORGANIZATION_INVARIANT`：操作会破坏 owner、主管、团队或账号不变量，并返回结构化 blockers；
 - `409 CLIENT_UPDATE_REQUIRED`：已知在线设备缺少清理能力；
+- `409 DEVICE_CLEANUP_PENDING`：当前安装实例必须先完成或人工确认旧账号清理任务；
 - `422 OPERATION_PREVIEW_EXPIRED`：摘要 token 过期或绑定事实已变化；
 - `503`：中心服务或数据库暂时不可用。
 
