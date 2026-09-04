@@ -7,6 +7,9 @@ import type { Database } from '../db/types.js'
 import { testDatabaseUrl } from '../db/test-db.js'
 import { verifyPassword } from '../auth/password.js'
 import { AdminAccessError } from './admin-guard.js'
+import { DeviceRepo } from './device-repo.js'
+import { DeviceService } from './device-service.js'
+import { AdminOperationTokenService } from './operation-token.js'
 import { UserAdminService, UserAdminServiceError } from './user-service.js'
 
 process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
@@ -16,9 +19,15 @@ const db = new Kysely<Database>({
 })
 const NOW = new Date('2026-09-05T00:00:00.000Z')
 const temporaryPassword = 'synthetic-temporary-password-only-shown-once'
+const deviceService = new DeviceService(new DeviceRepo(db), () => new Date(NOW))
 const service = new UserAdminService(db, {
   now: () => new Date(NOW),
   generateTemporaryPassword: () => temporaryPassword,
+  deviceService,
+  operationTokens: new AdminOperationTokenService(
+    'user-disable-operation-secret-32-chars',
+    () => new Date(NOW),
+  ),
 })
 const owner: Actor = { userId: '', role: 'owner', leadTeamIds: [] }
 const agent: Actor = { userId: '', role: 'agent', leadTeamIds: [] }
@@ -178,5 +187,148 @@ describe('UserAdminService update/reset/enable', () => {
     })).toEqual({
       kind: 'blocked', blockers: [{ code: 'OWNER_IMMUTABLE', count: 1 }],
     })
+  })
+})
+
+describe('UserAdminService disable', () => {
+  it('停用 agent 时账号原子转给 owner，保留团队并使旧控制权失效', async () => {
+    const managerId = await createUser('manager', 'disable-agent-manager')
+    const teamId = (await db.insertInto('teams').values({ name: 'Synthetic disable agent team' })
+      .returning('id').executeTakeFirstOrThrow()).id
+    await db.insertInto('team_members').values([
+      { team_id: teamId, user_id: managerId, is_lead: true },
+      { team_id: teamId, user_id: agent.userId, is_lead: false },
+    ]).execute()
+    const accountId = (await db.insertInto('accounts').values({
+      platform: 'signal', owner_user_id: agent.userId, team_id: teamId,
+      display_name: 'Synthetic Signal disable', status: 'connected',
+      connection_mode: 'native_desktop',
+    }).returning('id').executeTakeFirstOrThrow()).id
+
+    const preview = await service.previewDisable(owner, agent.userId, {
+      baseRevision: 1, teamResolutions: [], allowManualCleanup: false,
+    })
+    expect(preview).toMatchObject({
+      kind: 'preview',
+      preview: { summary: { accountsTransferred: 1, manualCleanupTasks: 1 } },
+    })
+    if (preview.kind !== 'preview') throw new Error('expected disable preview')
+    const disabled = await service.disable(owner, agent.userId, {
+      operationToken: preview.preview.operationToken,
+    })
+    expect(disabled).toMatchObject({
+      kind: 'disabled',
+      user: { id: agent.userId, disabledAt: NOW.toISOString(), revision: 2 },
+      effects: {
+        cleanupRequestedUserIds: [agent.userId],
+        revokedUserIds: [agent.userId],
+      },
+    })
+    expect(await db.selectFrom('accounts').select([
+      'owner_user_id', 'team_id', 'revision', 'native_control_version',
+    ]).where('id', '=', accountId).executeTakeFirstOrThrow()).toEqual({
+      owner_user_id: owner.userId,
+      team_id: teamId,
+      revision: 2,
+      native_control_version: 1,
+    })
+    expect(await db.selectFrom('users').select(['disabled_at', 'session_version'])
+      .where('id', '=', agent.userId).executeTakeFirstOrThrow()).toEqual({
+      disabled_at: NOW,
+      session_version: 2,
+    })
+  })
+
+  it('停用 manager 必须为每个启用团队替换主管或归档', async () => {
+    const targetId = await createUser('manager', 'disable-manager')
+    const replacementId = await createUser('manager', 'replacement-manager')
+    const teamId = (await db.insertInto('teams').values({ name: 'Synthetic managed team' })
+      .returning('id').executeTakeFirstOrThrow()).id
+    await db.insertInto('team_members').values({
+      team_id: teamId, user_id: targetId, is_lead: true,
+    }).execute()
+    expect(await service.previewDisable(owner, targetId, {
+      baseRevision: 1, teamResolutions: [], allowManualCleanup: false,
+    })).toMatchObject({ kind: 'blocked' })
+
+    const preview = await service.previewDisable(owner, targetId, {
+      baseRevision: 1,
+      teamResolutions: [{
+        teamId, action: 'replace_manager', replacementManagerUserId: replacementId,
+        baseRevision: 1,
+      }],
+      allowManualCleanup: false,
+    })
+    if (preview.kind !== 'preview') throw new Error('expected manager disable preview')
+    expect(await service.disable(owner, targetId, {
+      operationToken: preview.preview.operationToken,
+    })).toMatchObject({ kind: 'disabled' })
+    expect(await db.selectFrom('team_members').select(['user_id', 'is_lead'])
+      .where('team_id', '=', teamId).execute()).toEqual([
+      { user_id: replacementId, is_lead: true },
+    ])
+  })
+
+  it('归档 resolution 会把团队账号变为未分组，但保留非停用员工的负责关系', async () => {
+    const targetId = await createUser('manager', 'archive-manager')
+    const memberId = await createUser('agent', 'archive-member')
+    const teamId = (await db.insertInto('teams').values({ name: 'Synthetic archive resolution' })
+      .returning('id').executeTakeFirstOrThrow()).id
+    await db.insertInto('team_members').values([
+      { team_id: teamId, user_id: targetId, is_lead: true },
+      { team_id: teamId, user_id: memberId, is_lead: false },
+    ]).execute()
+    const targetAccountId = (await db.insertInto('accounts').values({
+      platform: 'telegram', owner_user_id: targetId, team_id: teamId,
+      display_name: 'Manager adapter', status: 'connected', connection_mode: 'adapter',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const memberAccountId = (await db.insertInto('accounts').values({
+      platform: 'telegram', owner_user_id: memberId, team_id: teamId,
+      display_name: 'Member adapter', status: 'connected', connection_mode: 'adapter',
+    }).returning('id').executeTakeFirstOrThrow()).id
+    const preview = await service.previewDisable(owner, targetId, {
+      baseRevision: 1,
+      teamResolutions: [{ teamId, action: 'archive', baseRevision: 1 }],
+      allowManualCleanup: false,
+    })
+    if (preview.kind !== 'preview') throw new Error('expected archive disable preview')
+    await service.disable(owner, targetId, { operationToken: preview.preview.operationToken })
+
+    const accounts = await db.selectFrom('accounts').select(['id', 'owner_user_id', 'team_id'])
+      .where('id', 'in', [targetAccountId, memberAccountId]).orderBy('id').execute()
+    expect(accounts.find(row => row.id === targetAccountId)).toMatchObject({
+      owner_user_id: owner.userId, team_id: null,
+    })
+    expect(accounts.find(row => row.id === memberAccountId)).toMatchObject({
+      owner_user_id: memberId, team_id: null,
+    })
+    expect((await db.selectFrom('teams').select('disabled_at')
+      .where('id', '=', teamId).executeTakeFirstOrThrow()).disabled_at).toEqual(NOW)
+  })
+
+  it('任一 resolution 失效都不留半停用状态', async () => {
+    const targetId = await createUser('manager', 'rollback-manager')
+    const teamId = (await db.insertInto('teams').values({ name: 'Synthetic rollback team' })
+      .returning('id').executeTakeFirstOrThrow()).id
+    await db.insertInto('team_members').values({
+      team_id: teamId, user_id: targetId, is_lead: true,
+    }).execute()
+    const preview = await service.previewDisable(owner, targetId, {
+      baseRevision: 1,
+      teamResolutions: [{ teamId, action: 'archive', baseRevision: 1 }],
+      allowManualCleanup: false,
+    })
+    if (preview.kind !== 'preview') throw new Error('expected rollback preview')
+    await db.updateTable('teams').set(expression => ({
+      revision: expression('revision', '+', 1),
+    })).where('id', '=', teamId).execute()
+
+    await expect(service.disable(owner, targetId, {
+      operationToken: preview.preview.operationToken,
+    })).rejects.toMatchObject({ code: 'OPERATION_PREVIEW_EXPIRED' })
+    expect((await db.selectFrom('users').select('disabled_at')
+      .where('id', '=', targetId).executeTakeFirstOrThrow()).disabled_at).toBeNull()
+    expect(await db.selectFrom('team_members').select('user_id')
+      .where('team_id', '=', teamId).execute()).toEqual([{ user_id: targetId }])
   })
 })

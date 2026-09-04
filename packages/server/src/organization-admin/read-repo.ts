@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { sql, type Kysely } from 'kysely'
 import type {
   Actor,
+  AdminAccount,
+  AdminAccountSearchRequest,
   AdminPage,
   AdminTeam,
   AdminTeamSearchRequest,
@@ -25,6 +27,10 @@ interface UserCursor {
 
 interface TeamCursor extends UserCursor {
   resource: 'teams'
+}
+
+interface AccountCursor extends UserCursor {
+  resource: 'accounts'
 }
 
 export class AdminCursorError extends Error {
@@ -146,6 +152,91 @@ export class OrganizationReadRepo {
     return (await this.enrichTeams([row]))[0] ?? null
   }
 
+  async searchAccounts(
+    actor: Actor,
+    request: AdminAccountSearchRequest,
+  ): Promise<AdminPage<AdminAccount>> {
+    assertOwner(actor)
+    const limit = request.limit ?? 50
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new AdminCursorError()
+    const normalized = {
+      ownerUserId: actor.userId,
+      q: request.q?.trim().toLowerCase() ?? '',
+      platform: request.platform ?? '__any__',
+      accountOwnerUserId: request.ownerUserId ?? '__any__',
+      teamId: request.teamId === undefined ? '__any__' : request.teamId,
+      cleanupState: request.cleanupState ?? '__any__',
+    }
+    const fingerprint = createHash('sha256').update(JSON.stringify(normalized)).digest('hex')
+    const cursor = request.cursor ? decodeAccountCursor(request.cursor, fingerprint) : null
+    let query = this.db.selectFrom('accounts').select([
+      'id', 'platform', 'connection_mode', 'display_name', 'status',
+      'owner_user_id', 'team_id', 'revision',
+    ])
+    if (normalized.q !== '') {
+      const pattern = `%${escapeLike(normalized.q)}%`
+      query = query.where(sql<boolean>`accounts.display_name ilike ${pattern} escape '\'`)
+    }
+    if (request.platform) query = query.where('platform', '=', request.platform)
+    if (request.ownerUserId) query = query.where('owner_user_id', '=', request.ownerUserId)
+    if (request.teamId === null) query = query.where('team_id', 'is', null)
+    else if (request.teamId !== undefined) query = query.where('team_id', '=', request.teamId)
+    if (request.cleanupState === 'not_required') {
+      query = query.where(sql<boolean>`not exists (
+        select 1 from desktop_cleanup_tasks task where task.account_id = accounts.id
+      )`)
+    } else if (request.cleanupState === 'manual_required') {
+      query = query.where(sql<boolean>`exists (
+        select 1 from desktop_cleanup_tasks task
+        where task.account_id = accounts.id and task.state = 'pending'
+          and task.mode = 'manual_required'
+      )`)
+    } else if (request.cleanupState === 'pending') {
+      query = query.where(sql<boolean>`exists (
+        select 1 from desktop_cleanup_tasks task
+        where task.account_id = accounts.id and task.state = 'pending'
+          and task.mode = 'automatic'
+      ) and not exists (
+        select 1 from desktop_cleanup_tasks task
+        where task.account_id = accounts.id and task.state = 'pending'
+          and task.mode = 'manual_required'
+      )`)
+    } else if (request.cleanupState === 'completed') {
+      query = query.where(sql<boolean>`exists (
+        select 1 from desktop_cleanup_tasks task where task.account_id = accounts.id
+      ) and not exists (
+        select 1 from desktop_cleanup_tasks task
+        where task.account_id = accounts.id and task.state = 'pending'
+      )`)
+    }
+    if (cursor) query = query.where('id', '>', cursor.lastId)
+    const rows = await query.orderBy('id').limit(limit + 1).execute()
+    const hasMore = rows.length > limit
+    const pageRows = hasMore ? rows.slice(0, limit) : rows
+    const items = await this.enrichAccounts(pageRows)
+    const last = pageRows.at(-1)
+    return {
+      items,
+      nextCursor: hasMore && last
+        ? encodeCursor({
+            v: CURSOR_VERSION,
+            resource: 'accounts',
+            lastId: last.id,
+            fingerprint,
+          })
+        : null,
+    }
+  }
+
+  async getAccount(accountId: string): Promise<AdminAccount | null> {
+    const row = await this.db.selectFrom('accounts').select([
+      'id', 'platform', 'connection_mode', 'display_name', 'status',
+      'owner_user_id', 'team_id', 'revision',
+    ]).where('id', '=', accountId).executeTakeFirst()
+    if (!row) return null
+    return (await this.enrichAccounts([row]))[0] ?? null
+  }
+
   private async enrichUsers(rows: Array<{
     id: string
     email: string
@@ -230,6 +321,53 @@ export class OrganizationReadRepo {
       revision: row.revision,
     }))
   }
+
+  private async enrichAccounts(rows: Array<{
+    id: string
+    platform: AdminAccount['platform']
+    connection_mode: AdminAccount['connectionMode']
+    display_name: string
+    status: AdminAccount['status']
+    owner_user_id: string
+    team_id: string | null
+    revision: number
+  }>): Promise<AdminAccount[]> {
+    const ids = rows.map(row => row.id)
+    if (ids.length === 0) return []
+    const tasks = await this.db.selectFrom('desktop_cleanup_tasks')
+      .select(['account_id', 'mode', 'state'])
+      .where('account_id', 'in', ids)
+      .execute()
+    const byAccount = new Map<string, typeof tasks>()
+    for (const task of tasks) {
+      const accountTasks = byAccount.get(task.account_id) ?? []
+      accountTasks.push(task)
+      byAccount.set(task.account_id, accountTasks)
+    }
+    return rows.map(row => {
+      const accountTasks = byAccount.get(row.id) ?? []
+      const pending = accountTasks.filter(task => task.state === 'pending')
+      const cleanupState = pending.some(task => task.mode === 'manual_required')
+        ? 'manual_required' as const
+        : pending.length > 0
+          ? 'pending' as const
+          : accountTasks.length > 0
+            ? 'completed' as const
+            : 'not_required' as const
+      return {
+        id: row.id,
+        platform: row.platform,
+        connectionMode: row.connection_mode,
+        displayName: row.display_name,
+        status: row.status,
+        ownerUserId: row.owner_user_id,
+        teamId: row.team_id,
+        cleanupState,
+        pendingCleanupCount: pending.length,
+        revision: row.revision,
+      }
+    })
+  }
 }
 
 function normalizeUserFilter(ownerUserId: string, request: AdminUserSearchRequest) {
@@ -246,7 +384,7 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`)
 }
 
-function encodeCursor(cursor: UserCursor | TeamCursor): string {
+function encodeCursor(cursor: UserCursor | TeamCursor | AccountCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
 }
 
@@ -257,6 +395,20 @@ function decodeTeamCursor(encoded: string, fingerprint: string): TeamCursor {
     if (decoded.toString('base64url') !== encoded) throw new AdminCursorError()
     const value: unknown = JSON.parse(decoded.toString('utf8'))
     if (!isTeamCursor(value) || value.fingerprint !== fingerprint) throw new AdminCursorError()
+    return value
+  } catch (error) {
+    if (error instanceof AdminCursorError) throw error
+    throw new AdminCursorError()
+  }
+}
+
+function decodeAccountCursor(encoded: string, fingerprint: string): AccountCursor {
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(encoded)) throw new AdminCursorError()
+    const decoded = Buffer.from(encoded, 'base64url')
+    if (decoded.toString('base64url') !== encoded) throw new AdminCursorError()
+    const value: unknown = JSON.parse(decoded.toString('utf8'))
+    if (!isAccountCursor(value) || value.fingerprint !== fingerprint) throw new AdminCursorError()
     return value
   } catch (error) {
     if (error instanceof AdminCursorError) throw error
@@ -296,6 +448,18 @@ function isTeamCursor(value: unknown): value is TeamCursor {
   return Object.keys(candidate).sort().join(',') === 'fingerprint,lastId,resource,v'
     && candidate.v === CURSOR_VERSION
     && candidate.resource === 'teams'
+    && typeof candidate.lastId === 'string'
+    && UUID.test(candidate.lastId)
+    && typeof candidate.fingerprint === 'string'
+    && SHA256_HEX.test(candidate.fingerprint)
+}
+
+function isAccountCursor(value: unknown): value is AccountCursor {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return Object.keys(candidate).sort().join(',') === 'fingerprint,lastId,resource,v'
+    && candidate.v === CURSOR_VERSION
+    && candidate.resource === 'accounts'
     && typeof candidate.lastId === 'string'
     && UUID.test(candidate.lastId)
     && typeof candidate.fingerprint === 'string'

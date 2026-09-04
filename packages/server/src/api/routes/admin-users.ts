@@ -6,10 +6,12 @@ import {
   UserAdminService,
   UserAdminServiceError,
   type UserCredentialMutationResult,
+  type UserDisableResult,
   type UserMutationResult,
 } from '../../organization-admin/user-service.js'
 import type { WsHub } from '../ws.js'
 import { AdminAccessError, assertAdminWrite, assertOwner } from '../../organization-admin/admin-guard.js'
+import { publishOrganizationEffects } from '../organization-effects.js'
 
 const revision = z.number().int().positive()
 const idParams = z.object({ id: z.string().uuid() }).strict()
@@ -33,6 +35,33 @@ const updateBody = z.object({
   baseRevision: revision,
 }).strict().refine(value => value.displayName !== undefined || value.role !== undefined)
 const revisionBody = z.object({ baseRevision: revision }).strict()
+const teamResolution = z.discriminatedUnion('action', [
+  z.object({
+    teamId: z.string().uuid(),
+    action: z.literal('replace_manager'),
+    replacementManagerUserId: z.string().uuid(),
+    baseRevision: revision,
+  }).strict(),
+  z.object({
+    teamId: z.string().uuid(),
+    action: z.literal('archive'),
+    baseRevision: revision,
+  }).strict(),
+])
+const disableBody = z.discriminatedUnion('phase', [
+  z.object({
+    phase: z.literal('preview'),
+    baseRevision: revision,
+    input: z.object({
+      teamResolutions: z.array(teamResolution).max(100),
+      allowManualCleanup: z.boolean(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    phase: z.literal('execute'),
+    operationToken: z.string().min(1).max(8_192),
+  }).strict(),
+])
 
 export interface AdminUserRouteDeps {
   readRepo: OrganizationReadRepo
@@ -96,6 +125,27 @@ export async function adminUserRoutes(
     if (!params.success || !body.success) return invalidBody(reply)
     const result = await deps.userService.enable(req.actor, params.data.id, body.data)
     return sendCredentialResult(reply, deps.hub, result)
+  })
+
+  app.post('/api/admin/users/:id/disable', async (req, reply) => {
+    if (!requireWrite(req.actor, deps.writesEnabled, reply)) return
+    const params = idParams.safeParse(req.params)
+    const body = disableBody.safeParse(req.body)
+    if (!params.success || !body.success) return invalidBody(reply)
+    try {
+      const result = body.data.phase === 'preview'
+        ? await deps.userService.previewDisable(req.actor, params.data.id, {
+          baseRevision: body.data.baseRevision,
+          teamResolutions: body.data.input.teamResolutions,
+          allowManualCleanup: body.data.input.allowManualCleanup,
+        })
+        : await deps.userService.disable(req.actor, params.data.id, {
+          operationToken: body.data.operationToken,
+        })
+      return sendDisableResult(reply, deps.hub, result)
+    } catch (error) {
+      return sendUserServiceError(reply, error)
+    }
   })
 }
 
@@ -164,8 +214,25 @@ function sendCredentialResult(
   })
 }
 
+function sendDisableResult(reply: FastifyReply, hub: WsHub, result: UserDisableResult) {
+  if (result.kind === 'preview') return reply.send({ preview: result.preview })
+  if (result.kind === 'disabled') {
+    publishOrganizationEffects(hub, result.effects)
+    return reply.send({ user: result.user })
+  }
+  return sendMutationResult(reply, result)
+}
+
 function sendUserServiceError(reply: FastifyReply, error: unknown) {
   if (!(error instanceof UserAdminServiceError)) throw error
+  if (error.code === 'OPERATION_PREVIEW_EXPIRED') {
+    return reply.code(422).send({
+      error: 'operation preview expired', code: 'OPERATION_PREVIEW_EXPIRED',
+    })
+  }
+  if (error.code === 'CLIENT_UPDATE_REQUIRED') {
+    return reply.code(409).send({ error: 'client update required', code: error.code })
+  }
   const blockerCode = error.code === 'DUPLICATE_EMAIL' ? 'DUPLICATE_EMAIL' : error.code
   return reply.code(409).send({
     error: 'organization invariant',

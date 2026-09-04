@@ -178,6 +178,28 @@ export class DeviceService {
     return transactionRepo ? execute(transactionRepo) : this.repo.transaction(execute)
   }
 
+  async previewOwnershipChange(
+    change: OwnershipChange,
+    options: { allowManualCleanup?: boolean } = {},
+  ): Promise<CleanupEnqueueResult> {
+    if (change.connectionMode === 'cloud_api') return emptyEnqueueResult()
+    const mounts = await this.repo.listMounts(change.accountId, change.previousOwnerUserId)
+    if (change.connectionMode === 'native_desktop') {
+      return {
+        pendingAutomatic: 0,
+        manualRequired: Math.max(1, mounts.length),
+        unsupportedOnlineInstallations: 0,
+      }
+    }
+    if (mounts.length === 0) return emptyEnqueueResult()
+    const unsupported = mounts.filter(mount => this.isUnsupportedOnline(mount))
+    return {
+      pendingAutomatic: mounts.length - (options.allowManualCleanup ? unsupported.length : 0),
+      manualRequired: options.allowManualCleanup ? unsupported.length : 0,
+      unsupportedOnlineInstallations: unsupported.length,
+    }
+  }
+
   private async authenticate(repo: DeviceRepo, input: DeviceIdentity): Promise<void> {
     const installation = await repo.findInstallation(input.installationId, true)
     if (!installation || installation.revokedAt) {

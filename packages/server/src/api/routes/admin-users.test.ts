@@ -7,6 +7,9 @@ import type { Role } from '@im-hub/shared'
 import type { Database } from '../../db/types.js'
 import { testDatabaseUrl } from '../../db/test-db.js'
 import { OrganizationReadRepo } from '../../organization-admin/read-repo.js'
+import { DeviceRepo } from '../../organization-admin/device-repo.js'
+import { DeviceService } from '../../organization-admin/device-service.js'
+import { AdminOperationTokenService } from '../../organization-admin/operation-token.js'
 import { UserAdminService } from '../../organization-admin/user-service.js'
 
 process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
@@ -18,9 +21,16 @@ const db = new Kysely<Database>({
   dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: testDatabaseUrl() }) }),
 })
 const temporaryPassword = 'route-temporary-password-sentinel'
+const NOW = new Date('2026-09-05T00:00:00.000Z')
+const deviceService = new DeviceService(new DeviceRepo(db), () => new Date(NOW))
 const userService = new UserAdminService(db, {
-  now: () => new Date('2026-09-05T00:00:00.000Z'),
+  now: () => new Date(NOW),
   generateTemporaryPassword: () => temporaryPassword,
+  deviceService,
+  operationTokens: new AdminOperationTokenService(
+    'admin-users-disable-route-secret-32-characters',
+    () => new Date(NOW),
+  ),
 })
 const readRepo = new OrganizationReadRepo(db)
 let app: FastifyInstance
@@ -198,6 +208,58 @@ describe('admin user routes', () => {
     })
     expect(enable.statusCode).toBe(200)
     expect(revoke).toHaveBeenCalledWith(disabledId)
+  })
+
+  it('停用只在 execute 事务提交后发布组织变更并撤销会话', async () => {
+    const publish = vi.spyOn(hub, 'publishTo')
+    const revoke = vi.spyOn(hub, 'revokeUser')
+    const agentId = ids.get('agent') ?? ''
+    const preview = await app.inject({
+      method: 'POST', url: `/api/admin/users/${agentId}/disable`, headers: auth('owner'),
+      payload: {
+        phase: 'preview', baseRevision: 1,
+        input: { teamResolutions: [], allowManualCleanup: false },
+      },
+    })
+    expect(preview.statusCode).toBe(200)
+    expect(publish).not.toHaveBeenCalled()
+    expect(revoke).not.toHaveBeenCalled()
+
+    const operationToken = preview.json<{ preview: { operationToken: string } }>()
+      .preview.operationToken
+    const execute = await app.inject({
+      method: 'POST', url: `/api/admin/users/${agentId}/disable`, headers: auth('owner'),
+      payload: { phase: 'execute', operationToken },
+    })
+    expect(execute.statusCode).toBe(200)
+    expect(execute.json()).toMatchObject({ user: { id: agentId, disabledAt: NOW.toISOString() } })
+    expect(publish).toHaveBeenCalledWith(agentId, { type: 'organization_changed' })
+    expect(revoke).toHaveBeenCalledWith(agentId)
+    expect(publish.mock.invocationCallOrder[0]).toBeLessThan(revoke.mock.invocationCallOrder[0] ?? 0)
+  })
+
+  it('停用预览后数据变更返回 422，不发 session_revoked', async () => {
+    const revoke = vi.spyOn(hub, 'revokeUser')
+    const agentId = ids.get('agent') ?? ''
+    const preview = await app.inject({
+      method: 'POST', url: `/api/admin/users/${agentId}/disable`, headers: auth('owner'),
+      payload: {
+        phase: 'preview', baseRevision: 1,
+        input: { teamResolutions: [], allowManualCleanup: false },
+      },
+    })
+    const operationToken = preview.json<{ preview: { operationToken: string } }>()
+      .preview.operationToken
+    await db.updateTable('users').set(expression => ({
+      revision: expression('revision', '+', 1),
+    })).where('id', '=', agentId).execute()
+    const execute = await app.inject({
+      method: 'POST', url: `/api/admin/users/${agentId}/disable`, headers: auth('owner'),
+      payload: { phase: 'execute', operationToken },
+    })
+    expect(execute.statusCode).toBe(422)
+    expect(execute.json()).toMatchObject({ code: 'OPERATION_PREVIEW_EXPIRED' })
+    expect(revoke).not.toHaveBeenCalled()
   })
 
   it('普通创建 owner 和多余字段均在路由边界拒绝', async () => {

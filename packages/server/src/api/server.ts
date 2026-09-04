@@ -39,6 +39,8 @@ import { adminUserRoutes } from './routes/admin-users.js'
 import { AdminOperationTokenService } from '../organization-admin/operation-token.js'
 import { TeamAdminService } from '../organization-admin/team-service.js'
 import { adminTeamRoutes } from './routes/admin-teams.js'
+import { AccountAdminService } from '../organization-admin/account-service.js'
+import { adminAccountRoutes } from './routes/admin-accounts.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -81,6 +83,7 @@ export interface BuildServerDeps extends MessageRouteDeps {
     readRepo?: OrganizationReadRepo
     userService?: UserAdminService
     teamService?: TeamAdminService
+    accountService?: AccountAdminService
     writesEnabled: boolean
   }
 }
@@ -93,16 +96,26 @@ export async function buildServer(
   const actorRepo = options.actorRepo ?? defaultActorRepo
   const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
   const readRepo = deps.organizationAdmin?.readRepo ?? new OrganizationReadRepo(db)
-  const userService = deps.organizationAdmin?.userService ?? new UserAdminService(db)
+  const operationTokens = new AdminOperationTokenService(config.JWT_SECRET)
+  const userService = deps.organizationAdmin?.userService ?? new UserAdminService(db, {
+    deviceService,
+    operationTokens,
+  })
   const teamService = deps.organizationAdmin?.teamService ?? new TeamAdminService(
     db,
     deviceService,
-    new AdminOperationTokenService(config.JWT_SECRET),
+    operationTokens,
+  )
+  const accountService = deps.organizationAdmin?.accountService ?? new AccountAdminService(
+    db,
+    deviceService,
+    operationTokens,
   )
   const organizationAdmin = {
     readRepo,
     userService,
     teamService,
+    accountService,
     writesEnabled: deps.organizationAdmin?.writesEnabled
       ?? config.ORGANIZATION_ADMIN_WRITES_ENABLED,
   }
@@ -178,6 +191,9 @@ export async function buildServer(
   })
   await app.register(async instance => {
     await adminTeamRoutes(instance, { ...organizationAdmin, hub })
+  })
+  await app.register(async instance => {
+    await adminAccountRoutes(instance, { ...organizationAdmin, deviceService, hub })
   })
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
