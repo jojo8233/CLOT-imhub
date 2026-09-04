@@ -41,6 +41,8 @@ import { TeamAdminService } from '../organization-admin/team-service.js'
 import { adminTeamRoutes } from './routes/admin-teams.js'
 import { AccountAdminService } from '../organization-admin/account-service.js'
 import { adminAccountRoutes } from './routes/admin-accounts.js'
+import { OwnerTransferService } from '../organization-admin/owner-transfer-service.js'
+import { adminOwnerTransferRoutes } from './routes/admin-owner-transfer.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -84,6 +86,7 @@ export interface BuildServerDeps extends MessageRouteDeps {
     userService?: UserAdminService
     teamService?: TeamAdminService
     accountService?: AccountAdminService
+    ownerTransferService?: OwnerTransferService
     writesEnabled: boolean
   }
 }
@@ -111,11 +114,14 @@ export async function buildServer(
     deviceService,
     operationTokens,
   )
+  const ownerTransferService = deps.organizationAdmin?.ownerTransferService
+    ?? new OwnerTransferService(db, deviceService, operationTokens)
   const organizationAdmin = {
     readRepo,
     userService,
     teamService,
     accountService,
+    ownerTransferService,
     writesEnabled: deps.organizationAdmin?.writesEnabled
       ?? config.ORGANIZATION_ADMIN_WRITES_ENABLED,
   }
@@ -194,6 +200,13 @@ export async function buildServer(
   })
   await app.register(async instance => {
     await adminAccountRoutes(instance, { ...organizationAdmin, deviceService, hub })
+  })
+  await app.register(async instance => {
+    await adminOwnerTransferRoutes(instance, {
+      service: organizationAdmin.ownerTransferService,
+      writesEnabled: organizationAdmin.writesEnabled,
+      hub,
+    })
   })
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
