@@ -30,6 +30,9 @@ import {
   whatsappWebhookRoutes,
   type WhatsAppCloudRouteDeps,
 } from './routes/whatsapp-cloud.js'
+import { DeviceRepo } from '../organization-admin/device-repo.js'
+import { DeviceService } from '../organization-admin/device-service.js'
+import { desktopInstallationRoutes } from './routes/desktop-installations.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -61,6 +64,7 @@ export interface BuildServerOptions {
    * 生产路径使用组合根里挂的默认实现（走 db 单例）。
    */
   actorRepo?: ActorRepo
+  deviceService?: DeviceService
 }
 
 export interface BuildServerDeps extends MessageRouteDeps {
@@ -75,7 +79,15 @@ export async function buildServer(
   options: BuildServerOptions = {},
 ): Promise<FastifyInstance> {
   const actorRepo = options.actorRepo ?? defaultActorRepo
-  const app = Fastify({ logger: true })
+  const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
+  const app = Fastify({
+    logger: {
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.x-im-hub-device-credential'],
+        censor: '[REDACTED]',
+      },
+    },
+  })
 
   // Electron 渲染进程在开发模式下从 http://localhost:<vite端口> 加载，
   // 打包后从 file:// 加载（origin 为 null）——两种情况都是跨源，
@@ -132,6 +144,9 @@ export async function buildServer(
     await app.register(async instance => whatsappCloudAccountRoutes(instance, whatsappCloud))
   }
   await app.register(nativeControlRoutes)
+  await app.register(async instance => {
+    await desktopInstallationRoutes(instance, { deviceService })
+  })
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
   await app.register(keywordRuleRoutes)

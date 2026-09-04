@@ -74,10 +74,10 @@ export interface DesktopInstallationsTable {
   id: string
   credential_sha256: string
   client_version: string
-  capabilities: JSONColumnType<string[]>
+  capabilities: JSONColumnType<string[], string, string>
   last_seen_at: RequiredTimestamp
   revoked_at: Timestamp | null
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
 }
 
 export interface AccountDeviceMountsTable {
@@ -94,7 +94,7 @@ export interface DesktopCleanupTasksTable {
   mode: 'automatic' | 'manual_required'
   reason: DesktopCleanupReason
   state: 'pending' | 'completed'
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
   completed_at: Timestamp | null
 }
 
