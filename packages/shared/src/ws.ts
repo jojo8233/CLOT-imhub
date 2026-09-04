@@ -104,6 +104,18 @@ export interface WsKeywordAlertEvent {
   createdAt: string
 }
 
+export interface WsSessionRevokedEvent {
+  type: 'session_revoked'
+}
+
+export interface WsOrganizationChangedEvent {
+  type: 'organization_changed'
+}
+
+export interface WsDesktopCleanupRequestedEvent {
+  type: 'desktop_cleanup_requested'
+}
+
 export type WsServerEvent =
   | WsMessageEvent
   | WsMessageUpdatedEvent
@@ -114,3 +126,6 @@ export type WsServerEvent =
   | WsAuthChallengeEvent
   | WsAuthDoneEvent
   | WsKeywordAlertEvent
+  | WsSessionRevokedEvent
+  | WsOrganizationChangedEvent
+  | WsDesktopCleanupRequestedEvent
