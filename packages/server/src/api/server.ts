@@ -33,6 +33,9 @@ import {
 import { DeviceRepo } from '../organization-admin/device-repo.js'
 import { DeviceService } from '../organization-admin/device-service.js'
 import { desktopInstallationRoutes } from './routes/desktop-installations.js'
+import { OrganizationReadRepo } from '../organization-admin/read-repo.js'
+import { UserAdminService } from '../organization-admin/user-service.js'
+import { adminUserRoutes } from './routes/admin-users.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -71,6 +74,11 @@ export interface BuildServerDeps extends MessageRouteDeps {
   native?: NativeRouteDeps
   telegramShadowRefresh?: TelegramShadowRefreshRouteDeps
   whatsappCloudRoutes?: WhatsAppCloudRouteDeps
+  organizationAdmin?: {
+    readRepo: OrganizationReadRepo
+    userService: UserAdminService
+    writesEnabled: boolean
+  }
 }
 
 export async function buildServer(
@@ -80,6 +88,11 @@ export async function buildServer(
 ): Promise<FastifyInstance> {
   const actorRepo = options.actorRepo ?? defaultActorRepo
   const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
+  const organizationAdmin = deps.organizationAdmin ?? {
+    readRepo: new OrganizationReadRepo(db),
+    userService: new UserAdminService(db),
+    writesEnabled: config.ORGANIZATION_ADMIN_WRITES_ENABLED,
+  }
   const app = Fastify({
     logger: {
       redact: {
@@ -146,6 +159,9 @@ export async function buildServer(
   await app.register(nativeControlRoutes)
   await app.register(async instance => {
     await desktopInstallationRoutes(instance, { deviceService })
+  })
+  await app.register(async instance => {
+    await adminUserRoutes(instance, { ...organizationAdmin, hub })
   })
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
