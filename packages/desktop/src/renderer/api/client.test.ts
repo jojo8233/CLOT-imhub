@@ -248,6 +248,89 @@ describe('desktop API request headers', () => {
   })
 })
 
+describe('organization admin API contracts', () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await logout()
+  })
+
+  it('员工、团队和账号检索都使用可取消的 POST JSON，不把检索词放入 URL', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ kind: 'authenticated', token: 'owner-token', user: {
+        id: 'owner-1', role: 'owner', displayName: 'Owner',
+      } }))
+      .mockImplementation(() => Promise.resolve(jsonResponse({ items: [], nextCursor: null })))
+    vi.stubGlobal('fetch', fetchMock)
+    const login = await api.login('owner@example.test', 'owner-password')
+    if (login.kind !== 'authenticated') throw new Error('expected owner session')
+    const controller = new AbortController()
+
+    await api.searchAdminUsers({ q: 'private@example.test', limit: 20 }, controller.signal)
+    await api.searchAdminTeams({ q: 'Private team', limit: 20 }, controller.signal)
+    await api.searchAdminAccounts({ q: 'Private account', limit: 20 }, controller.signal)
+
+    for (const request of fetchMock.mock.calls.slice(1)) {
+      expect(request[1]).toMatchObject({ method: 'POST', signal: controller.signal })
+      expect(String(request[0])).not.toContain('Private')
+      expect(String(request[0])).not.toContain('private%40')
+    }
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      q: 'private@example.test', limit: 20,
+    })
+  })
+
+  it('修改与预览传递 base revision，执行只传短时 operation token', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ kind: 'authenticated', token: 'owner-token', user: {
+        id: 'owner-1', role: 'owner', displayName: 'Owner',
+      } }))
+      .mockResolvedValueOnce(jsonResponse({ user: { id: 'user-1', revision: 4 } }))
+      .mockResolvedValueOnce(jsonResponse({ preview: {
+        operationToken: 'preview-token', expiresAt: '2026-09-05T01:00:00.000Z', summary: {},
+      } }))
+      .mockResolvedValueOnce(jsonResponse({ account: { id: 'account-1', revision: 6 } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const login = await api.login('owner@example.test', 'owner-password')
+    if (login.kind !== 'authenticated') throw new Error('expected owner session')
+
+    await api.updateAdminUser('user-1', { displayName: 'Renamed', baseRevision: 3 })
+    await api.previewAdminAccountAssignment('account-1', {
+      ownerUserId: 'user-2', teamId: null, allowManualCleanup: false, baseRevision: 5,
+    })
+    await api.assignAdminAccount('account-1', { operationToken: 'preview-token' })
+
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      displayName: 'Renamed', baseRevision: 3,
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({ baseRevision: 5 })
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+      operationToken: 'preview-token',
+    })
+  })
+
+  it('稳定提取服务端错误 code 与最新快照', async () => {
+    const current = { id: 'user-1', revision: 8 }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ kind: 'authenticated', token: 'owner-token', user: {
+        id: 'owner-1', role: 'owner', displayName: 'Owner',
+      } }))
+      .mockResolvedValueOnce(statusResponse(409, {
+        error: 'revision conflict', code: 'REVISION_CONFLICT', current,
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    const login = await api.login('owner@example.test', 'owner-password')
+    if (login.kind !== 'authenticated') throw new Error('expected owner session')
+
+    await expect(api.updateAdminUser('user-1', {
+      displayName: 'Renamed', baseRevision: 7,
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'REVISION_CONFLICT',
+      details: expect.objectContaining({ current }),
+    })
+  })
+})
+
 describe('keyword alert API contracts', () => {
   afterEach(async () => {
     vi.unstubAllGlobals()

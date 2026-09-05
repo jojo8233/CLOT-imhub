@@ -1,5 +1,23 @@
 import type {
   AccountConnectionMode,
+  AccountCreationContext,
+  AdminAccount,
+  AdminAccountAssignmentPreviewRequest,
+  AdminAccountAssignmentRequest,
+  AdminAccountSearchRequest,
+  AdminAgentTeamChange,
+  AdminMutationPreview,
+  AdminOwnerTransferPreviewRequest,
+  AdminOwnerTransferRequest,
+  AdminPage,
+  AdminTeam,
+  AdminTeamCreate,
+  AdminTeamSearchRequest,
+  AdminTeamResolution,
+  AdminUser,
+  AdminUserCreate,
+  AdminUserSearchRequest,
+  AdminUserUpdate,
   CustomerProfile,
   CustomerProfileListPage,
   CustomerProfileSearchRequest,
@@ -81,6 +99,7 @@ export class HttpError extends Error {
     public readonly status: number,
     message: string,
     public readonly code: string | null = null,
+    public readonly details: unknown = null,
   ) {
     super(message)
     this.name = 'HttpError'
@@ -170,14 +189,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let detail = ''
     let code: string | null = null
+    let details: unknown = null
     try {
-      const body = (await res.json()) as { error?: string; code?: string }
-      if (body?.error) detail = `: ${body.error}`
-      if (body?.code) code = body.code
+      details = await res.json() as unknown
+      if (record(details) && typeof details.error === 'string') detail = `: ${details.error}`
+      if (record(details) && typeof details.code === 'string') code = details.code
     } catch {
       // 响应体不是 JSON 或读取失败，忽略，用纯状态码报错
     }
-    throw new HttpError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`, code)
+    throw new HttpError(
+      res.status,
+      `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`,
+      code,
+      details,
+    )
   }
   return res.json() as Promise<T>
 }
@@ -199,6 +224,23 @@ export interface CreateAccountInput {
   platform: string
   displayName: string
   connectionMode?: AccountConnectionMode
+  teamId?: string | null
+}
+
+export interface AdminCredentialResult {
+  user: AdminUser
+  temporaryPassword: string
+  temporaryPasswordExpiresAt: string
+}
+
+export interface AdminDisablePreviewInput {
+  teamResolutions: AdminTeamResolution[]
+  allowManualCleanup: boolean
+}
+
+export interface AdminTeamManagerChangeInput {
+  managerUserId: string
+  baseRevision: number
 }
 
 export interface ConversationRow {
@@ -292,6 +334,102 @@ export const api = {
     await persistSession()
     return currentUser
   },
+  searchAdminUsers: (search: AdminUserSearchRequest, signal?: AbortSignal) =>
+    request<AdminPage<AdminUser>>('/api/admin/users/search', {
+      method: 'POST', body: JSON.stringify(search), signal,
+    }),
+  createAdminUser: (input: AdminUserCreate) =>
+    request<AdminCredentialResult>('/api/admin/users', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  updateAdminUser: (userId: string, input: AdminUserUpdate) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}`, {
+      method: 'PATCH', body: JSON.stringify(input),
+    }),
+  resetAdminUserPassword: (userId: string, baseRevision: number) =>
+    request<AdminCredentialResult>(`/api/admin/users/${userId}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ baseRevision }),
+    }),
+  enableAdminUser: (userId: string, baseRevision: number) =>
+    request<AdminCredentialResult>(`/api/admin/users/${userId}/enable`, {
+      method: 'POST', body: JSON.stringify({ baseRevision }),
+    }),
+  previewDisableAdminUser: (
+    userId: string,
+    baseRevision: number,
+    input: AdminDisablePreviewInput,
+  ) => request<{ preview: AdminMutationPreview }>(`/api/admin/users/${userId}/disable`, {
+    method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision, input }),
+  }),
+  disableAdminUser: (userId: string, operationToken: string) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}/disable`, {
+      method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
+    }),
+  previewOwnerTransfer: (input: AdminOwnerTransferPreviewRequest) =>
+    request<{ preview: AdminMutationPreview }>('/api/admin/owner-transfer/preview', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  transferOwner: (input: AdminOwnerTransferRequest) =>
+    request<{ currentOwner: AdminUser; newOwner: AdminUser }>('/api/admin/owner-transfer', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  searchAdminTeams: (search: AdminTeamSearchRequest, signal?: AbortSignal) =>
+    request<AdminPage<AdminTeam>>('/api/admin/teams/search', {
+      method: 'POST', body: JSON.stringify(search), signal,
+    }),
+  createAdminTeam: (input: AdminTeamCreate) =>
+    request<{ team: AdminTeam }>('/api/admin/teams', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  updateAdminTeam: (teamId: string, input: { name: string; baseRevision: number }) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}`, {
+      method: 'PATCH', body: JSON.stringify(input),
+    }),
+  previewAdminTeamManagerChange: (teamId: string, input: AdminTeamManagerChangeInput) =>
+    request<{ preview: AdminMutationPreview }>(`/api/admin/teams/${teamId}/change-manager`, {
+      method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision: input.baseRevision, input: {
+        managerUserId: input.managerUserId,
+      } }),
+    }),
+  changeAdminTeamManager: (teamId: string, operationToken: string) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/change-manager`, {
+      method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
+    }),
+  previewArchiveAdminTeam: (teamId: string, baseRevision: number) =>
+    request<{ preview: AdminMutationPreview }>(`/api/admin/teams/${teamId}/archive`, {
+      method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision, input: {} }),
+    }),
+  archiveAdminTeam: (teamId: string, operationToken: string) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/archive`, {
+      method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
+    }),
+  restoreAdminTeam: (teamId: string, managerUserId: string, baseRevision: number) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/restore`, {
+      method: 'POST', body: JSON.stringify({ managerUserId, baseRevision }),
+    }),
+  changeAdminAgentTeam: (userId: string, input: AdminAgentTeamChange) =>
+    request<{ user: AdminUser; affectedAccountIds: string[] }>(`/api/admin/agents/${userId}/change-team`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  searchAdminAccounts: (search: AdminAccountSearchRequest, signal?: AbortSignal) =>
+    request<AdminPage<AdminAccount>>('/api/admin/accounts/search', {
+      method: 'POST', body: JSON.stringify(search), signal,
+    }),
+  previewAdminAccountAssignment: (
+    accountId: string,
+    input: AdminAccountAssignmentPreviewRequest,
+  ) => request<{ preview: AdminMutationPreview }>(`/api/admin/accounts/${accountId}/assignment-preview`, {
+    method: 'POST', body: JSON.stringify(input),
+  }),
+  assignAdminAccount: (accountId: string, input: AdminAccountAssignmentRequest) =>
+    request<{ account: AdminAccount }>(`/api/admin/accounts/${accountId}/assign`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  confirmManualDesktopCleanup: (taskId: string) =>
+    request<{ confirmed: true; message: string }>(`/api/admin/desktop/cleanup-tasks/${taskId}/confirm-manual`, {
+      method: 'POST', body: JSON.stringify({}),
+    }),
+  getAccountCreationContext: () => request<AccountCreationContext>('/api/account-creation-context'),
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
@@ -466,4 +604,8 @@ export const api = {
     }
     return ws
   },
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
