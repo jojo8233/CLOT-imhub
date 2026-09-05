@@ -1,12 +1,45 @@
 {
   "name": "@im-hub/desktop",
-  "version": "0.0.0",
+  "version": "0.1.0-internal.1",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "prepare:signal": "pnpm build && node ./scripts/prepare-signal-desktop.mjs"
+    "prepare:signal": "pnpm build && node ./scripts/prepare-signal-desktop.mjs",
+    "licenses:prod": "pnpm licenses list --prod --json",
+    "package:internal:mac": "node ./scripts/package-internal.mjs mac",
+    "package:internal:win": "node ./scripts/package-internal.mjs win"
+  },
+  "build": {
+    "appId": "org.imhub.desktop",
+    "productName": "im-hub",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "artifactName": "im-hub-${version}-${os}-${arch}-internal-unsigned.${ext}",
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.business"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
   },
   "dependencies": {
     "@im-hub/shared": "workspace:*",
@@ -20,6 +53,7 @@
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
+    "electron-builder": "26.15.3",
     "electron-vite": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
