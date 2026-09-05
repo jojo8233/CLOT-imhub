@@ -82,6 +82,28 @@ export function nativeWebviewNeedsComposerFocus(
   return platform === 'whatsapp' && command.type === 'composer.send'
 }
 
+export function nativeBridgeUserMessage(
+  platform: string,
+  event: { code: string; message: string },
+): string {
+  if (platform === 'whatsapp' && event.code === 'whatsapp_dom_selector_unavailable') {
+    return 'WhatsApp 页面版本暂不兼容，请重新加载后重试'
+  }
+  if (platform === 'whatsapp' && event.code === 'whatsapp_translation_marker_hidden') {
+    return 'WhatsApp 译文暂时无法显示，请重新加载后重试'
+  }
+  if (platform === 'whatsapp') {
+    return 'WhatsApp 页面连接暂时不可用，请重新加载后重试'
+  }
+  return event.message
+}
+
+export function reloadNativeWebview(view: { reload(): void } | null): boolean {
+  if (!view) return false
+  view.reload()
+  return true
+}
+
 export function browserCompatibleUserAgent(userAgent: string): string {
   const platform = /\(([^)]+)\)/.exec(userAgent)?.[1]
   const chrome = /Chrome\/[\d.]+/.exec(userAgent)?.[0]
@@ -1035,6 +1057,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     const handleEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
+        setControlError(null)
         const connection = recoveredNativeBridgeConnection(platform, hasUsableGrant, observedIdentity)
         useStore.getState().setNativeBridgeConnection(accountId, connection, connection === 'waiting'
           ? `正在核对 ${PLATFORM_LABEL[platform] ?? platform} 登录身份`
@@ -1062,7 +1085,9 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
         return
       }
       if (event.type === 'bridge.error') {
-        useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
+        const message = nativeBridgeUserMessage(platform, event)
+        setControlError(message)
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', message)
         return
       }
       if (event.type === 'outbox.status') {
@@ -1215,6 +1240,10 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     el?.openDevTools?.()
   }
 
+  function reloadClient(): void {
+    reloadNativeWebview(ref.current as unknown as { reload(): void } | null)
+  }
+
   return (
     <div style={{
       position: 'absolute', inset: 0,
@@ -1243,9 +1272,11 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
           position: 'absolute', left: 16, right: 16, top: 12, zIndex: 3,
           padding: '9px 12px', borderRadius: theme.radius.md,
           background: theme.color.dangerSoft, color: theme.color.danger,
-          fontSize: theme.font.size.sm, pointerEvents: 'none',
+          fontSize: theme.font.size.sm, display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', gap: theme.space.sm,
         }}>
-          账号控制已阻断：{controlError}
+          <span>账号控制已阻断：{controlError}</span>
+          <button className="ih-btn" onClick={reloadClient}>重新加载</button>
         </div>
       )}
       {import.meta.env.DEV && (

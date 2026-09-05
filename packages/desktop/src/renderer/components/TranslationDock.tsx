@@ -6,7 +6,7 @@ import {
   nativeOutboxBridge,
   type NativeCommandContext,
 } from '../native-bridge.js'
-import { useStore, type NativeDraftStatus } from '../store.js'
+import { useStore, type NativeBridgeConnection, type NativeDraftStatus } from '../store.js'
 import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip } from './ui.js'
@@ -25,6 +25,18 @@ const STATUS_LABEL: Record<NativeDraftStatus, string> = {
 
 export function nativeDraftKey(accountId: string, conversationId: string): string {
   return `${accountId}:${conversationId}`
+}
+
+export function nativeConnectionUnavailableReason(
+  platform: string,
+  connection: NativeBridgeConnection | undefined,
+  error: string | null | undefined,
+): string | null {
+  if (connection === 'failed') return error ?? '原生客户端桥接失败'
+  if (connection !== 'ready') {
+    return `等待 ${PLATFORM_LABEL[platform] ?? platform} 原生输入桥接`
+  }
+  return null
 }
 
 /** 发送事实始终取自原生输入框；外壳缓存的 translatedText 只用于门禁。 */
@@ -109,15 +121,12 @@ export function TranslationDock() {
       ? '风控账号是只读的，不能操作原生输入框'
     : !canControlAccount
       ? '这个平台账号不属于当前用户，不能操作原生输入框'
-    : native?.connection === 'failed'
-      ? native.error ?? '原生客户端桥接失败'
-      : native?.connection !== 'ready'
-        ? `等待 ${PLATFORM_LABEL[active.platform] ?? active.platform} 原生输入桥接`
-        : !context
-          ? '请先在原生客户端中打开一个会话'
-          : !context.conversationId
-            ? '正在同步当前会话'
-            : null
+    : nativeConnectionUnavailableReason(active.platform, native?.connection, native?.error)
+      ?? (!context
+        ? '请先在原生客户端中打开一个会话'
+        : !context.conversationId
+          ? '正在同步当前会话'
+          : null)
 
   const busy = draft?.status === 'configuring'
     || draft?.status === 'translating'
