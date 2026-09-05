@@ -1,5 +1,16 @@
 import type { WebSocket } from 'ws'
-import type { WsServerEvent } from '@im-hub/shared'
+import type { Actor, WsServerEvent, WsSessionRevokedEvent } from '@im-hub/shared'
+import { verifySession } from '../auth/session.js'
+import { loadActor, type ActorRepo } from './actor.js'
+
+export async function authenticateWsSession(
+  token: string,
+  secret: string,
+  actorRepo: ActorRepo,
+): Promise<Actor> {
+  const claims = await verifySession(token, secret)
+  return loadActor(claims.userId, claims.sessionVersion, actorRepo)
+}
 
 /** 按 userId 维护连接。P0 只推给消息所属账号的 owner，管理员订阅在 P2 补。 */
 export class WsHub {
@@ -33,6 +44,20 @@ export class WsHub {
         // 一个连接发不出去不该连累同用户的其他连接
         console.warn('[ws-hub] 推送失败:', err instanceof Error ? err.message : err)
       }
+    }
+  }
+
+  revokeUser(userId: string): void {
+    const payload = JSON.stringify({ type: 'session_revoked' } satisfies WsSessionRevokedEvent)
+    for (const socket of this.sockets.get(userId) ?? []) {
+      if (socket.readyState === socket.OPEN) {
+        try {
+          socket.send(payload)
+        } catch (err) {
+          console.warn('[ws-hub] 撤权通知发送失败:', err instanceof Error ? err.message : err)
+        }
+      }
+      socket.close(4001, 'session revoked')
     }
   }
 

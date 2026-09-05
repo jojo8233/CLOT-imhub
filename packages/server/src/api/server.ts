@@ -8,7 +8,7 @@ import { verifySession } from '../auth/session.js'
 import { loadActor, type ActorRepo } from './actor.js'
 import { resolveScope } from '../rbac/scope.js'
 import { ScopedDb } from '../rbac/scoped-db.js'
-import type { WsHub } from './ws.js'
+import { authenticateWsSession, type WsHub } from './ws.js'
 import { authRoutes } from './routes/auth.js'
 import { accountRoutes } from './routes/accounts.js'
 import { conversationRoutes } from './routes/conversations.js'
@@ -30,6 +30,19 @@ import {
   whatsappWebhookRoutes,
   type WhatsAppCloudRouteDeps,
 } from './routes/whatsapp-cloud.js'
+import { DeviceRepo } from '../organization-admin/device-repo.js'
+import { DeviceService } from '../organization-admin/device-service.js'
+import { desktopInstallationRoutes } from './routes/desktop-installations.js'
+import { OrganizationReadRepo } from '../organization-admin/read-repo.js'
+import { UserAdminService } from '../organization-admin/user-service.js'
+import { adminUserRoutes } from './routes/admin-users.js'
+import { AdminOperationTokenService } from '../organization-admin/operation-token.js'
+import { TeamAdminService } from '../organization-admin/team-service.js'
+import { adminTeamRoutes } from './routes/admin-teams.js'
+import { AccountAdminService } from '../organization-admin/account-service.js'
+import { adminAccountRoutes } from './routes/admin-accounts.js'
+import { OwnerTransferService } from '../organization-admin/owner-transfer-service.js'
+import { adminOwnerTransferRoutes } from './routes/admin-owner-transfer.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -42,14 +55,16 @@ declare module 'fastify' {
 const defaultActorRepo: ActorRepo = {
   findUser: async (userId) => {
     const row = await db.selectFrom('users')
-      .select(['id', 'role', 'disabled_at'])
+      .select(['id', 'role', 'disabled_at', 'session_version'])
       .where('id', '=', userId)
       .executeTakeFirst()
     return row ?? null
   },
-  findMemberships: (userId) => db.selectFrom('team_members')
-    .select(['team_id', 'is_lead'])
-    .where('user_id', '=', userId)
+  findMemberships: (userId) => db.selectFrom('team_members as member')
+    .innerJoin('teams as team', 'team.id', 'member.team_id')
+    .select(['member.team_id', 'member.is_lead'])
+    .where('member.user_id', '=', userId)
+    .where('team.disabled_at', 'is', null)
     .execute(),
 }
 
@@ -59,12 +74,21 @@ export interface BuildServerOptions {
    * 生产路径使用组合根里挂的默认实现（走 db 单例）。
    */
   actorRepo?: ActorRepo
+  deviceService?: DeviceService
 }
 
 export interface BuildServerDeps extends MessageRouteDeps {
   native?: NativeRouteDeps
   telegramShadowRefresh?: TelegramShadowRefreshRouteDeps
   whatsappCloudRoutes?: WhatsAppCloudRouteDeps
+  organizationAdmin?: {
+    readRepo?: OrganizationReadRepo
+    userService?: UserAdminService
+    teamService?: TeamAdminService
+    accountService?: AccountAdminService
+    ownerTransferService?: OwnerTransferService
+    writesEnabled: boolean
+  }
 }
 
 export async function buildServer(
@@ -73,7 +97,42 @@ export async function buildServer(
   options: BuildServerOptions = {},
 ): Promise<FastifyInstance> {
   const actorRepo = options.actorRepo ?? defaultActorRepo
-  const app = Fastify({ logger: true })
+  const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
+  const readRepo = deps.organizationAdmin?.readRepo ?? new OrganizationReadRepo(db)
+  const operationTokens = new AdminOperationTokenService(config.JWT_SECRET)
+  const userService = deps.organizationAdmin?.userService ?? new UserAdminService(db, {
+    deviceService,
+    operationTokens,
+  })
+  const teamService = deps.organizationAdmin?.teamService ?? new TeamAdminService(
+    db,
+    deviceService,
+    operationTokens,
+  )
+  const accountService = deps.organizationAdmin?.accountService ?? new AccountAdminService(
+    db,
+    deviceService,
+    operationTokens,
+  )
+  const ownerTransferService = deps.organizationAdmin?.ownerTransferService
+    ?? new OwnerTransferService(db, deviceService, operationTokens)
+  const organizationAdmin = {
+    readRepo,
+    userService,
+    teamService,
+    accountService,
+    ownerTransferService,
+    writesEnabled: deps.organizationAdmin?.writesEnabled
+      ?? config.ORGANIZATION_ADMIN_WRITES_ENABLED,
+  }
+  const app = Fastify({
+    logger: {
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.x-im-hub-device-credential'],
+        censor: '[REDACTED]',
+      },
+    },
+  })
 
   // Electron 渲染进程在开发模式下从 http://localhost:<vite端口> 加载，
   // 打包后从 file:// 加载（origin 为 null）——两种情况都是跨源，
@@ -108,14 +167,14 @@ export async function buildServer(
     if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'unauthorized' })
     try {
       const claims = await verifySession(header.slice(7), config.JWT_SECRET)
-      req.actor = await loadActor(claims.userId, actorRepo)
+      req.actor = await loadActor(claims.userId, claims.sessionVersion, actorRepo)
       req.scoped = new ScopedDb(db, resolveScope(req.actor), req.actor.userId)
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })
     }
   })
 
-  await app.register(authRoutes)
+  await app.register(async instance => authRoutes(instance, { hub }))
   // safeStorage 中的 user.role 只是上次登录快照。原生客户端控制门禁必须
   // 在恢复会话后用服务端每请求实时加载的 actor 刷新，避免已改为 auditor
   // 的用户继续按旧 agent 快照挂载平台会话。
@@ -130,6 +189,25 @@ export async function buildServer(
     await app.register(async instance => whatsappCloudAccountRoutes(instance, whatsappCloud))
   }
   await app.register(nativeControlRoutes)
+  await app.register(async instance => {
+    await desktopInstallationRoutes(instance, { deviceService })
+  })
+  await app.register(async instance => {
+    await adminUserRoutes(instance, { ...organizationAdmin, hub })
+  })
+  await app.register(async instance => {
+    await adminTeamRoutes(instance, { ...organizationAdmin, hub })
+  })
+  await app.register(async instance => {
+    await adminAccountRoutes(instance, { ...organizationAdmin, deviceService, hub })
+  })
+  await app.register(async instance => {
+    await adminOwnerTransferRoutes(instance, {
+      service: organizationAdmin.ownerTransferService,
+      writesEnabled: organizationAdmin.writesEnabled,
+      hub,
+    })
+  })
   await app.register(conversationRoutes)
   await app.register(customerProfileLibraryRoutes)
   await app.register(keywordRuleRoutes)
@@ -164,10 +242,10 @@ export async function buildServer(
       try {
         const msg = JSON.parse(data.toString()) as { type?: string; token?: string }
         if (msg.type !== 'auth' || !msg.token) throw new Error('expected auth frame')
-        const claims = await verifySession(msg.token, config.JWT_SECRET)
+        const actor = await authenticateWsSession(msg.token, config.JWT_SECRET, actorRepo)
         authed = true
         clearTimeout(deadline)
-        hub.add(claims.userId, socket as never)
+        hub.add(actor.userId, socket as never)
         socket.send(JSON.stringify({ type: 'auth_ok' }))
       } catch {
         clearTimeout(deadline)

@@ -152,6 +152,10 @@ export class NativeControlHost {
   private async removeAccount(event: IpcMainInvokeEvent, value: unknown): Promise<void> {
     this.requireTrustedHost(event)
     const accountId = parseAccountId(value)
+    await this.purgeAccount(accountId)
+  }
+
+  async purgeAccount(accountId: string): Promise<void> {
     const grants = this.registry.releaseAccount(accountId)
     await Promise.allSettled(grants.map(grant => this.revokeGrant(grant)))
     for (const [guestId, guest] of this.guests) {

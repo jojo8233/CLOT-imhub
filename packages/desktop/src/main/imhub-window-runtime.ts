@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell, type WebContents } from 'electron'
@@ -12,6 +13,12 @@ import {
   nativePartitionAllowed,
 } from './native-host-policy.js'
 import { NativeControlHost } from './native-control-host.js'
+import { DesktopInstallationStore } from './desktop-installation-store.js'
+import { DesktopInstallationManager } from './desktop-installation-manager.js'
+import {
+  DESKTOP_INSTALLATION_SYNC_CHANNEL,
+  parseDesktopInstallationSyncPayload,
+} from '../desktop-installation-ipc.js'
 
 interface PendingNativeAccount {
   accountId: string
@@ -39,10 +46,20 @@ const trustedHostIds = new Set<number>()
 
 let installed = false
 let sessionNamespace: string | undefined
+let activeSessionToken: string | null = null
+let desktopInstallationStore: DesktopInstallationStore | null = null
+let desktopInstallationManager: DesktopInstallationManager | null = null
 
 function tokenFile(): string {
   const root = app.getPath('userData')
   return sessionNamespace ? join(root, sessionNamespace, 'session.bin') : join(root, 'session.bin')
+}
+
+function installationFile(): string {
+  const root = app.getPath('userData')
+  return sessionNamespace
+    ? join(root, sessionNamespace, 'installation.bin')
+    : join(root, 'installation.bin')
 }
 
 function requireTrustedHost(sender: WebContents): void {
@@ -59,24 +76,40 @@ function installRuntime(options: ImHubWindowRuntimeOptions): void {
   installed = true
   sessionNamespace = options.sessionNamespace
   nativeControlHost.install()
+  desktopInstallationStore = new DesktopInstallationStore({
+    filePath: installationFile(),
+    exists: existsSync,
+    mkdir: path => { mkdirSync(path, { recursive: true }) },
+    read: readFileSync,
+    write: writeFileSync,
+    randomBytes,
+    randomUUID,
+    safeStorage,
+    logger: console,
+  })
 
   /** token 只经 safeStorage 加密后落盘；没有系统密钥环时不做明文兜底。 */
-  ipcMain.handle('session:save', (event, payload: SessionPayload) => {
+  ipcMain.handle('session:save', (event, value: unknown) => {
     requireTrustedHost(event.sender)
     if (!safeStorage.isEncryptionAvailable()) return false
+    const payload = parseSessionPayload(value)
     const file = tokenFile()
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, safeStorage.encryptString(JSON.stringify(payload)))
+    activeSessionToken = payload.token
     return true
   })
 
   ipcMain.handle('session:load', (event): SessionPayload | null => {
     requireTrustedHost(event.sender)
+    activeSessionToken = null
     try {
       const file = tokenFile()
       if (!existsSync(file) || !safeStorage.isEncryptionAvailable()) return null
       const raw = safeStorage.decryptString(readFileSync(file))
-      return JSON.parse(raw) as SessionPayload
+      const payload = parseSessionPayload(JSON.parse(raw))
+      activeSessionToken = payload.token
+      return payload
     } catch {
       return null
     }
@@ -84,7 +117,26 @@ function installRuntime(options: ImHubWindowRuntimeOptions): void {
 
   ipcMain.handle('session:clear', event => {
     requireTrustedHost(event.sender)
+    activeSessionToken = null
     rmSync(tokenFile(), { force: true })
+  })
+
+  ipcMain.handle(DESKTOP_INSTALLATION_SYNC_CHANNEL, async (event, value: unknown) => {
+    requireTrustedHost(event.sender)
+    const payload = parseDesktopInstallationSyncPayload(value)
+    if (!activeSessionToken) throw new Error('登录会话不可用')
+    if (!desktopInstallationManager) {
+      const stored = desktopInstallationStore?.load()
+      if (!stored?.available) throw new Error('系统加密不可用，无法登记本机安装')
+      desktopInstallationManager = new DesktopInstallationManager({
+        serverUrl: process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
+        clientVersion: app.getVersion(),
+        identity: stored.identity,
+        fetch,
+        purgeAccount: accountId => nativeControlHost.purgeAccount(accountId),
+      })
+    }
+    return desktopInstallationManager.syncMounts(activeSessionToken, payload.accountIds)
   })
 
   ipcMain.handle('external:open', async (event, raw: unknown) => {
@@ -211,4 +263,29 @@ export function registerIntegratedNativeGuest(
   requireTrustedHost(hostContents)
   nativeControlHost.registerGuest(guestContents, accountId, hostContents.id)
   console.info('[signal-bridge] integrated guest registered')
+}
+
+function parseSessionPayload(value: unknown): SessionPayload {
+  if (!record(value)
+    || typeof value.token !== 'string'
+    || value.token === ''
+    || value.token.length > 16_384
+    || !record(value.user)
+    || typeof value.user.id !== 'string'
+    || typeof value.user.role !== 'string'
+    || typeof value.user.displayName !== 'string') {
+    throw new Error('登录会话格式无效')
+  }
+  return {
+    token: value.token,
+    user: {
+      id: value.user.id,
+      role: value.user.role,
+      displayName: value.user.displayName,
+    },
+  }
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

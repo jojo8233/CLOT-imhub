@@ -2,6 +2,7 @@ import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 import type {
   AccountConnectionMode,
   AccountStatus,
+  DesktopCleanupReason,
   Direction,
   KeywordAlertSeverity,
   Platform,
@@ -26,12 +27,20 @@ export interface UsersTable {
   password_hash: string
   created_at: Generated<Timestamp>
   disabled_at: Timestamp | null
+  session_version: Generated<number>
+  must_change_password: Generated<boolean>
+  temporary_password_expires_at: Timestamp | null
+  revision: Generated<number>
+  updated_at: Timestamp
 }
 
 export interface TeamsTable {
   id: Generated<string>
   name: string
   created_at: Generated<Timestamp>
+  disabled_at: Timestamp | null
+  revision: Generated<number>
+  updated_at: Timestamp
 }
 
 export interface TeamMembersTable {
@@ -58,6 +67,35 @@ export interface AccountsTable {
   /** link 模式接入的平台（Signal）在此标注历史消息起点，null 表示历史完整 */
   history_available_from: Timestamp | null
   created_at: Generated<Timestamp>
+  revision: Generated<number>
+}
+
+export interface DesktopInstallationsTable {
+  id: string
+  credential_sha256: string
+  client_version: string
+  capabilities: JSONColumnType<string[], string, string>
+  last_seen_at: RequiredTimestamp
+  revoked_at: Timestamp | null
+  created_at: Timestamp
+}
+
+export interface AccountDeviceMountsTable {
+  installation_id: string
+  account_id: string
+  owner_user_id: string
+  last_seen_at: RequiredTimestamp
+}
+
+export interface DesktopCleanupTasksTable {
+  id: Generated<string>
+  installation_id: string | null
+  account_id: string
+  mode: 'automatic' | 'manual_required'
+  reason: DesktopCleanupReason
+  state: 'pending' | 'completed'
+  created_at: Timestamp
+  completed_at: Timestamp | null
 }
 
 export interface ConversationsTable {
@@ -271,4 +309,7 @@ export interface Database {
   keyword_alert_scan_jobs: KeywordAlertScanJobsTable
   keyword_alerts: KeywordAlertsTable
   keyword_alert_recipients: KeywordAlertRecipientsTable
+  desktop_installations: DesktopInstallationsTable
+  account_device_mounts: AccountDeviceMountsTable
+  desktop_cleanup_tasks: DesktopCleanupTasksTable
 }

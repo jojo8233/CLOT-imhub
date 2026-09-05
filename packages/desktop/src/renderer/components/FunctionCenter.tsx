@@ -1,3 +1,4 @@
+import type { Role } from '@im-hub/shared'
 import { FUNCTION_CENTER } from '../layout.js'
 import { useStore } from '../store.js'
 import { theme } from '../theme.js'
@@ -12,7 +13,7 @@ import { IconButton, NotWired } from './ui.js'
  * 顺带这份名单也就是路线图，接完一个把 view 填上、ready 改 true。
  */
 
-export type ViewKey = 'chat' | 'accounts' | 'customerProfiles' | 'keywordAlerts'
+export type ViewKey = 'chat' | 'accounts' | 'customerProfiles' | 'keywordAlerts' | 'organizationAdmin'
 
 export interface FunctionCenterEntry {
   /** 图标块里的字。参考稿用的就是单字，比抽象图形更好认 */
@@ -23,16 +24,19 @@ export interface FunctionCenterEntry {
   /** 有 view 表示点了会切视图；有 action 表示点了触发动作；都没有就是没做完 */
   view?: ViewKey
   action?: 'addAccount'
+  ownerOnly?: boolean
+  auditorHidden?: boolean
 }
 
 export const FUNCTION_CENTER_ENTRIES: FunctionCenterEntry[] = [
-  { glyph: '+', tint: '#0a6fe8', title: '添加账号', desc: '接入新的聊天平台账号', action: 'addAccount' },
+  { glyph: '+', tint: '#0a6fe8', title: '添加账号', desc: '接入新的聊天平台账号', action: 'addAccount', auditorHidden: true },
   { glyph: '话', tint: '#101a5c', title: '会话', desc: '平台原生界面、翻译与客户资料', view: 'chat' },
   { glyph: '号', tint: '#22b573', title: '账号状态', desc: '各账号在线情况与历史起点', view: 'accounts' },
   { glyph: '警', tint: '#e0364a', title: '关键词警报', desc: '查看账号范围内的客户关键词告警', view: 'keywordAlerts' },
   { glyph: '词', tint: '#8b5cf6', title: '术语表', desc: '固定人名、品牌与产品译法' },
   { glyph: '档', tint: '#0891b2', title: '客户档案库', desc: '搜索并维护跨会话客户资料', view: 'customerProfiles' },
   { glyph: '搜', tint: '#64748b', title: '全局搜索', desc: '跨账号检索消息与联系人' },
+  { glyph: '管', tint: '#d97706', title: '管理中心', desc: '员工、团队、账号与 owner 管理', view: 'organizationAdmin', ownerOnly: true },
 ]
 
 interface Props {
@@ -40,6 +44,7 @@ interface Props {
   onSelectView(v: ViewKey): void
   onAddAccount(): void
   keywordAlertCount: number | null
+  role: Role
   /** 窗口太窄时强制收成图标栏。不写回 store——窗口一宽回来就该自己展开 */
   compact?: boolean
 }
@@ -49,10 +54,14 @@ export function FunctionCenter({
   onSelectView,
   onAddAccount,
   keywordAlertCount,
+  role,
   compact = false,
 }: Props) {
   const open = useStore(s => s.panelOpen) && !compact
   const togglePanel = useStore(s => s.togglePanel)
+  const visibleEntries = FUNCTION_CENTER_ENTRIES.filter(entry => (
+    (!entry.ownerOnly || role === 'owner') && (!entry.auditorHidden || role !== 'auditor')
+  ))
 
   function activate(e: FunctionCenterEntry): void {
     if (e.action === 'addAccount') onAddAccount()
@@ -74,7 +83,7 @@ export function FunctionCenter({
           <div>
             <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>功能中心</div>
             <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint, marginTop: 1 }}>
-              {FUNCTION_CENTER_ENTRIES.filter(e => e.view ?? e.action).length} / {FUNCTION_CENTER_ENTRIES.length} 项已接入
+              {visibleEntries.filter(e => e.view ?? e.action).length} / {visibleEntries.length} 项已接入
             </div>
           </div>
         )}
@@ -87,7 +96,7 @@ export function FunctionCenter({
       </div>
 
       <div className="ih-scroll" style={{ flex: 1, padding: `0 ${open ? theme.space.md : 8}px ${theme.space.md}px` }}>
-        {FUNCTION_CENTER_ENTRIES.map(e => {
+        {visibleEntries.map(e => {
           const wired = Boolean(e.view ?? e.action)
           const active = e.view !== undefined && e.view === view
           return (

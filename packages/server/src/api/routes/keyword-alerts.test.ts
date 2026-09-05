@@ -42,7 +42,7 @@ function fakeActorRepo(): ActorRepo {
   return {
     findUser: async (userId) => {
       const role = actorRoles.get(userId)
-      return role ? { id: userId, role, disabled_at: null } : null
+      return role ? { id: userId, role, disabled_at: null, session_version: 1 } : null
     },
     findMemberships: async userId => actorMemberships.get(userId) ?? [],
   }
@@ -155,11 +155,11 @@ async function seedRouteFixture(): Promise<RouteFixture> {
     accountId,
     alertIds,
     tokens: {
-      owner: await signSession({ userId: ownerId }, TEST_JWT_SECRET),
-      auditor: await signSession({ userId: auditorId }, TEST_JWT_SECRET),
-      manager: await signSession({ userId: managerId }, TEST_JWT_SECRET),
-      agent: await signSession({ userId: agentId }, TEST_JWT_SECRET),
-      outsider: await signSession({ userId: outsiderId }, TEST_JWT_SECRET),
+      owner: await signSession({ userId: ownerId, sessionVersion: 1 }, TEST_JWT_SECRET),
+      auditor: await signSession({ userId: auditorId, sessionVersion: 1 }, TEST_JWT_SECRET),
+      manager: await signSession({ userId: managerId, sessionVersion: 1 }, TEST_JWT_SECRET),
+      agent: await signSession({ userId: agentId, sessionVersion: 1 }, TEST_JWT_SECRET),
+      outsider: await signSession({ userId: outsiderId, sessionVersion: 1 }, TEST_JWT_SECRET),
     },
   }
 }

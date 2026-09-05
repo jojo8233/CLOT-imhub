@@ -15,7 +15,7 @@ const VERIFY_TOKEN = 'route-verify-token'
 
 const actorRepo: ActorRepo = {
   findUser: async (userId) => userId === USER_ID
-    ? { id: USER_ID, role: 'owner' as Role, disabled_at: null }
+    ? { id: USER_ID, role: 'owner' as Role, disabled_at: null, session_version: 1 }
     : null,
   findMemberships: async () => [],
 }
@@ -92,7 +92,7 @@ describe('WhatsApp Cloud API public webhook routes', () => {
     const noAuth = await app.inject({ method: 'GET', url: '/api/whatsapp/cloud/config' })
     expect(noAuth.statusCode).toBe(401)
     const { signSession } = await import('../../auth/session.js')
-    const token = await signSession({ userId: USER_ID }, process.env.JWT_SECRET ?? '')
+    const token = await signSession({ userId: USER_ID, sessionVersion: 1 }, process.env.JWT_SECRET ?? '')
     const ok = await app.inject({
       method: 'GET', url: '/api/whatsapp/cloud/config',
       headers: { authorization: `Bearer ${token}` },

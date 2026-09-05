@@ -174,7 +174,6 @@ async function seedFixture(): Promise<Fixture> {
   const teamBId = (await db.insertInto('teams').values({ name: 'Team B' })
     .returning('id').executeTakeFirstOrThrow()).id
   await db.insertInto('team_members').values([
-    { team_id: teamAId, user_id: managerAId, is_lead: true },
     { team_id: teamBId, user_id: managerBId, is_lead: true },
     { team_id: teamAId, user_id: newManagerId, is_lead: true },
   ]).execute()

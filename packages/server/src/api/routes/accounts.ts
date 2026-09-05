@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { ACCOUNT_CONNECTION_MODES, PLATFORMS } from '@im-hub/shared'
+import {
+  ACCOUNT_CONNECTION_MODES,
+  PLATFORMS,
+  type AccountCreationContext,
+  type Actor,
+} from '@im-hub/shared'
 import { db } from '../../db/client.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 
@@ -11,6 +16,7 @@ const createBody = z.object({
   platform: z.enum(PLATFORMS),
   displayName: z.string().trim().min(1, '账号名称不能为空').max(60, '账号名称最长 60 个字'),
   connectionMode: z.enum(ACCOUNT_CONNECTION_MODES).optional(),
+  teamId: z.string().uuid().nullable().optional(),
 })
 
 const answerBody = z.object({
@@ -54,6 +60,12 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
     return { accounts }
   })
 
+  app.get('/api/account-creation-context', async (req, reply) => {
+    const context = await accountCreationContext(req.actor)
+    if (!context) return reply.code(403).send({ error: '风控账号是只读的，不能创建平台账号' })
+    return context
+  })
+
   /**
    * 新建一个平台账号并立即开始鉴权。
    *
@@ -90,19 +102,14 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
       return reply.code(400).send({ error: `${platform} 不支持 ${connectionMode} 账号模式` })
     }
 
-    // 账号归属跟着创建者走：他在哪个组，账号就属于哪个组，管理员才看得见。
-    // 不在任何组的人建的账号 team_id 为 null，只有他自己和 owner/auditor 看得到。
-    const membership = await db.selectFrom('team_members')
-      .select('team_id')
-      .where('user_id', '=', req.actor.userId)
-      .orderBy('is_lead', 'desc')
-      .executeTakeFirst()
+    const team = await resolveCreationTeam(req.actor, parsed.data.teamId)
+    if (team.kind === 'invalid') return reply.code(400).send({ error: team.error })
 
     const account = await db.insertInto('accounts')
       .values({
         platform,
         owner_user_id: req.actor.userId,
-        team_id: membership?.team_id ?? null,
+        team_id: team.teamId,
         display_name: displayName,
         status: 'pending_auth',
         connection_mode: connectionMode,
@@ -287,6 +294,97 @@ export async function accountRoutes(app: FastifyInstance, deps: AccountRouteDeps
     }
     return { ok: true }
   })
+}
+
+type CreationTeamResult =
+  | { kind: 'selected'; teamId: string | null }
+  | { kind: 'invalid'; error: string }
+
+async function accountCreationContext(actor: Actor): Promise<AccountCreationContext | null> {
+  switch (actor.role) {
+    case 'owner':
+      return {
+        selectableTeams: await enabledTeams(),
+        requiresTeamSelection: false,
+        allowsUngrouped: true,
+      }
+    case 'manager':
+      return {
+        selectableTeams: await enabledTeams(actor.leadTeamIds),
+        requiresTeamSelection: true,
+        allowsUngrouped: false,
+      }
+    case 'agent': {
+      const teams = await activeAgentTeams(actor.userId)
+      return {
+        selectableTeams: teams,
+        requiresTeamSelection: false,
+        allowsUngrouped: teams.length === 0,
+      }
+    }
+    case 'auditor':
+      return null
+  }
+}
+
+async function resolveCreationTeam(
+  actor: Actor,
+  requestedTeamId: string | null | undefined,
+): Promise<CreationTeamResult> {
+  switch (actor.role) {
+    case 'owner': {
+      if (requestedTeamId === null || requestedTeamId === undefined) {
+        return { kind: 'selected', teamId: null }
+      }
+      const teams = await enabledTeams([requestedTeamId])
+      return teams.length === 1
+        ? { kind: 'selected', teamId: requestedTeamId }
+        : { kind: 'invalid', error: '所选团队不存在或已归档' }
+    }
+    case 'manager': {
+      if (!requestedTeamId) {
+        return { kind: 'invalid', error: '组长创建账号时必须选择自己负责的团队' }
+      }
+      if (!actor.leadTeamIds.includes(requestedTeamId)) {
+        return { kind: 'invalid', error: '只能选择自己负责的团队' }
+      }
+      const teams = await enabledTeams([requestedTeamId])
+      return teams.length === 1
+        ? { kind: 'selected', teamId: requestedTeamId }
+        : { kind: 'invalid', error: '所选团队不存在或已归档' }
+    }
+    case 'agent': {
+      const teams = await activeAgentTeams(actor.userId)
+      if (teams.length > 1) {
+        return { kind: 'invalid', error: '员工同时属于多个启用团队，请先联系管理员修复组织关系' }
+      }
+      return { kind: 'selected', teamId: teams[0]?.id ?? null }
+    }
+    case 'auditor':
+      return { kind: 'invalid', error: '风控账号是只读的，不能创建平台账号' }
+  }
+}
+
+async function enabledTeams(teamIds?: string[]): Promise<Array<{ id: string; name: string }>> {
+  if (teamIds?.length === 0) return []
+
+  let query = db.selectFrom('teams')
+    .select(['id', 'name'])
+    .where('disabled_at', 'is', null)
+  if (teamIds) query = query.where('id', 'in', teamIds)
+  return query.orderBy('name').orderBy('id').execute()
+}
+
+async function activeAgentTeams(userId: string): Promise<Array<{ id: string; name: string }>> {
+  return db.selectFrom('team_members as member')
+    .innerJoin('teams as team', 'team.id', 'member.team_id')
+    .select(['team.id as id', 'team.name as name'])
+    .where('member.user_id', '=', userId)
+    .where('member.is_lead', '=', false)
+    .where('team.disabled_at', 'is', null)
+    .orderBy('team.name')
+    .orderBy('team.id')
+    .execute()
 }
 
 /**

@@ -34,7 +34,7 @@ function fakeActorRepo(): ActorRepo {
   return {
     findUser: async (userId) => {
       const role = actorRoles.get(userId)
-      return role ? { id: userId, role, disabled_at: null } : null
+      return role ? { id: userId, role, disabled_at: null, session_version: 1 } : null
     },
     findMemberships: async (userId) => memberships.get(userId) ?? [],
   }
@@ -176,10 +176,10 @@ beforeEach(async () => {
     new WsHub(),
     { actorRepo: fakeActorRepo() },
   )
-  ownerToken = await signSession({ userId: ownerId }, TEST_JWT_SECRET)
-  auditorToken = await signSession({ userId: auditorId }, TEST_JWT_SECRET)
-  managerToken = await signSession({ userId: managerId }, TEST_JWT_SECRET)
-  agentToken = await signSession({ userId: firstAgentId }, TEST_JWT_SECRET)
+  ownerToken = await signSession({ userId: ownerId, sessionVersion: 1 }, TEST_JWT_SECRET)
+  auditorToken = await signSession({ userId: auditorId, sessionVersion: 1 }, TEST_JWT_SECRET)
+  managerToken = await signSession({ userId: managerId, sessionVersion: 1 }, TEST_JWT_SECRET)
+  agentToken = await signSession({ userId: firstAgentId, sessionVersion: 1 }, TEST_JWT_SECRET)
 })
 
 afterEach(async () => app?.close())

@@ -1,5 +1,23 @@
 import type {
   AccountConnectionMode,
+  AccountCreationContext,
+  AdminAccount,
+  AdminAccountAssignmentPreviewRequest,
+  AdminAccountAssignmentRequest,
+  AdminAccountSearchRequest,
+  AdminAgentTeamChange,
+  AdminMutationPreview,
+  AdminOwnerTransferPreviewRequest,
+  AdminOwnerTransferRequest,
+  AdminPage,
+  AdminTeam,
+  AdminTeamCreate,
+  AdminTeamSearchRequest,
+  AdminTeamResolution,
+  AdminUser,
+  AdminUserCreate,
+  AdminUserSearchRequest,
+  AdminUserUpdate,
   CustomerProfile,
   CustomerProfileListPage,
   CustomerProfileSearchRequest,
@@ -11,6 +29,7 @@ import type {
   KeywordRuleCreate,
   KeywordRuleListResponse,
   KeywordRuleUpdate,
+  LoginResponse,
   NativeControlGrantResponse,
   Platform,
   Role,
@@ -35,7 +54,12 @@ if (!injected?.serverUrl) {
 const BASE = injected?.serverUrl ?? 'http://localhost:4000'
 // 可能为 undefined（比如以后有非 Electron 的渲染宿主）。所有用法都做了空值兜底：
 // 拿不到就是"这次不持久化"，不是崩溃。
-const sessionBridge = injected?.session
+const initialSessionBridge = injected?.session
+
+function currentSessionBridge(): SessionBridge | undefined {
+  return (globalThis as { imHub?: { session?: SessionBridge } }).imHub?.session
+    ?? initialSessionBridge
+}
 
 export interface SessionUser {
   id: string
@@ -75,6 +99,7 @@ export class HttpError extends Error {
     public readonly status: number,
     message: string,
     public readonly code: string | null = null,
+    public readonly details: unknown = null,
   ) {
     super(message)
     this.name = 'HttpError'
@@ -85,6 +110,9 @@ export class HttpError extends Error {
 // console。持久化只走 preload 的 session.save/load/clear（主进程 safeStorage）。
 let token: string | null = null
 let currentUser: SessionUser | null = null
+let initialPasswordSetupToken: string | null = null
+let passwordRotationInFlight = false
+let deferredSessionRevocation = false
 
 export function hasToken(): boolean {
   return token !== null
@@ -94,8 +122,22 @@ export function getCurrentUser(): SessionUser | null {
   return currentUser
 }
 
+/**
+ * 改密中的撤权先暂存：只有成功安装 replacement token 后才可忽略。
+ * 已被新 token 取代的旧 WS 事件也不应清掉新会话。
+ */
+export function shouldLogoutForSessionRevocation(sessionSuperseded: boolean): boolean {
+  if (sessionSuperseded) return false
+  if (passwordRotationInFlight) {
+    deferredSessionRevocation = true
+    return false
+  }
+  return true
+}
+
 /** 应用启动时调用：有加密存档就恢复登录态，没有（或解不出来）就返回 null，交给调用方显示登录页。 */
 export async function restoreSession(): Promise<SessionUser | null> {
+  const sessionBridge = currentSessionBridge()
   if (!sessionBridge) return null
   const saved = await sessionBridge.load()
   if (!saved) return null
@@ -110,18 +152,20 @@ export async function restoreSession(): Promise<SessionUser | null> {
  * 后果只是下次启动要求重新登录。
  */
 async function persistSession(): Promise<void> {
+  const sessionBridge = currentSessionBridge()
   if (!sessionBridge || !token || !currentUser) return
   await sessionBridge.save({ token, user: currentUser })
 }
 
 async function clearPersistedSession(): Promise<void> {
-  await sessionBridge?.clear()
+  await currentSessionBridge()?.clear()
 }
 
 /** 登出：清内存 token/user，清磁盘存档。调用方（App.tsx）另外负责关 WS、清 store。 */
 export async function logout(): Promise<void> {
   token = null
   currentUser = null
+  initialPasswordSetupToken = null
   await clearPersistedSession()
 }
 
@@ -160,14 +204,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let detail = ''
     let code: string | null = null
+    let details: unknown = null
     try {
-      const body = (await res.json()) as { error?: string; code?: string }
-      if (body?.error) detail = `: ${body.error}`
-      if (body?.code) code = body.code
+      details = await res.json() as unknown
+      if (record(details) && typeof details.error === 'string') detail = `: ${details.error}`
+      if (record(details) && typeof details.code === 'string') code = details.code
     } catch {
       // 响应体不是 JSON 或读取失败，忽略，用纯状态码报错
     }
-    throw new HttpError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`, code)
+    throw new HttpError(
+      res.status,
+      `${init.method ?? 'GET'} ${path} failed: ${res.status}${detail}`,
+      code,
+      details,
+    )
   }
   return res.json() as Promise<T>
 }
@@ -180,12 +230,33 @@ export interface AccountRow {
   status: string
   history_available_from: string | null
   connection_mode: AccountConnectionMode
+  /** 仅存在于 renderer 内存；服务端账号响应不会持久化本机挂载状态。 */
+  desktop_mount_state?: 'pending' | 'ready' | 'blocked'
+  desktop_mount_notice?: string
 }
 
 export interface CreateAccountInput {
   platform: string
   displayName: string
   connectionMode?: AccountConnectionMode
+  teamId?: string | null
+}
+
+export interface AdminCredentialResult {
+  user: AdminUser
+  temporaryPassword: string
+  temporaryPasswordExpiresAt: string
+}
+
+export interface AdminDisablePreviewInput {
+  teamResolutions: AdminTeamResolution[]
+  allowManualCleanup: boolean
+}
+
+export interface AdminTeamManagerChangeInput {
+  managerUserId: string
+  allowManualCleanup: boolean
+  baseRevision: number
 }
 
 export interface ConversationRow {
@@ -223,15 +294,68 @@ export const api = {
    * 登录成功后立即尝试加密持久化（safeStorage 不可用时 persistSession 静默跳过，
    * 不算失败）。返回服务端给的 user，登录页/App.tsx 用它展示姓名、驱动后续流程。
    */
-  async login(email: string, password: string): Promise<SessionUser> {
-    const res = await request<{ token: string; user: SessionUser }>('/api/auth/login', {
+  async login(email: string, password: string): Promise<LoginResponse> {
+    const res = await request<LoginResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     })
+    if (res.kind === 'password_change_required') {
+      token = null
+      currentUser = null
+      initialPasswordSetupToken = res.setupToken
+      await clearPersistedSession()
+      return res
+    }
+    initialPasswordSetupToken = null
     token = res.token
     currentUser = res.user
     await persistSession()
-    return res.user
+    return res
+  },
+  async completeInitialPassword(newPassword: string): Promise<SessionUser> {
+    const setupToken = initialPasswordSetupToken
+    if (!setupToken) throw new Error('首次改密流程已失效，请重新登录')
+    try {
+      const res = await request<LoginResponse>('/api/auth/initial-password/complete', {
+        method: 'POST',
+        headers: { Authorization: `InitialPassword ${setupToken}` },
+        body: JSON.stringify({ newPassword }),
+      })
+      if (res.kind !== 'authenticated') throw new Error('首次改密响应无效')
+      token = res.token
+      currentUser = res.user
+      await persistSession()
+      return res.user
+    } finally {
+      initialPasswordSetupToken = null
+    }
+  },
+  async changePassword(currentPassword: string, newPassword: string): Promise<SessionUser> {
+    passwordRotationInFlight = true
+    let replacementInstalled = false
+    try {
+      const res = await request<LoginResponse>('/api/session/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      if (res.kind !== 'authenticated') throw new Error('改密响应无效')
+      token = res.token
+      currentUser = res.user
+      await persistSession()
+      replacementInstalled = true
+      return res.user
+    } finally {
+      passwordRotationInFlight = false
+      if (deferredSessionRevocation) {
+        deferredSessionRevocation = false
+        if (!replacementInstalled) {
+          token = null
+          currentUser = null
+          void clearPersistedSession()
+          unauthorizedListener?.()
+        }
+      }
+    }
   },
   async refreshSessionUser(): Promise<SessionUser> {
     const res = await request<{ user: { id: string; role: Role } }>('/api/session/me')
@@ -242,6 +366,109 @@ export const api = {
     await persistSession()
     return currentUser
   },
+  searchAdminUsers: (search: AdminUserSearchRequest, signal?: AbortSignal) =>
+    request<AdminPage<AdminUser>>('/api/admin/users/search', {
+      method: 'POST', body: JSON.stringify(search), signal,
+    }),
+  createAdminUser: (input: AdminUserCreate) =>
+    request<AdminCredentialResult>('/api/admin/users', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  updateAdminUser: (userId: string, input: AdminUserUpdate) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}`, {
+      method: 'PATCH', body: JSON.stringify(input),
+    }),
+  resetAdminUserPassword: (userId: string, baseRevision: number) =>
+    request<AdminCredentialResult>(`/api/admin/users/${userId}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ baseRevision }),
+    }),
+  enableAdminUser: (userId: string, baseRevision: number) =>
+    request<AdminCredentialResult>(`/api/admin/users/${userId}/enable`, {
+      method: 'POST', body: JSON.stringify({ baseRevision }),
+    }),
+  previewDisableAdminUser: (
+    userId: string,
+    baseRevision: number,
+    input: AdminDisablePreviewInput,
+  ) => request<{ preview: AdminMutationPreview }>(`/api/admin/users/${userId}/disable`, {
+    method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision, input }),
+  }),
+  disableAdminUser: (userId: string, operationToken: string) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}/disable`, {
+      method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
+    }),
+  previewOwnerTransfer: (input: AdminOwnerTransferPreviewRequest) =>
+    request<{ preview: AdminMutationPreview }>('/api/admin/owner-transfer/preview', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  transferOwner: (input: AdminOwnerTransferRequest) =>
+    request<{ currentOwner: AdminUser; newOwner: AdminUser }>('/api/admin/owner-transfer', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  searchAdminTeams: (search: AdminTeamSearchRequest, signal?: AbortSignal) =>
+    request<AdminPage<AdminTeam>>('/api/admin/teams/search', {
+      method: 'POST', body: JSON.stringify(search), signal,
+    }),
+  createAdminTeam: (input: AdminTeamCreate) =>
+    request<{ team: AdminTeam }>('/api/admin/teams', {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  updateAdminTeam: (teamId: string, input: { name: string; baseRevision: number }) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}`, {
+      method: 'PATCH', body: JSON.stringify(input),
+    }),
+  previewAdminTeamManagerChange: (teamId: string, input: AdminTeamManagerChangeInput) =>
+    request<{ preview: AdminMutationPreview }>(`/api/admin/teams/${teamId}/change-manager`, {
+      method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision: input.baseRevision, input: {
+        managerUserId: input.managerUserId,
+        allowManualCleanup: input.allowManualCleanup,
+      } }),
+    }),
+  changeAdminTeamManager: (teamId: string, operationToken: string) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/change-manager`, {
+      method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
+    }),
+  previewArchiveAdminTeam: (
+    teamId: string,
+    baseRevision: number,
+    allowManualCleanup: boolean,
+  ) =>
+    request<{ preview: AdminMutationPreview }>(`/api/admin/teams/${teamId}/archive`, {
+      method: 'POST', body: JSON.stringify({
+        phase: 'preview', baseRevision, input: { allowManualCleanup },
+      }),
+    }),
+  archiveAdminTeam: (teamId: string, operationToken: string) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/archive`, {
+      method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
+    }),
+  restoreAdminTeam: (teamId: string, managerUserId: string, baseRevision: number) =>
+    request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/restore`, {
+      method: 'POST', body: JSON.stringify({ managerUserId, baseRevision }),
+    }),
+  changeAdminAgentTeam: (userId: string, input: AdminAgentTeamChange) =>
+    request<{ user: AdminUser; affectedAccountIds: string[] }>(`/api/admin/agents/${userId}/change-team`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  searchAdminAccounts: (search: AdminAccountSearchRequest, signal?: AbortSignal) =>
+    request<AdminPage<AdminAccount>>('/api/admin/accounts/search', {
+      method: 'POST', body: JSON.stringify(search), signal,
+    }),
+  previewAdminAccountAssignment: (
+    accountId: string,
+    input: AdminAccountAssignmentPreviewRequest,
+  ) => request<{ preview: AdminMutationPreview }>(`/api/admin/accounts/${accountId}/assignment-preview`, {
+    method: 'POST', body: JSON.stringify(input),
+  }),
+  assignAdminAccount: (accountId: string, input: AdminAccountAssignmentRequest) =>
+    request<{ account: AdminAccount }>(`/api/admin/accounts/${accountId}/assign`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  confirmManualDesktopCleanup: (taskId: string) =>
+    request<{ confirmed: true; message: string }>(`/api/admin/desktop/cleanup-tasks/${taskId}/confirm-manual`, {
+      method: 'POST', body: JSON.stringify({}),
+    }),
+  getAccountCreationContext: () => request<AccountCreationContext>('/api/account-creation-context'),
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
@@ -406,14 +633,22 @@ export const api = {
     })
   },
 
-  connectWs(onEvent: (e: WsServerEvent) => void): WebSocket {
+  connectWs(onEvent: (
+    e: WsServerEvent,
+    context: { sessionSuperseded: boolean },
+  ) => void): WebSocket {
+    const connectionToken = token
     const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws`)
-    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }))
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: connectionToken }))
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data as string) as WsServerEvent | { type: 'auth_ok' }
       if (msg.type === 'auth_ok') return
-      onEvent(msg as WsServerEvent)
+      onEvent(msg as WsServerEvent, { sessionSuperseded: token !== connectionToken })
     }
     return ws
   },
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

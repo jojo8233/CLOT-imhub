@@ -90,7 +90,7 @@ async function insertMessage(ownerId: string): Promise<string> {
 describe('KeywordRuleRepo', () => {
   it('按 revision 原子创建、修改、停用、重启和软删除，删除后可重建', async () => {
     const ownerId = await insertUser('rule-owner')
-    const nextOwnerId = await insertUser('next-rule-owner')
+    const nextOwnerId = await insertUser('next-rule-actor', 'agent')
     const created = await repo.create(ownerId, {
       pattern: '  ＲＥＦＵＮＤ  ', severity: 'important', enabled: true,
     })

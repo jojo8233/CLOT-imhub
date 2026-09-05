@@ -7,6 +7,7 @@ import { SignJWT, jwtVerify } from 'jose'
  */
 export interface SessionClaims {
   userId: string
+  sessionVersion: number
 }
 
 const SESSION_TOKEN_TYPE = 'im-hub-session+jwt'
@@ -16,7 +17,11 @@ function key(secret: string): Uint8Array {
 }
 
 export async function signSession(claims: SessionClaims, secret: string): Promise<string> {
-  return new SignJWT({ kind: 'session', userId: claims.userId })
+  return new SignJWT({
+    kind: 'session',
+    userId: claims.userId,
+    sessionVersion: claims.sessionVersion,
+  })
     .setProtectedHeader({ alg: 'HS256', typ: SESSION_TOKEN_TYPE })
     .setIssuedAt()
     .setExpirationTime('12h')
@@ -25,14 +30,14 @@ export async function signSession(claims: SessionClaims, secret: string): Promis
 
 export async function verifySession(token: string, secret: string): Promise<SessionClaims> {
   const { payload, protectedHeader } = await jwtVerify(token, key(secret), { algorithms: ['HS256'] })
-  // 兼容本次上线前已经签出的、最长仅剩 12 小时的无 typ session；新的 native grant
-  // 带独立 typ/kind，因此不会落入这个兼容分支。兼容窗口会随旧 token 自然过期消失。
   const typedSession = protectedHeader.typ === SESSION_TOKEN_TYPE && payload.kind === 'session'
-  const legacySession = protectedHeader.typ === undefined && payload.kind === undefined
-  if ((!typedSession && !legacySession)
+  if (!typedSession
     || typeof payload.userId !== 'string'
-    || payload.userId === '') {
-    throw new Error('invalid session payload: userId')
+    || payload.userId === ''
+    || typeof payload.sessionVersion !== 'number'
+    || !Number.isInteger(payload.sessionVersion)
+    || payload.sessionVersion < 1) {
+    throw new Error('invalid session payload')
   }
-  return { userId: payload.userId }
+  return { userId: payload.userId, sessionVersion: payload.sessionVersion }
 }

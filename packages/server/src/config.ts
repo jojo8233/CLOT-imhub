@@ -48,6 +48,8 @@ const schema = z.object({
   WHATSAPP_PUBLIC_BASE_URL: z.string().default(''),
   /** 32 字节 base64，只用于服务端 AES-256-GCM secret store。 */
   WHATSAPP_SECRET_MASTER_KEY: z.string().default(''),
+  ORGANIZATION_ADMIN_WRITES_ENABLED: z.enum(['true', 'false']).default('false')
+    .transform(value => value === 'true'),
   PORT: z.coerce.number().default(4000),
 }).superRefine((value, ctx) => {
   if (!value.WHATSAPP_CLOUD_ENABLED) return

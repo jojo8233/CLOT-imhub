@@ -5,6 +5,7 @@ import type {
   NativeControlGrantResponse,
   NativeControlStateUpdate,
   NativeConversationContext,
+  DesktopInstallationSyncResult,
   NativeGuestEvent,
   NativeHostCommand,
 } from '@im-hub/shared'
@@ -19,6 +20,7 @@ import {
   NATIVE_CONTROL_STATE_CHANNEL,
   NATIVE_CONTROL_SYNC_CONTEXT_CHANNEL,
 } from '../native-control-ipc.js'
+import { DESKTOP_INSTALLATION_SYNC_CHANNEL } from '../desktop-installation-ipc.js'
 import {
   SIGNAL_DESKTOP_RELEASE_ALL_CHANNEL,
   SIGNAL_DESKTOP_RELEASE_CHANNEL,
@@ -69,6 +71,10 @@ contextBridge.exposeInMainWorld('imHub', {
   },
   external: {
     open: (url: string): Promise<void> => ipcRenderer.invoke('external:open', url),
+  },
+  desktopInstallation: {
+    syncMounts: (accountIds: string[]): Promise<DesktopInstallationSyncResult> =>
+      ipcRenderer.invoke(DESKTOP_INSTALLATION_SYNC_CHANNEL, { accountIds }),
   },
   nativeControl: {
     configure: (target: NativeControlTarget, grant: NativeControlGrantResponse): Promise<NativeControlStateUpdate> =>

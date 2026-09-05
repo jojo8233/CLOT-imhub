@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { api, NetworkError, type WhatsAppOnboardingStatus } from '../api/client.js'
+import type { AccountCreationContext, Role } from '@im-hub/shared'
+import {
+  api,
+  NetworkError,
+  type AccountRow,
+  type CreateAccountInput,
+  type WhatsAppOnboardingStatus,
+} from '../api/client.js'
 import type { ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
@@ -29,9 +36,11 @@ interface RelinkAccount {
  * TDLib 的二维码 token 过期后会自动下发新的链接，所以这里不用计时刷新，
  * 跟着事件走就行。
  */
-export function AddAccountDialog({ initialPlatform, onClose }: {
+export function AddAccountDialog({ initialPlatform, role, onClose, onAccountsChanged }: {
   initialPlatform: ChatPlatform
+  role: Role
   onClose(): void
+  onAccountsChanged(accounts: AccountRow[]): Promise<void>
 }) {
   const [platform, setPlatform] = useState<ChatPlatform>(initialPlatform)
   const [name, setName] = useState('')
@@ -46,11 +55,12 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   const [cloudExpiresAt, setCloudExpiresAt] = useState<string | null>(null)
   const [cloudStatus, setCloudStatus] = useState<WhatsAppOnboardingStatus['state']>('pending')
   const [cloudAvailable, setCloudAvailable] = useState<boolean | null>(null)
+  const [creationContext, setCreationContext] = useState<AccountCreationContext | null>(null)
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
 
   const challenge = useStore(s => s.authChallenge)
   const done = useStore(s => s.authDone)
   const clearAuth = useStore(s => s.clearAuth)
-  const setAccounts = useStore(s => s.setAccounts)
   const setActivePlatform = useStore(s => s.setActivePlatform)
   const setActiveAccount = useStore(s => s.setActiveAccount)
 
@@ -60,6 +70,22 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
 
   // 关掉弹窗时把挑战状态清掉，否则下次打开会闪一下上一轮的二维码
   useEffect(() => () => { clearAuth() }, [clearAuth])
+
+  useEffect(() => {
+    if (role === 'auditor') {
+      setError('风控账号为只读角色，不能添加平台账号')
+      return
+    }
+    let active = true
+    void api.getAccountCreationContext().then(context => {
+      if (!active) return
+      setCreationContext(context)
+      setSelectedTeamId(initialCreationTeam(role, context))
+    }).catch(cause => {
+      if (active) setError(message(cause, '无法加载可选团队'))
+    })
+    return () => { active = false }
+  }, [role])
 
   useEffect(() => {
     if (platform !== 'whatsapp' || step !== 'pick') return
@@ -93,7 +119,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
         if (status.state === 'completed' && status.accountId) {
           const accounts = (await api.listAccounts()).accounts
           if (stopped) return
-          setAccounts(accounts)
+          await onAccountsChanged(accounts)
           setActivePlatform('whatsapp')
           setActiveAccount(status.accountId)
           return
@@ -118,7 +144,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   }, [
     cloudExpiresAt,
     cloudSessionId,
-    setAccounts,
+    onAccountsChanged,
     setActiveAccount,
     setActivePlatform,
     step,
@@ -142,7 +168,7 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
         setStep('cloud')
         return
       }
-      const account = await api.createAccount({
+      const account = await api.createAccount(accountCreationInputForRole({
         platform,
         displayName: name.trim(),
         connectionMode: platform === 'signal'
@@ -150,12 +176,12 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
           : platform === 'whatsapp'
             ? 'web_shell'
             : 'adapter',
-      })
+      }, role, selectedTeamId))
       setAccountId(account.id)
       setLinkingPlatform(platform)
       setStep('linking')
       // 新账号此刻还不在列表里，补一次
-      setAccounts((await api.listAccounts()).accounts)
+      await onAccountsChanged((await api.listAccounts()).accounts)
       if (platform === 'signal' || platform === 'whatsapp') {
         setActivePlatform(platform)
         setActiveAccount(account.id)
@@ -171,6 +197,9 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
   const suggested = `${PLATFORM_LABEL[platform] ?? platform} ${new Date().getMonth() + 1}`
   const canCreate = PLATFORMS.find(p => p.key === platform)?.ready === true
     && name.trim() !== ''
+    && role !== 'auditor'
+    && creationContext !== null
+    && (!creationContext.requiresTeamSelection || selectedTeamId !== null)
     && !(platform === 'whatsapp' && whatsAppMode === 'cloud_api' && cloudAvailable !== true)
 
   return (
@@ -282,6 +311,37 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
                 只用于在这里区分多个账号，跟平台上的昵称无关
               </div>
 
+              {(role === 'manager' || role === 'owner') && creationContext && (
+                <div style={{ marginTop: theme.space.md }}>
+                  <label style={{
+                    display: 'block', fontSize: theme.font.size.sm,
+                    color: theme.color.textMuted, marginBottom: theme.space.xs,
+                  }}>
+                    所属团队
+                  </label>
+                  <select
+                    aria-label="所属团队"
+                    value={selectedTeamId ?? ''}
+                    onChange={event => setSelectedTeamId(event.target.value || null)}
+                    style={{
+                      width: '100%', padding: '10px 12px', fontSize: theme.font.size.md,
+                      border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.lg,
+                      background: theme.color.white, color: theme.color.text,
+                    }}
+                  >
+                    {creationContext.allowsUngrouped && <option value="">未分组</option>}
+                    {creationContext.selectableTeams.map(team => (
+                      <option key={team.id} value={team.id}>{team.name}</option>
+                    ))}
+                  </select>
+                  {creationContext.requiresTeamSelection && creationContext.selectableTeams.length === 0 && (
+                    <div role="alert" style={{ color: theme.color.danger, fontSize: theme.font.size.xs, marginTop: 6 }}>
+                      当前没有可用于创建账号的启用团队
+                    </div>
+                  )}
+                </div>
+              )}
+
               {platform === 'signal' && (
                 <div style={{
                   marginTop: theme.space.md, padding: theme.space.md,
@@ -376,6 +436,24 @@ export function AddAccountDialog({ initialPlatform, onClose }: {
       </div>
     </div>
   )
+}
+
+export function accountCreationInputForRole(
+  input: Omit<CreateAccountInput, 'teamId'>,
+  role: Role,
+  teamId: string | null,
+): CreateAccountInput {
+  return role === 'manager' || role === 'owner' ? { ...input, teamId } : input
+}
+
+export function initialCreationTeam(role: Role, context: AccountCreationContext): string | null {
+  if (role !== 'manager' && role !== 'owner') return null
+  if (role === 'owner' && context.allowsUngrouped && !context.requiresTeamSelection) return null
+  return context.selectableTeams[0]?.id ?? null
+}
+
+function message(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback
 }
 
 function WhatsAppCloudStep({ status, error, onClose }: {

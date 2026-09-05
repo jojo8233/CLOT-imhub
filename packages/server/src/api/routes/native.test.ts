@@ -67,7 +67,7 @@ function actorRepo(): ActorRepo {
   return {
     findUser: async (userId) => {
       const role = roles.get(userId)
-      return role ? { id: userId, role, disabled_at: null } : null
+      return role ? { id: userId, role, disabled_at: null, session_version: 1 } : null
     },
     findMemberships: async (userId) => userId === managerId
       ? [{ team_id: teamId, is_lead: true }]
@@ -154,9 +154,9 @@ beforeEach(async () => {
       publish,
     },
   }, new (await import('../ws.js')).WsHub(), { actorRepo: actorRepo() })
-  agentToken = await signSession({ userId: agentId }, process.env.JWT_SECRET!)
-  managerToken = await signSession({ userId: managerId }, process.env.JWT_SECRET!)
-  auditorToken = await signSession({ userId: auditorId }, process.env.JWT_SECRET!)
+  agentToken = await signSession({ userId: agentId, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  managerToken = await signSession({ userId: managerId, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  auditorToken = await signSession({ userId: auditorId, sessionVersion: 1 }, process.env.JWT_SECRET!)
   const grantResponse = await app.inject({
     method: 'POST',
     url: `/api/accounts/${accountId}/native-control-grant`,

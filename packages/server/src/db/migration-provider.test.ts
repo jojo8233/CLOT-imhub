@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import * as path from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createMigrationProvider } from './migration-provider.js'
 
@@ -31,5 +32,13 @@ describe('createMigrationProvider', () => {
 
     expect(Object.keys(migrations)).toEqual(['0001_valid'])
     expect(migrations['0001_valid']?.up).toBeTypeOf('function')
+  })
+
+  it('按文件名顺序发现当前全部生产 migration', async () => {
+    const here = path.dirname(fileURLToPath(import.meta.url))
+    const migrations = await createMigrationProvider(path.join(here, 'migrations')).getMigrations()
+
+    expect(Object.keys(migrations).at(-1)).toBe('0016_organization_admin')
+    expect(Object.keys(migrations)).toHaveLength(16)
   })
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, getCurrentUser, NetworkError } from '../api/client.js'
+import { api, getCurrentUser, NetworkError, type AccountRow } from '../api/client.js'
 import { isChatPlatform, type ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
@@ -12,22 +12,23 @@ import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
 /** 在线是唯一"一切正常"的状态，只有它配得上柠檬绿；其余一律用各自的告警色 */
 const online2 = (status: string): boolean => status === 'connected'
 
-export function AccountsView({ onOpenChat, onAddAccount, onRelink }: {
+export function AccountsView({ onOpenChat, onAddAccount, onRelink, onAccountsChanged, canAddAccount }: {
   onOpenChat(): void
   onAddAccount(): void
+  canAddAccount: boolean
   onRelink(account: { id: string; platform: ChatPlatform; displayName: string }): void
+  onAccountsChanged(accounts: AccountRow[]): Promise<void>
 }) {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const setActivePlatform = useStore(s => s.setActivePlatform)
   const setActiveAccount = useStore(s => s.setActiveAccount)
-  const setAccounts = useStore(s => s.setAccounts)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<{ id: string; name: string; platform: string } | null>(null)
   const currentUser = getCurrentUser()
 
   async function refresh(): Promise<void> {
-    try { setAccounts((await api.listAccounts()).accounts) } catch { /* 下次进页面会重拉 */ }
+    try { await onAccountsChanged((await api.listAccounts()).accounts) } catch { /* 下次进页面会重拉 */ }
   }
 
   const online = accounts.filter(a => a.status === 'connected').length
@@ -44,7 +45,7 @@ export function AccountsView({ onOpenChat, onAddAccount, onRelink }: {
             {accounts.length} 个账号，{online} 个在线
           </div>
         </div>
-        <button
+        {canAddAccount && <button
           onClick={onAddAccount}
           className="ih-btn"
           style={{
@@ -54,7 +55,7 @@ export function AccountsView({ onOpenChat, onAddAccount, onRelink }: {
           }}
         >
           + 添加账号
-        </button>
+        </button>}
       </div>
 
       {accounts.length === 0 ? (

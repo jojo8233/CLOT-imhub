@@ -7,6 +7,7 @@
 import Redis from 'ioredis'
 import { config } from '../config.js'
 import { db } from './client.js'
+import { organizationPreflight } from './organization-preflight.js'
 
 type Result = { ok: boolean; label: string; detail: string }
 
@@ -21,6 +22,19 @@ try {
   check(true, 'PostgreSQL', `已连接，users 表有 ${String(r.n)} 行`)
 } catch (err) {
   check(false, 'PostgreSQL', `连不上：${err instanceof Error ? err.message : String(err)}`)
+}
+
+try {
+  const report = await organizationPreflight(db)
+  check(
+    report.ok,
+    '组织结构',
+    report.ok
+      ? '唯一 owner、团队主管、成员与账号归属一致'
+      : report.issues.map(issue => `${issue.code}=${issue.count}`).join('、'),
+  )
+} catch {
+  check(false, '组织结构', '检查失败；未输出组织标识或数据库错误明细')
 }
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 1, lazyConnect: true })

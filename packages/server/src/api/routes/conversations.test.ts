@@ -26,9 +26,9 @@ let AUDITOR_ID: string
 function fakeActorRepo(): ActorRepo {
   return {
     findUser: async (userId) => {
-      if (userId === OWNER_ID) return { id: OWNER_ID, role: 'owner' as Role, disabled_at: null }
-      if (userId === OUTSIDER_ID) return { id: OUTSIDER_ID, role: 'agent' as Role, disabled_at: null }
-      if (userId === AUDITOR_ID) return { id: AUDITOR_ID, role: 'auditor' as Role, disabled_at: null }
+      if (userId === OWNER_ID) return { id: OWNER_ID, role: 'owner' as Role, disabled_at: null, session_version: 1 }
+      if (userId === OUTSIDER_ID) return { id: OUTSIDER_ID, role: 'agent' as Role, disabled_at: null, session_version: 1 }
+      if (userId === AUDITOR_ID) return { id: AUDITOR_ID, role: 'auditor' as Role, disabled_at: null, session_version: 1 }
       return null
     },
     findMemberships: async () => [],
@@ -79,9 +79,9 @@ beforeEach(async () => {
   ;({ buildServer } = await import('../server.js'))
   ;({ signSession } = await import('../../auth/session.js'))
   app = await buildServer(deps, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
-  ownerToken = await signSession({ userId: OWNER_ID }, process.env.JWT_SECRET!)
-  outsiderToken = await signSession({ userId: OUTSIDER_ID }, process.env.JWT_SECRET!)
-  auditorToken = await signSession({ userId: AUDITOR_ID }, process.env.JWT_SECRET!)
+  ownerToken = await signSession({ userId: OWNER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  outsiderToken = await signSession({ userId: OUTSIDER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
+  auditorToken = await signSession({ userId: AUDITOR_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
 })
 
 afterAll(async () => {
