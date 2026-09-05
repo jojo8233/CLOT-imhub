@@ -12,9 +12,10 @@ import { Chip, EmptyHint, PlatformIcon, StatusDot, relativeTime } from './ui.js'
 /** 在线是唯一"一切正常"的状态，只有它配得上柠檬绿；其余一律用各自的告警色 */
 const online2 = (status: string): boolean => status === 'connected'
 
-export function AccountsView({ onOpenChat, onAddAccount, onRelink, onAccountsChanged }: {
+export function AccountsView({ onOpenChat, onAddAccount, onRelink, onAccountsChanged, canAddAccount }: {
   onOpenChat(): void
   onAddAccount(): void
+  canAddAccount: boolean
   onRelink(account: { id: string; platform: ChatPlatform; displayName: string }): void
   onAccountsChanged(accounts: AccountRow[]): Promise<void>
 }) {
@@ -44,7 +45,7 @@ export function AccountsView({ onOpenChat, onAddAccount, onRelink, onAccountsCha
             {accounts.length} 个账号，{online} 个在线
           </div>
         </div>
-        <button
+        {canAddAccount && <button
           onClick={onAddAccount}
           className="ih-btn"
           style={{
@@ -54,7 +55,7 @@ export function AccountsView({ onOpenChat, onAddAccount, onRelink, onAccountsCha
           }}
         >
           + 添加账号
-        </button>
+        </button>}
       </div>
 
       {accounts.length === 0 ? (

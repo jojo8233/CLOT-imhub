@@ -95,10 +95,10 @@ describe('admin account routes', () => {
       platform: 'signal', owner_user_id: ids.get('agent') ?? '', team_id: teamId,
       display_name: 'Searchable Signal', status: 'connected', connection_mode: 'native_desktop',
     }).returning('id').executeTakeFirstOrThrow()).id
-    await db.insertInto('desktop_cleanup_tasks').values({
+    const taskId = (await db.insertInto('desktop_cleanup_tasks').values({
       installation_id: null, account_id: accountId, mode: 'manual_required',
       reason: 'signal_official_unlink', state: 'pending',
-    }).execute()
+    }).returning('id').executeTakeFirstOrThrow()).id
     expect((await app.inject({
       method: 'POST', url: '/api/admin/accounts/search', headers: auth('manager'), payload: {},
     })).statusCode).toBe(403)
@@ -108,7 +108,12 @@ describe('admin account routes', () => {
     })
     expect(result.statusCode).toBe(200)
     expect(result.json()).toMatchObject({
-      items: [{ id: accountId, cleanupState: 'manual_required', pendingCleanupCount: 1 }],
+      items: [{
+        id: accountId,
+        cleanupState: 'manual_required',
+        pendingCleanupCount: 1,
+        manualCleanupTaskIds: [taskId],
+      }],
     })
   })
 

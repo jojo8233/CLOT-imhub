@@ -78,6 +78,8 @@ export interface AdminAccount {
   teamId: string | null
   cleanupState: AdminCleanupState
   pendingCleanupCount: number
+  /** 仅供 owner 完成人工清理确认；任务 ID 不在界面中展示。 */
+  manualCleanupTaskIds: string[]
   revision: number
 }
 
@@ -208,4 +210,3 @@ export interface AdminOwnerTransferRequest {
   operationToken: string
   currentPassword: string
 }
-

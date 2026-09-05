@@ -21,6 +21,7 @@ import { InitialPasswordPage } from './components/InitialPasswordPage.js'
 import { ChangePasswordDialog } from './components/ChangePasswordDialog.js'
 import { CustomerProfileLibraryView } from './components/CustomerProfileLibraryView.js'
 import { KeywordAlertCenterView } from './components/KeywordAlertCenterView.js'
+import { OrganizationAdminView } from './components/OrganizationAdminView.js'
 import type { ChatPlatform } from './navigation.js'
 import { theme } from './theme.js'
 import { BootstrapRetryController } from './bootstrap-retry.js'
@@ -136,6 +137,10 @@ export function App() {
   }, [])
 
   useEffect(() => clearKeywordAlertToastTimer, [clearKeywordAlertToastTimer])
+
+  useEffect(() => {
+    if (view === 'organizationAdmin' && user?.role !== 'owner') setView('chat')
+  }, [user?.role, view])
 
   // HTTP 列表响应可能比期间收到的 WS 事件更旧。若请求期间有消息
   // 变更，重拉一次；只有一份在途加载有权落入 store，避免旧快照覆盖新增/编辑/删除/译文。
@@ -516,7 +521,9 @@ export function App() {
           currentUserName={user?.displayName ?? null}
           onLogout={() => void handleLogout()}
           onChangePassword={() => setChangePasswordOpen(true)}
+          canAddAccount={user?.role !== 'auditor'}
           onAddAccount={(platform) => {
+            if (user?.role === 'auditor') return
             setAddPlatform(platform)
             setAddOpen(true)
           }}
@@ -538,9 +545,11 @@ export function App() {
             keywordAlertCount={keywordAlertCount}
             onSelectView={setView}
             onAddAccount={() => {
+              if (user?.role === 'auditor') return
               setAddPlatform(activePlatform)
               setAddOpen(true)
             }}
+            role={user?.role ?? 'agent'}
             compact={rowWidth > 0 && functionCenterCompact(rowWidth)}
           />
 
@@ -556,9 +565,11 @@ export function App() {
           </div>
           {view === 'accounts' && (
             <AccountsView
+              canAddAccount={user?.role !== 'auditor'}
               onOpenChat={() => setView('chat')}
               onRelink={setRelinkAccount}
               onAddAccount={() => {
+                if (user?.role === 'auditor') return
                 setAddPlatform(activePlatform)
                 setAddOpen(true)
               }}
@@ -582,6 +593,9 @@ export function App() {
                 }}
               />
             </div>
+          )}
+          {view === 'organizationAdmin' && user?.role === 'owner' && (
+            <OrganizationAdminView role={user.role} ownerUserId={user.id} />
           )}
         </div>
 
@@ -612,6 +626,7 @@ export function App() {
       {addOpen && (
         <AddAccountDialog
           initialPlatform={addPlatform}
+          role={user?.role ?? 'agent'}
           onClose={() => setAddOpen(false)}
           onAccountsChanged={accounts => user
             ? syncOwnedLocalMounts(accounts, user, authGenerationRef.current)

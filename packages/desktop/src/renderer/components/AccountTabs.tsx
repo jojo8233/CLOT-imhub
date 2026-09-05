@@ -9,9 +9,10 @@ interface Props {
   onLogout(): void
   onChangePassword(): void
   onAddAccount(platform: ChatPlatform): void
+  canAddAccount: boolean
 }
 
-export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAddAccount }: Props) {
+export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAddAccount, canAddAccount }: Props) {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const activePlatform = useStore(s => s.activePlatform)
@@ -66,7 +67,7 @@ export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAdd
               badge={countOf(account.id)}
             />
           ))}
-          <button
+          {canAddAccount && <button
             className="ih-tab"
             onClick={() => onAddAccount(activePlatform)}
             title={`添加 ${PLATFORM_LABEL[activePlatform]} 账号`}
@@ -78,7 +79,7 @@ export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAdd
             }}
           >
             +
-          </button>
+          </button>}
         </div>
       </div>
 

@@ -335,7 +335,7 @@ export async function loadAdminAccount(
   ]).where('id', '=', accountId).executeTakeFirst()
   if (!row) return null
   const tasks = await db.selectFrom('desktop_cleanup_tasks')
-    .select(['mode', 'state'])
+    .select(['id', 'mode', 'state'])
     .where('account_id', '=', accountId)
     .execute()
   const pending = tasks.filter(task => task.state === 'pending')
@@ -356,6 +356,10 @@ export async function loadAdminAccount(
     teamId: row.team_id,
     cleanupState,
     pendingCleanupCount: pending.length,
+    manualCleanupTaskIds: pending
+      .filter(task => task.mode === 'manual_required')
+      .map(task => task.id)
+      .sort(),
     revision: row.revision,
   }
 }

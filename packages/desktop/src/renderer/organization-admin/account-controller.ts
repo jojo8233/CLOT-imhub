@@ -175,6 +175,8 @@ function currentAdminAccountSnapshot(error: HttpError): AdminAccount | null {
     || (typeof value.teamId !== 'string' && value.teamId !== null)
     || !isCleanupState(value.cleanupState)
     || typeof value.pendingCleanupCount !== 'number'
+    || !Array.isArray(value.manualCleanupTaskIds)
+    || !value.manualCleanupTaskIds.every(taskId => typeof taskId === 'string')
     || typeof value.revision !== 'number') return null
   return {
     id: value.id,
@@ -186,6 +188,7 @@ function currentAdminAccountSnapshot(error: HttpError): AdminAccount | null {
     teamId: value.teamId,
     cleanupState: value.cleanupState,
     pendingCleanupCount: value.pendingCleanupCount,
+    manualCleanupTaskIds: value.manualCleanupTaskIds,
     revision: value.revision,
   }
 }

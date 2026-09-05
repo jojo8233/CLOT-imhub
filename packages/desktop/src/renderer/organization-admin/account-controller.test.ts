@@ -6,7 +6,7 @@ import { AccountController } from './account-controller.js'
 const account = (revision = 1): AdminAccount => ({
   id: 'account-1', platform: 'telegram', connectionMode: 'adapter', displayName: 'Telegram',
   status: 'connected', ownerUserId: 'user-1', teamId: null, cleanupState: 'not_required',
-  pendingCleanupCount: 0, revision,
+  pendingCleanupCount: 0, manualCleanupTaskIds: [], revision,
 })
 const preview: AdminMutationPreview = {
   operationToken: 'preview-token', expiresAt: '2026-09-05T01:00:00.000Z', summary: {},
