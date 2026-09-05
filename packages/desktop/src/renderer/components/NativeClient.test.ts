@@ -6,6 +6,8 @@ import {
   nativeAccountControllable,
   nativeAccountIdsToMount,
   nativeBridgeUserMessage,
+  nativeBridgeConnectionAfterControlState,
+  nativeBridgeCanAcceptCommand,
   ownedLocalAccountIds,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
@@ -38,6 +40,13 @@ describe('WhatsApp bridge failure presentation', () => {
     expect(reloadNativeWebview({ reload })).toBe(true)
     expect(reload).toHaveBeenCalledOnce()
     expect(reloadNativeWebview(null)).toBe(false)
+  })
+
+  it('does not let a later grant refresh erase a guest bridge failure', () => {
+    expect(nativeBridgeConnectionAfterControlState('ready', true)).toBe('failed')
+    expect(nativeBridgeConnectionAfterControlState('ready', false)).toBe('ready')
+    expect(nativeBridgeConnectionAfterControlState('blocked', false)).toBe('failed')
+    expect(nativeBridgeConnectionAfterControlState('waiting', false)).toBe('waiting')
   })
 })
 
@@ -182,6 +191,13 @@ describe('native webview composer focus', () => {
     expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.get-draft' })).toBe(false)
     expect(nativeWebviewNeedsComposerFocus('telegram', { type: 'composer.set-draft' })).toBe(false)
     expect(nativeWebviewNeedsComposerFocus('signal', { type: 'composer.send' })).toBe(false)
+  })
+
+  it('refuses every guest command once the bridge is no longer ready', () => {
+    expect(nativeBridgeCanAcceptCommand('ready')).toBe(true)
+    expect(nativeBridgeCanAcceptCommand('waiting')).toBe(false)
+    expect(nativeBridgeCanAcceptCommand('failed')).toBe(false)
+    expect(nativeBridgeCanAcceptCommand(undefined)).toBe(false)
   })
 })
 

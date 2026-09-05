@@ -35,6 +35,12 @@ import type {
   Role,
   WsServerEvent,
 } from '@im-hub/shared'
+import {
+  compiledInternalServerUrl,
+  compiledInternalWsUrl,
+  compiledReleaseChannel,
+  resolveRendererTransportOrigins,
+} from '../../internal-release-config.js'
 
 interface SessionBridge {
   save(payload: { token: string; user: SessionUser }): Promise<boolean>
@@ -42,19 +48,23 @@ interface SessionBridge {
   clear(): Promise<void>
 }
 
-/**
- * preload 注入的配置。取不到时降级到默认值而不是抛异常——
- * 这一行跑在模块顶层，抛出去会让 React 连挂载都来不及，
- * 结果是一片白屏加零提示，排查起来极其痛苦。
- */
 const injected = (globalThis as {
   imHub?: { serverUrl?: string; wsUrl?: string; session?: SessionBridge }
 }).imHub
-if (!injected?.serverUrl) {
-  console.error('[client] preload 未注入 window.imHub，降级使用 http://localhost:4000。检查 sandbox 与 preload 路径。')
+const transportOrigins = resolveRendererTransportOrigins({
+  channel: compiledReleaseChannel(),
+  compiledServerUrl: compiledInternalServerUrl(),
+  compiledWsUrl: compiledInternalWsUrl(),
+  injectedServerUrl: injected?.serverUrl,
+  injectedWsUrl: injected?.wsUrl,
+  developmentServerUrl: import.meta.env.DEV ? 'http://localhost:4000' : null,
+  developmentWsUrl: import.meta.env.DEV ? 'ws://localhost:4000' : null,
+})
+if (!transportOrigins.serverUrl || !transportOrigins.wsUrl) {
+  console.error('[client] 桌面服务配置不可用，请重新安装正确的公司内部构建。')
 }
-const BASE = injected?.serverUrl ?? 'http://localhost:4000'
-const WS_BASE = injected?.wsUrl ?? 'ws://localhost:4000'
+const BASE = transportOrigins.serverUrl
+const WS_BASE = transportOrigins.wsUrl
 // 可能为 undefined（比如以后有非 Electron 的渲染宿主）。所有用法都做了空值兜底：
 // 拿不到就是"这次不持久化"，不是崩溃。
 const initialSessionBridge = injected?.session
@@ -180,6 +190,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   // 请求发出时的会话归属不能在响应回来时重新猜。A 用户的迟到
   // 401 不得清掉期间已登录的 B 用户 token。
   const requestToken = token
+  if (!BASE) throw new NetworkError(new Error('desktop service configuration unavailable'))
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -643,7 +654,8 @@ export const api = {
   connectWs(onEvent: (
     e: WsServerEvent,
     context: { sessionSuperseded: boolean },
-  ) => void): WebSocket {
+  ) => void): WebSocket | null {
+    if (!WS_BASE) return null
     const connectionToken = token
     const ws = new WebSocket(websocketEndpoint(WS_BASE))
     ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: connectionToken }))

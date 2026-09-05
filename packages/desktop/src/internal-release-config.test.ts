@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   desktopServerUrl,
   desktopWebSocketUrl,
+  resolveRendererTransportOrigins,
   resolveInternalReleaseBuild,
 } from './internal-release-config.js'
 
@@ -51,5 +52,49 @@ describe('internal desktop release config', () => {
     expect(desktopWebSocketUrl(
       'wss://imhub.example.test', 'http://override.invalid',
     )).toBe('wss://imhub.example.test')
+  })
+
+  it('fails closed when an internal renderer is missing or receives mismatched preload origins', () => {
+    const compiled = {
+      channel: 'internal-unsigned' as const,
+      compiledServerUrl: 'https://imhub.example.test',
+      compiledWsUrl: 'wss://imhub.example.test',
+      developmentServerUrl: null,
+      developmentWsUrl: null,
+    }
+
+    expect(resolveRendererTransportOrigins({
+      ...compiled,
+      injectedServerUrl: 'https://imhub.example.test',
+      injectedWsUrl: 'wss://imhub.example.test',
+    })).toEqual({
+      serverUrl: 'https://imhub.example.test',
+      wsUrl: 'wss://imhub.example.test',
+    })
+    expect(resolveRendererTransportOrigins({
+      ...compiled,
+      injectedServerUrl: undefined,
+      injectedWsUrl: undefined,
+    })).toEqual({ serverUrl: null, wsUrl: null })
+    expect(resolveRendererTransportOrigins({
+      ...compiled,
+      injectedServerUrl: 'http://localhost:4000',
+      injectedWsUrl: 'ws://localhost:4000',
+    })).toEqual({ serverUrl: null, wsUrl: null })
+  })
+
+  it('allows explicitly supplied localhost origins only in development', () => {
+    expect(resolveRendererTransportOrigins({
+      channel: 'development',
+      compiledServerUrl: null,
+      compiledWsUrl: null,
+      injectedServerUrl: undefined,
+      injectedWsUrl: undefined,
+      developmentServerUrl: 'http://localhost:4000',
+      developmentWsUrl: 'ws://localhost:4000',
+    })).toEqual({
+      serverUrl: 'http://localhost:4000',
+      wsUrl: 'ws://localhost:4000',
+    })
   })
 })

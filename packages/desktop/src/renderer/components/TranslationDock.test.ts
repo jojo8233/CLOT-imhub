@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import {
+  nativeCommandCanContinue,
   nativeConnectionUnavailableReason,
   sendCurrentNativeDraft,
   shouldTranslateOnKeyDown,
@@ -15,6 +16,27 @@ describe('TranslationDock native bridge gate', () => {
     expect(nativeConnectionUnavailableReason('whatsapp', 'loading', null))
       .toBe('等待 WhatsApp 原生输入桥接')
     expect(nativeConnectionUnavailableReason('whatsapp', 'ready', null)).toBeNull()
+  })
+
+  it('rechecks bridge health after every asynchronous boundary', () => {
+    const context = {
+      accountId: 'account-1', platformConversationId: 'chat-1', contextRevision: 7,
+    }
+    const state = (connection: 'ready' | 'failed') => ({
+      activeAccountId: 'account-1',
+      nativeBridgeByAccount: {
+        'account-1': {
+          connection,
+          context: {
+            platformConversationId: 'chat-1',
+            contextRevision: 7,
+          },
+        },
+      },
+    })
+
+    expect(nativeCommandCanContinue(context, state('ready'))).toBe(true)
+    expect(nativeCommandCanContinue(context, state('failed'))).toBe(false)
   })
 })
 

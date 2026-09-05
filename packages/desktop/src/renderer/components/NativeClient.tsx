@@ -21,7 +21,7 @@ import {
   registerNativeCommandTarget,
 } from '../native-bridge.js'
 import { nativeControlGrantIsUsable } from '../native-control-grant.js'
-import { useStore } from '../store.js'
+import { useStore, type NativeBridgeConnection } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { whatsAppProductSurface, whatsAppWebAccount } from '../whatsapp-product-policy.js'
 import { EmptyHint, IconButton } from './ui.js'
@@ -82,6 +82,12 @@ export function nativeWebviewNeedsComposerFocus(
   return platform === 'whatsapp' && command.type === 'composer.send'
 }
 
+export function nativeBridgeCanAcceptCommand(
+  connection: NativeBridgeConnection | undefined,
+): boolean {
+  return connection === 'ready'
+}
+
 export function nativeBridgeUserMessage(
   platform: string,
   event: { code: string; message: string },
@@ -96,6 +102,14 @@ export function nativeBridgeUserMessage(
     return 'WhatsApp 页面连接暂时不可用，请重新加载后重试'
   }
   return event.message
+}
+
+export function nativeBridgeConnectionAfterControlState(
+  controlState: NativeControlStateUpdate['state'],
+  guestBridgeFailed: boolean,
+): 'waiting' | 'ready' | 'failed' {
+  if (guestBridgeFailed || controlState === 'blocked') return 'failed'
+  return controlState === 'ready' ? 'ready' : 'waiting'
 }
 
 export function reloadNativeWebview(view: { reload(): void } | null): boolean {
@@ -933,6 +947,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     let provisionGeneration = 0
     let readyHandled = false
     let hasUsableGrant = false
+    let guestBridgeFailed = false
     let observedIdentity: string | null = null
     let originProbeTimer: ReturnType<typeof setInterval> | null = null
 
@@ -944,16 +959,20 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
       hasUsableGrant = nativeControlGrantIsUsable(control, Date.now())
-      if (control.state === 'ready') {
+      const connection = nativeBridgeConnectionAfterControlState(control.state, guestBridgeFailed)
+      if (connection === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
         return
       }
+      // bridge.error 是 guest 自身的健康状态；grant 刷新只能更新授权，不能假装
+      // 页面桥接已经恢复。只有下一次 bridge.ready 或页面重载可以解除这个 latch。
+      if (guestBridgeFailed) return
       const message = control.message ?? '账号控制尚未就绪'
       setControlError(control.state === 'blocked' ? message : null)
       useStore.getState().setNativeBridgeConnection(
         accountId,
-        control.state === 'blocked' ? 'failed' : 'waiting',
+        connection,
         message,
       )
     }
@@ -1003,6 +1022,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
       setDetail('')
       setControlError(null)
       hasUsableGrant = false
+      guestBridgeFailed = false
       observedIdentity = null
       lastContextRevisionRef.current = -1
       useStore.getState().setNativeAccountIdentity(accountId, null)
@@ -1057,6 +1077,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     const handleEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
+        guestBridgeFailed = false
         setControlError(null)
         const connection = recoveredNativeBridgeConnection(platform, hasUsableGrant, observedIdentity)
         useStore.getState().setNativeBridgeConnection(accountId, connection, connection === 'waiting'
@@ -1086,6 +1107,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
       }
       if (event.type === 'bridge.error') {
         const message = nativeBridgeUserMessage(platform, event)
+        guestBridgeFailed = true
         setControlError(message)
         useStore.getState().setNativeBridgeConnection(accountId, 'failed', message)
         return
@@ -1195,6 +1217,11 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
       send: (_channel: string, command: unknown): Promise<void> => {
         const target = currentTarget()
         if (!target) return Promise.reject(new Error('原生客户端尚未登记'))
+        if (!nativeBridgeCanAcceptCommand(
+          useStore.getState().nativeBridgeByAccount[accountId]?.connection,
+        )) {
+          return Promise.reject(new Error('原生客户端桥接尚未就绪'))
+        }
         const hostCommand = command as NativeHostCommand
         // TranslationDock 位于宿主 renderer；用户点击按钮后原生焦点也停在宿主。
         // 先聚焦当前 WhatsApp webview，再跨 IPC 交给主进程做第二次 focus 与授权校验。

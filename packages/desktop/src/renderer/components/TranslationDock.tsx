@@ -39,6 +39,29 @@ export function nativeConnectionUnavailableReason(
   return null
 }
 
+interface NativeCommandContinuationState {
+  activeAccountId: string | null
+  nativeBridgeByAccount: Partial<Record<string, {
+    connection: NativeBridgeConnection
+    context: {
+      platformConversationId: string
+      contextRevision: number
+    } | null
+  }>>
+}
+
+export function nativeCommandCanContinue(
+  captured: NativeCommandContext,
+  state: NativeCommandContinuationState,
+): boolean {
+  const bridge = state.nativeBridgeByAccount[captured.accountId]
+  const current = bridge?.context
+  return state.activeAccountId === captured.accountId
+    && bridge?.connection === 'ready'
+    && current?.platformConversationId === captured.platformConversationId
+    && current.contextRevision === captured.contextRevision
+}
+
 /** 发送事实始终取自原生输入框；外壳缓存的 translatedText 只用于门禁。 */
 interface SendCurrentNativeDraftOptions {
   canContinue?: () => boolean
@@ -190,11 +213,7 @@ export function TranslationDock() {
   }
 
   function contextStillCurrent(captured: NativeCommandContext): boolean {
-    const state = useStore.getState()
-    const current = state.nativeBridgeByAccount[captured.accountId]?.context
-    return state.activeAccountId === captured.accountId
-      && current?.platformConversationId === captured.platformConversationId
-      && current.contextRevision === captured.contextRevision
+    return nativeCommandCanContinue(captured, useStore.getState())
   }
 
   function continueOrReset(captured: NativeCommandContext, draftKey: string): boolean {
