@@ -84,8 +84,9 @@ export function nativeWebviewNeedsComposerFocus(
 
 export function nativeBridgeCanAcceptCommand(
   connection: NativeBridgeConnection | undefined,
+  guestBridgeFailed: boolean,
 ): boolean {
-  return connection === 'ready'
+  return !guestBridgeFailed && connection === 'ready'
 }
 
 export function nativeBridgeUserMessage(
@@ -110,6 +111,15 @@ export function nativeBridgeConnectionAfterControlState(
 ): 'waiting' | 'ready' | 'failed' {
   if (guestBridgeFailed || controlState === 'blocked') return 'failed'
   return controlState === 'ready' ? 'ready' : 'waiting'
+}
+
+export function nativeBridgeConnectionAfterReportFailure(
+  retryable: boolean,
+  guestBridgeFailed: boolean,
+  currentConnection: NativeBridgeConnection,
+): NativeBridgeConnection {
+  if (!retryable || guestBridgeFailed) return 'failed'
+  return currentConnection
 }
 
 export function reloadNativeWebview(view: { reload(): void } | null): boolean {
@@ -1194,11 +1204,21 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
           || status === 425
           || status === 429
           || status >= 500
-        useStore.getState().setNativeBridgeConnection(
-          accountId,
-          retryable ? 'ready' : 'failed',
-          retryable ? '消息回传失败，正在等待客户端重试' : '消息回传被服务端拒绝',
+        const currentConnection = useStore.getState()
+          .nativeBridgeByAccount[accountId]?.connection ?? 'failed'
+        const connection = nativeBridgeConnectionAfterReportFailure(
+          retryable,
+          guestBridgeFailed,
+          currentConnection,
         )
+        // 在途 report 不能覆盖更晚发生的 guest bridge.error 或其他失败状态。
+        if (!guestBridgeFailed && (!retryable || connection === 'ready')) {
+          useStore.getState().setNativeBridgeConnection(
+            accountId,
+            connection,
+            retryable ? '消息回传失败，正在等待客户端重试' : '消息回传被服务端拒绝',
+          )
+        }
         sendEventAck({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'event.ack',
@@ -1219,6 +1239,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
         if (!target) return Promise.reject(new Error('原生客户端尚未登记'))
         if (!nativeBridgeCanAcceptCommand(
           useStore.getState().nativeBridgeByAccount[accountId]?.connection,
+          guestBridgeFailed,
         )) {
           return Promise.reject(new Error('原生客户端桥接尚未就绪'))
         }

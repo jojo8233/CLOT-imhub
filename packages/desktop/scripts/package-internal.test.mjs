@@ -135,11 +135,26 @@ describe('internal desktop packaging', () => {
     }, [
       { license: 'MIT', name: 'react-dom', version: '19.1.1' },
       { license: 'MIT', name: 'electron', version: '33.4.11' },
+      { license: 'MIT', name: 'scheduler', version: '0.26.0' },
     ])
 
     expect(JSON.stringify(normalized)).not.toContain('/private/tmp')
     expect(JSON.stringify(normalized)).toContain('react-dom')
     expect(JSON.stringify(normalized)).toContain('electron')
+    expect(JSON.stringify(normalized)).toContain('scheduler')
+  })
+
+  it('rejects a bundled ReactDOM inventory without scheduler', () => {
+    expect(() => normalizeProductionLicenseInventory({
+      MIT: [
+        { name: 'qrcode', version: '1.5.4' },
+        { name: 'zustand', version: '5.0.8' },
+        { name: 'react', version: '19.1.1' },
+      ],
+    }, [
+      { license: 'MIT', name: 'react-dom', version: '19.1.1' },
+      { license: 'MIT', name: 'electron', version: '33.4.11' },
+    ])).toThrow('missing')
   })
 
   it('rejects server-only packages in the desktop license inventory', () => {
@@ -153,6 +168,7 @@ describe('internal desktop packaging', () => {
     }, [
       { license: 'MIT', name: 'react-dom', version: '19.1.1' },
       { license: 'MIT', name: 'electron', version: '33.4.11' },
+      { license: 'MIT', name: 'scheduler', version: '0.26.0' },
     ])).toThrow('server-only')
   })
 })

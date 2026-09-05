@@ -46,6 +46,8 @@
   "dependencies": {
     "@im-hub/shared": "workspace:*",
     "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
@@ -56,8 +58,6 @@
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
     "electron-builder": "26.15.3",
-    "electron-vite": "^2.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "electron-vite": "^2.3.0"
   }
 }

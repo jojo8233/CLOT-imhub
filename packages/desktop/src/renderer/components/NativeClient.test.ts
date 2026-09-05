@@ -8,6 +8,7 @@ import {
   nativeBridgeUserMessage,
   nativeBridgeConnectionAfterControlState,
   nativeBridgeCanAcceptCommand,
+  nativeBridgeConnectionAfterReportFailure,
   ownedLocalAccountIds,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
@@ -47,6 +48,13 @@ describe('WhatsApp bridge failure presentation', () => {
     expect(nativeBridgeConnectionAfterControlState('ready', false)).toBe('ready')
     expect(nativeBridgeConnectionAfterControlState('blocked', false)).toBe('failed')
     expect(nativeBridgeConnectionAfterControlState('waiting', false)).toBe('waiting')
+  })
+
+  it('does not let a late retryable report result erase a guest bridge failure', () => {
+    expect(nativeBridgeConnectionAfterReportFailure(true, true, 'ready')).toBe('failed')
+    expect(nativeBridgeConnectionAfterReportFailure(true, false, 'failed')).toBe('failed')
+    expect(nativeBridgeConnectionAfterReportFailure(true, false, 'ready')).toBe('ready')
+    expect(nativeBridgeConnectionAfterReportFailure(false, false, 'ready')).toBe('failed')
   })
 })
 
@@ -194,10 +202,11 @@ describe('native webview composer focus', () => {
   })
 
   it('refuses every guest command once the bridge is no longer ready', () => {
-    expect(nativeBridgeCanAcceptCommand('ready')).toBe(true)
-    expect(nativeBridgeCanAcceptCommand('waiting')).toBe(false)
-    expect(nativeBridgeCanAcceptCommand('failed')).toBe(false)
-    expect(nativeBridgeCanAcceptCommand(undefined)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand('ready', false)).toBe(true)
+    expect(nativeBridgeCanAcceptCommand('ready', true)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand('waiting', false)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand('failed', false)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand(undefined, false)).toBe(false)
   })
 })
 

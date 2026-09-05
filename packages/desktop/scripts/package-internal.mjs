@@ -23,7 +23,14 @@ const requiredDesktopOutput = [
   'out/preload/index.mjs',
   'out/renderer/index.html',
 ]
-const requiredLicensePackages = ['electron', 'qrcode', 'react', 'react-dom', 'zustand']
+const requiredLicensePackages = [
+  'electron',
+  'qrcode',
+  'react',
+  'react-dom',
+  'scheduler',
+  'zustand',
+]
 
 const signingEnvironmentKeys = [
   'CSC_LINK',
@@ -275,7 +282,7 @@ function productionLicenseInventory(environment) {
 }
 
 function runtimeLicenseComponents() {
-  return ['electron', 'react', 'react-dom'].map((name) => {
+  return ['electron'].map((name) => {
     const metadata = JSON.parse(readFileSync(
       resolve(desktopRoot, 'node_modules', name, 'package.json'),
       'utf8',
@@ -393,6 +400,7 @@ export function packageInternal(target, environment = process.env) {
     for (const path of releasePaths) rmSync(path, { force: true })
     throw error
   } finally {
+    rmSync(attestationPath, { force: true })
     if (stagingDirectory) rmSync(stagingDirectory, { recursive: true, force: true })
   }
 }
