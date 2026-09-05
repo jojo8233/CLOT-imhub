@@ -2,6 +2,7 @@ import { accountsForPlatform, CHAT_PLATFORMS, type ChatPlatform } from '../navig
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, STATUS_LABEL, theme } from '../theme.js'
 import { Avatar, PlatformIcon, StatusDot } from './ui.js'
+import type { DesktopReleaseChannel } from '../../internal-release-config.js'
 
 /** 顶部两级导航：一级选平台，二级只展示该平台账号。 */
 interface Props {
@@ -10,9 +11,17 @@ interface Props {
   onChangePassword(): void
   onAddAccount(platform: ChatPlatform): void
   canAddAccount: boolean
+  releaseChannel: DesktopReleaseChannel
 }
 
-export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAddAccount, canAddAccount }: Props) {
+export function AccountTabs({
+  currentUserName,
+  onLogout,
+  onChangePassword,
+  onAddAccount,
+  canAddAccount,
+  releaseChannel,
+}: Props) {
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const activePlatform = useStore(s => s.activePlatform)
@@ -29,7 +38,7 @@ export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAdd
       height: 104, flexShrink: 0, display: 'flex', alignItems: 'stretch',
       borderBottom: `1px solid ${theme.color.border}`, background: theme.color.bg,
     }}>
-      <Brand />
+      <Brand releaseChannel={releaseChannel} />
 
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{
@@ -92,7 +101,7 @@ export function AccountTabs({ currentUserName, onLogout, onChangePassword, onAdd
   )
 }
 
-function Brand() {
+export function Brand({ releaseChannel }: { releaseChannel: DesktopReleaseChannel }) {
   return (
     <div style={{
       width: 190, flexShrink: 0, display: 'flex', alignItems: 'center',
@@ -110,6 +119,11 @@ function Brand() {
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: theme.font.size.lg, fontWeight: theme.font.weight.heavy, letterSpacing: -.3 }}>im-hub</div>
         <div style={{ fontSize: theme.font.size.xs, color: theme.color.textFaint }}>跨境客服工作台</div>
+        {releaseChannel === 'internal-unsigned' && (
+          <div style={{ fontSize: 9, color: theme.color.danger, whiteSpace: 'nowrap' }}>
+            内部未签名测试版
+          </div>
+        )}
       </div>
     </div>
   )

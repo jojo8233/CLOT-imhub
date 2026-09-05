@@ -19,6 +19,10 @@ import {
   DESKTOP_INSTALLATION_SYNC_CHANNEL,
   parseDesktopInstallationSyncPayload,
 } from '../desktop-installation-ipc.js'
+import {
+  compiledInternalServerUrl,
+  desktopServerUrl,
+} from '../internal-release-config.js'
 
 interface PendingNativeAccount {
   accountId: string
@@ -38,9 +42,11 @@ export interface ImHubWindowRuntimeOptions {
   sessionNamespace?: string
 }
 
-const nativeControlHost = new NativeControlHost(
-  process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
+const configuredServerUrl = desktopServerUrl(
+  compiledInternalServerUrl(),
+  process.env.IM_HUB_SERVER_URL,
 )
+const nativeControlHost = new NativeControlHost(configuredServerUrl)
 const pendingNativeAccountsByHost = new Map<number, PendingNativeAccount[]>()
 const trustedHostIds = new Set<number>()
 
@@ -129,7 +135,7 @@ function installRuntime(options: ImHubWindowRuntimeOptions): void {
       const stored = desktopInstallationStore?.load()
       if (!stored?.available) throw new Error('系统加密不可用，无法登记本机安装')
       desktopInstallationManager = new DesktopInstallationManager({
-        serverUrl: process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
+        serverUrl: configuredServerUrl,
         clientVersion: app.getVersion(),
         identity: stored.identity,
         fetch,

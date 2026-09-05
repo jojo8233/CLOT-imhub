@@ -7,6 +7,7 @@ import {
   onUnauthorized,
   shouldLogoutForSessionRevocation,
   UnauthorizedError,
+  websocketEndpoint,
 } from './client.js'
 
 function jsonResponse(body: unknown): Response {
@@ -35,6 +36,14 @@ function sessionFixture() {
   }
   return session
 }
+
+describe('desktop WebSocket endpoint', () => {
+  it('直接使用 preload 注入的 WSS origin，不从 HTTP 字符串替换协议', () => {
+    expect(websocketEndpoint('wss://imhub.example.test')).toBe(
+      'wss://imhub.example.test/ws',
+    )
+  })
+})
 
 describe('desktop auth session lifecycle', () => {
   afterEach(async () => {

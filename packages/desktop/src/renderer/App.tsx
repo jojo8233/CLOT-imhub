@@ -521,6 +521,7 @@ export function App() {
       }}>
         <AccountTabs
           currentUserName={user?.displayName ?? null}
+          releaseChannel={window.imHub?.release?.channel ?? 'development'}
           onLogout={() => void handleLogout()}
           onChangePassword={() => setChangePasswordOpen(true)}
           canAddAccount={user?.role !== 'auditor'}

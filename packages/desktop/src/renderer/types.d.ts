@@ -50,6 +50,8 @@ declare global {
     imHub?: {
       platform?: string
       serverUrl?: string
+      wsUrl?: string
+      release?: { channel: 'development' | 'internal-unsigned' }
       session?: {
         save(payload: { token: string; user: AuthenticatedUser }): Promise<boolean>
         load(): Promise<{ token: string; user: AuthenticatedUser } | null>

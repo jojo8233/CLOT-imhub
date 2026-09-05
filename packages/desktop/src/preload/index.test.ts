@@ -22,6 +22,18 @@ vi.mock('electron', () => ({
 await import('./index.js')
 
 describe('trusted preload desktop installation bridge', () => {
+  it('向可信渲染进程注入开发期 HTTP、WS 与发行渠道', () => {
+    const bridge = electron.exposed as {
+      serverUrl: string
+      wsUrl: string
+      release: { channel: string }
+    }
+
+    expect(bridge.serverUrl).toBe('http://localhost:4000')
+    expect(bridge.wsUrl).toBe('ws://localhost:4000')
+    expect(bridge.release).toEqual({ channel: 'development' })
+  })
+
   it('只接受账号 id 列表，不暴露凭证、header、URL、路径或 partition', async () => {
     const bridge = electron.exposed as {
       desktopInstallation: { syncMounts(accountIds: string[]): Promise<unknown> }

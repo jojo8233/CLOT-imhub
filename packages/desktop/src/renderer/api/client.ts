@@ -47,11 +47,14 @@ interface SessionBridge {
  * 这一行跑在模块顶层，抛出去会让 React 连挂载都来不及，
  * 结果是一片白屏加零提示，排查起来极其痛苦。
  */
-const injected = (globalThis as { imHub?: { serverUrl?: string; session?: SessionBridge } }).imHub
+const injected = (globalThis as {
+  imHub?: { serverUrl?: string; wsUrl?: string; session?: SessionBridge }
+}).imHub
 if (!injected?.serverUrl) {
   console.error('[client] preload 未注入 window.imHub，降级使用 http://localhost:4000。检查 sandbox 与 preload 路径。')
 }
 const BASE = injected?.serverUrl ?? 'http://localhost:4000'
+const WS_BASE = injected?.wsUrl ?? 'ws://localhost:4000'
 // 可能为 undefined（比如以后有非 Electron 的渲染宿主）。所有用法都做了空值兜底：
 // 拿不到就是"这次不持久化"，不是崩溃。
 const initialSessionBridge = injected?.session
@@ -104,6 +107,10 @@ export class HttpError extends Error {
     super(message)
     this.name = 'HttpError'
   }
+}
+
+export function websocketEndpoint(wsOrigin: string): string {
+  return `${wsOrigin}/ws`
 }
 
 // 外壳 token 只活在这个模块级变量里，绝不落 localStorage/sessionStorage，也不打印到
@@ -638,7 +645,7 @@ export const api = {
     context: { sessionSuperseded: boolean },
   ) => void): WebSocket {
     const connectionToken = token
-    const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws`)
+    const ws = new WebSocket(websocketEndpoint(WS_BASE))
     ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: connectionToken }))
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data as string) as WsServerEvent | { type: 'auth_ok' }
