@@ -160,6 +160,7 @@ describe('DeviceService cleanup lifecycle', () => {
     expect(await service.enqueueOwnershipChange({
       accountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'whatsapp',
       connectionMode: 'web_shell',
     })).toEqual({
       pendingAutomatic: 1,
@@ -171,6 +172,7 @@ describe('DeviceService cleanup lifecycle', () => {
     expect(await service.enqueueOwnershipChange({
       accountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'whatsapp',
       connectionMode: 'web_shell',
     }, { allowManualCleanup: true })).toEqual({
       pendingAutomatic: 0,
@@ -191,6 +193,7 @@ describe('DeviceService cleanup lifecycle', () => {
     expect(await service.enqueueOwnershipChange({
       accountId: cloudAccountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'whatsapp',
       connectionMode: 'cloud_api',
     })).toEqual({
       pendingAutomatic: 0,
@@ -200,6 +203,7 @@ describe('DeviceService cleanup lifecycle', () => {
     expect(await service.enqueueOwnershipChange({
       accountId: adapterAccountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'telegram',
       connectionMode: 'adapter',
     })).toEqual({
       pendingAutomatic: 0,
@@ -217,6 +221,7 @@ describe('DeviceService cleanup lifecycle', () => {
     const enqueue = await service.enqueueOwnershipChange({
       accountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'whatsapp',
       connectionMode: 'web_shell',
     })
     expect(enqueue).toEqual({
@@ -254,6 +259,7 @@ describe('DeviceService cleanup lifecycle', () => {
     expect(await service.enqueueOwnershipChange({
       accountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'signal',
       connectionMode: 'native_desktop',
     })).toEqual({
       pendingAutomatic: 0,
@@ -276,6 +282,7 @@ describe('DeviceService cleanup lifecycle', () => {
     expect(await service.enqueueOwnershipChange({
       accountId,
       previousOwnerUserId: agentActor.userId,
+      platform: 'signal',
       connectionMode: 'native_desktop',
     })).toMatchObject({ manualRequired: 1 })
     expect(await db.selectFrom('desktop_cleanup_tasks')
@@ -283,6 +290,32 @@ describe('DeviceService cleanup lifecycle', () => {
       .where('account_id', '=', accountId)
       .executeTakeFirstOrThrow()).toEqual({
       installation_id: null,
+      mode: 'manual_required',
+      reason: 'signal_official_unlink',
+    })
+  })
+
+  it('兼容 adapter 模式的 Signal 也固定建立人工义务且不可自动领取', async () => {
+    const installationId = randomUUID()
+    await register(installationId)
+    const accountId = await createAccount(agentActor.userId, 'adapter')
+    await db.updateTable('accounts').set({ platform: 'signal' }).where('id', '=', accountId).execute()
+    await service.syncMounts(agentActor, { installationId, credential, accountIds: [accountId] })
+
+    expect(await service.enqueueOwnershipChange({
+      accountId,
+      previousOwnerUserId: agentActor.userId,
+      platform: 'signal',
+      connectionMode: 'adapter',
+    })).toEqual({
+      pendingAutomatic: 0,
+      manualRequired: 1,
+      unsupportedOnlineInstallations: 0,
+    })
+    expect((await service.claimAutomaticTasks(otherActor, { installationId, credential })).tasks)
+      .toEqual([])
+    expect(await db.selectFrom('desktop_cleanup_tasks').select(['mode', 'reason'])
+      .where('account_id', '=', accountId).executeTakeFirstOrThrow()).toEqual({
       mode: 'manual_required',
       reason: 'signal_official_unlink',
     })

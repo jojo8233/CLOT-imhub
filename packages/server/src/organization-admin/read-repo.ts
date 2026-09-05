@@ -335,7 +335,7 @@ export class OrganizationReadRepo {
     const ids = rows.map(row => row.id)
     if (ids.length === 0) return []
     const tasks = await this.db.selectFrom('desktop_cleanup_tasks')
-      .select(['id', 'account_id', 'mode', 'state'])
+      .select(['id', 'account_id', 'installation_id', 'mode', 'reason', 'state', 'created_at'])
       .where('account_id', 'in', ids)
       .execute()
     const byAccount = new Map<string, typeof tasks>()
@@ -364,10 +364,16 @@ export class OrganizationReadRepo {
         teamId: row.team_id,
         cleanupState,
         pendingCleanupCount: pending.length,
-        manualCleanupTaskIds: pending
+        manualCleanupTasks: pending
           .filter(task => task.mode === 'manual_required')
-          .map(task => task.id)
-          .sort(),
+          .sort((left, right) => left.created_at.getTime() - right.created_at.getTime()
+            || left.id.localeCompare(right.id))
+          .map(task => ({
+            id: task.id,
+            installationId: task.installation_id,
+            reason: task.reason,
+            createdAt: task.created_at.toISOString(),
+          })),
         revision: row.revision,
       }
     })

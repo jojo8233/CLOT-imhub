@@ -42,6 +42,7 @@ export class AccountController {
   private outcomeValue: MutationOutcome = 'idle'
   private previewGeneration = 0
   private activeExecution: Promise<AdminAccount | null> | null = null
+  private readonly listeners = new Set<() => void>()
 
   constructor(
     ownerIdentity: string,
@@ -55,6 +56,11 @@ export class AccountController {
       ...this.requests.snapshot(), preview: this.previewValue,
       draft: this.draftValue, outcome: this.outcomeValue,
     }
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
   }
 
   setOwnerIdentity(value: string): void {
@@ -111,6 +117,7 @@ export class AccountController {
       return Promise.reject(new Error('账号转移预览不可用'))
     }
     this.outcomeValue = 'executing'
+    this.notify()
     const operation = this.executeOnce(
       this.target.id,
       this.previewValue.operationToken,
@@ -138,16 +145,19 @@ export class AccountController {
       this.draftValue = null
       this.target = null
       this.outcomeValue = 'idle'
+      this.notify()
       return account
     } catch (error) {
       if (ownerIdentity !== this.requests.snapshot().ownerIdentity) return null
       if (error instanceof NetworkError) {
         this.previewValue = null
         this.outcomeValue = 'unknown'
+        this.notify()
         await this.requests.reload()
         this.draftValue = null
         this.target = null
         this.outcomeValue = 'idle'
+        this.notify()
         return null
       }
       if (error instanceof HttpError && error.code === 'REVISION_CONFLICT') {
@@ -158,8 +168,13 @@ export class AccountController {
       } else {
         this.outcomeValue = 'idle'
       }
+      this.notify()
       throw error
     }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener()
   }
 }
 
@@ -175,8 +190,8 @@ function currentAdminAccountSnapshot(error: HttpError): AdminAccount | null {
     || (typeof value.teamId !== 'string' && value.teamId !== null)
     || !isCleanupState(value.cleanupState)
     || typeof value.pendingCleanupCount !== 'number'
-    || !Array.isArray(value.manualCleanupTaskIds)
-    || !value.manualCleanupTaskIds.every(taskId => typeof taskId === 'string')
+    || !Array.isArray(value.manualCleanupTasks)
+    || !value.manualCleanupTasks.every(isManualCleanupTask)
     || typeof value.revision !== 'number') return null
   return {
     id: value.id,
@@ -188,9 +203,25 @@ function currentAdminAccountSnapshot(error: HttpError): AdminAccount | null {
     teamId: value.teamId,
     cleanupState: value.cleanupState,
     pendingCleanupCount: value.pendingCleanupCount,
-    manualCleanupTaskIds: value.manualCleanupTaskIds,
+    manualCleanupTasks: value.manualCleanupTasks.map(task => ({ ...task })),
     revision: value.revision,
   }
+}
+
+function isManualCleanupTask(value: unknown): value is AdminAccount['manualCleanupTasks'][number] {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
+    && 'id' in value
+    && typeof value.id === 'string'
+    && 'installationId' in value
+    && (typeof value.installationId === 'string' || value.installationId === null)
+    && 'reason' in value
+    && (value.reason === 'ownership_changed'
+      || value.reason === 'unsupported_client_override'
+      || value.reason === 'signal_official_unlink')
+    && 'createdAt' in value
+    && typeof value.createdAt === 'string'
 }
 
 function isAdminPlatform(value: unknown): value is AdminAccount['platform'] {

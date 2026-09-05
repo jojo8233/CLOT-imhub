@@ -108,7 +108,7 @@ describe('TeamAdminService manager change and archive', () => {
   it('换主管使用 preview token，并把旧主管在该组的账号转给唯一 owner', async () => {
     const accountId = await createAccount(firstManagerId, firstTeamId, 'Manager account')
     const preview = await teamService.previewManagerChange(owner, firstTeamId, {
-      managerUserId: secondManagerId, baseRevision: 1,
+      managerUserId: secondManagerId, baseRevision: 1, allowManualCleanup: false,
     })
     expect(preview).toMatchObject({ kind: 'preview', preview: { summary: { accountsTransferred: 1 } } })
     if (preview.kind !== 'preview') throw new Error('expected preview')
@@ -125,7 +125,7 @@ describe('TeamAdminService manager change and archive', () => {
     })
   })
 
-  it('换主管遇到在线旧版客户端时明确阻断并回滚清理待办', async () => {
+  it('换主管在 preview 默认阻断在线旧客户端，显式覆盖后绑定人工待办', async () => {
     const accountId = await createAccount(firstManagerId, firstTeamId, 'Legacy client account')
     const installationId = randomUUID()
     await db.insertInto('desktop_installations').values({
@@ -142,25 +142,42 @@ describe('TeamAdminService manager change and archive', () => {
       owner_user_id: firstManagerId,
       last_seen_at: NOW,
     }).execute()
+    expect(await teamService.previewManagerChange(owner, firstTeamId, {
+      managerUserId: secondManagerId, baseRevision: 1, allowManualCleanup: false,
+    })).toEqual({
+      kind: 'blocked', blockers: [{ code: 'CLIENT_UPDATE_REQUIRED', count: 1 }],
+    })
+    expect(await db.selectFrom('desktop_cleanup_tasks').select('id').execute()).toEqual([])
+
     const preview = await teamService.previewManagerChange(owner, firstTeamId, {
-      managerUserId: secondManagerId, baseRevision: 1,
+      managerUserId: secondManagerId, baseRevision: 1, allowManualCleanup: true,
     })
     if (preview.kind !== 'preview') throw new Error('expected preview')
+    expect(preview.preview.summary).toMatchObject({ cleanupAutomatic: 0, cleanupManual: 1 })
 
     await expect(teamService.executeManagerChange(owner, firstTeamId, {
       operationToken: preview.preview.operationToken,
-    })).rejects.toMatchObject({ code: 'CLIENT_UPDATE_REQUIRED' })
+    })).resolves.toMatchObject({ kind: 'changed' })
     expect(await db.selectFrom('accounts').select('owner_user_id')
       .where('id', '=', accountId).executeTakeFirstOrThrow())
-      .toEqual({ owner_user_id: firstManagerId })
-    expect(await db.selectFrom('desktop_cleanup_tasks').select('id').execute()).toEqual([])
+      .toEqual({ owner_user_id: owner.userId })
+    expect(await db.selectFrom('desktop_cleanup_tasks').select(['mode', 'reason']).execute())
+      .toEqual([{ mode: 'manual_required', reason: 'unsupported_client_override' }])
   })
 
   it('归档会转移主管账号、移除成员并把所有账号变为未分组，恢复必须指定 manager', async () => {
     const managerAccountId = await createAccount(firstManagerId, firstTeamId, 'Manager archive')
     const agentAccountId = await createAccount(agentId, firstTeamId, 'Agent archive')
-    const preview = await teamService.previewArchive(owner, firstTeamId, { baseRevision: 1 })
+    await db.insertInto('accounts').values({
+      platform: 'signal', owner_user_id: firstManagerId, team_id: firstTeamId,
+      display_name: 'Signal manager archive', status: 'connected',
+      connection_mode: 'native_desktop',
+    }).execute()
+    const preview = await teamService.previewArchive(owner, firstTeamId, {
+      baseRevision: 1, allowManualCleanup: false,
+    })
     if (preview.kind !== 'preview') throw new Error('expected archive preview')
+    expect(preview.preview.summary).toMatchObject({ cleanupAutomatic: 0, cleanupManual: 1 })
     expect(await teamService.executeArchive(owner, firstTeamId, {
       operationToken: preview.preview.operationToken,
     })).toMatchObject({ kind: 'changed', team: { disabledAt: NOW.toISOString(), revision: 2 } })
@@ -173,6 +190,8 @@ describe('TeamAdminService manager change and archive', () => {
         { id: [managerAccountId, agentAccountId].sort()[0], owner_user_id: managerAccountId < agentAccountId ? owner.userId : agentId, team_id: null },
         { id: [managerAccountId, agentAccountId].sort()[1], owner_user_id: managerAccountId < agentAccountId ? agentId : owner.userId, team_id: null },
       ])
+    expect(await db.selectFrom('desktop_cleanup_tasks').select(['mode', 'reason']).execute())
+      .toEqual([{ mode: 'manual_required', reason: 'signal_official_unlink' }])
 
     expect(await teamService.restore(owner, firstTeamId, {
       managerUserId: secondManagerId, baseRevision: 2,

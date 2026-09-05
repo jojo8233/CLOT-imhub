@@ -90,7 +90,7 @@ describe('admin owner transfer routes', () => {
       method: 'POST', url: '/api/admin/owner-transfer/preview', headers: auth('manager'),
       payload: {
         targetUserId: randomUUID(), currentOwnerNextRole: 'auditor',
-        currentOwnerTeamId: null, teamResolutions: [], accountResolutions: [],
+        currentOwnerTeamIds: [], teamResolutions: [], accountResolutions: [],
         currentOwnerBaseRevision: 1, targetUserBaseRevision: 1,
         allowManualCleanup: false,
       },
@@ -143,7 +143,7 @@ function transferPreview() {
     method: 'POST', url: '/api/admin/owner-transfer/preview', headers: auth('owner'),
     payload: {
       targetUserId: ids.get('auditor'), currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null, teamResolutions: [], accountResolutions: [],
+      currentOwnerTeamIds: [], teamResolutions: [], accountResolutions: [],
       currentOwnerBaseRevision: 1, targetUserBaseRevision: 1,
       allowManualCleanup: false,
     },

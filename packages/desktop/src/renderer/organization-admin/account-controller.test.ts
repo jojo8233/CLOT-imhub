@@ -6,7 +6,7 @@ import { AccountController } from './account-controller.js'
 const account = (revision = 1): AdminAccount => ({
   id: 'account-1', platform: 'telegram', connectionMode: 'adapter', displayName: 'Telegram',
   status: 'connected', ownerUserId: 'user-1', teamId: null, cleanupState: 'not_required',
-  pendingCleanupCount: 0, manualCleanupTaskIds: [], revision,
+  pendingCleanupCount: 0, manualCleanupTasks: [], revision,
 })
 const preview: AdminMutationPreview = {
   operationToken: 'preview-token', expiresAt: '2026-09-05T01:00:00.000Z', summary: {},
@@ -20,6 +20,8 @@ describe('AccountController', () => {
       previewAssignment: vi.fn().mockResolvedValue(preview),
       executeAssignment: execute,
     })
+    const outcomes: string[] = []
+    controller.subscribe(() => outcomes.push(controller.snapshot().outcome))
     await controller.load({})
     await controller.previewAssignment(account(1), {
       ownerUserId: 'user-2', teamId: null, allowManualCleanup: false,
@@ -28,5 +30,6 @@ describe('AccountController', () => {
     await Promise.all([controller.executeAssignment(), controller.executeAssignment()])
     expect(execute).toHaveBeenCalledOnce()
     expect(controller.snapshot().items[0]?.revision).toBe(2)
+    expect(outcomes).toContain('executing')
   })
 })

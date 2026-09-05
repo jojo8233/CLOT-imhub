@@ -5,6 +5,7 @@ import type {
   DesktopCleanupTask,
   DesktopInstallationCapability,
   DesktopInstallationSyncResult,
+  Platform,
 } from '@im-hub/shared'
 import { DeviceRepo, type InstallationMount } from './device-repo.js'
 
@@ -41,6 +42,7 @@ export interface DeviceIdentity {
 export interface OwnershipChange {
   accountId: string
   previousOwnerUserId: string
+  platform: Platform
   connectionMode: AccountConnectionMode
 }
 
@@ -182,15 +184,16 @@ export class DeviceService {
     change: OwnershipChange,
     options: { allowManualCleanup?: boolean } = {},
   ): Promise<CleanupEnqueueResult> {
-    if (change.connectionMode === 'cloud_api') return emptyEnqueueResult()
-    const mounts = await this.repo.listMounts(change.accountId, change.previousOwnerUserId)
-    if (change.connectionMode === 'native_desktop') {
+    if (change.platform === 'signal') {
+      const mounts = await this.repo.listMounts(change.accountId, change.previousOwnerUserId)
       return {
         pendingAutomatic: 0,
         manualRequired: Math.max(1, mounts.length),
         unsupportedOnlineInstallations: 0,
       }
     }
+    if (change.connectionMode === 'cloud_api') return emptyEnqueueResult()
+    const mounts = await this.repo.listMounts(change.accountId, change.previousOwnerUserId)
     if (mounts.length === 0) return emptyEnqueueResult()
     const unsupported = mounts.filter(mount => this.isUnsupportedOnline(mount))
     return {
@@ -213,10 +216,8 @@ export class DeviceService {
     change: OwnershipChange,
     options: { allowManualCleanup?: boolean },
   ): Promise<CleanupEnqueueResult> {
-    if (change.connectionMode === 'cloud_api') return emptyEnqueueResult()
-
-    const mounts = await repo.listMounts(change.accountId, change.previousOwnerUserId)
-    if (change.connectionMode === 'native_desktop') {
+    if (change.platform === 'signal') {
+      const mounts = await repo.listMounts(change.accountId, change.previousOwnerUserId)
       if (mounts.length === 0) {
         await repo.ensurePendingTask({
           installationId: null,
@@ -240,6 +241,9 @@ export class DeviceService {
         unsupportedOnlineInstallations: 0,
       }
     }
+    if (change.connectionMode === 'cloud_api') return emptyEnqueueResult()
+
+    const mounts = await repo.listMounts(change.accountId, change.previousOwnerUserId)
 
     // 服务端 adapter 没有任何本地挂载时无需清理；一旦桌面端曾上报挂载，
     // 该事实表示它是补丁 webview，必须像 web_shell 一样清掉独立分区。

@@ -120,7 +120,10 @@ describe('admin team routes', () => {
     const preview = await app.inject({
       method: 'POST', url: `/api/admin/teams/${teamId}/change-manager`,
       headers: auth('owner'),
-      payload: { phase: 'preview', baseRevision: 1, input: { managerUserId: nextManagerId } },
+      payload: {
+        phase: 'preview', baseRevision: 1,
+        input: { managerUserId: nextManagerId, allowManualCleanup: false },
+      },
     })
     expect(preview.statusCode).toBe(200)
     const operationToken = preview.json<{ preview: { operationToken: string } }>()
@@ -134,7 +137,9 @@ describe('admin team routes', () => {
 
     const archivePreview = await app.inject({
       method: 'POST', url: `/api/admin/teams/${teamId}/archive`,
-      headers: auth('owner'), payload: { phase: 'preview', baseRevision: 2, input: {} },
+      headers: auth('owner'), payload: {
+        phase: 'preview', baseRevision: 2, input: { allowManualCleanup: false },
+      },
     })
     expect(archivePreview.statusCode).toBe(200)
     const archiveToken = archivePreview.json<{ preview: { operationToken: string } }>()

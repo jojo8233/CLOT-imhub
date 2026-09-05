@@ -8,7 +8,10 @@ import { api, HttpError, NetworkError } from '../api/client.js'
 import { currentSnapshotRecord, type MutationOutcome } from './employee-controller.js'
 import { RequestController, type RequestSnapshot } from './request-controller.js'
 
-export interface TeamManagerDraft { managerUserId: string }
+export interface TeamManagerDraft {
+  managerUserId: string
+  allowManualCleanup: boolean
+}
 
 export interface TeamControllerDependencies {
   search(filters: AdminTeamSearchRequest, signal: AbortSignal): Promise<AdminPage<AdminTeam>>
@@ -37,6 +40,7 @@ export class TeamController {
   private outcomeValue: MutationOutcome = 'idle'
   private previewGeneration = 0
   private activeExecution: Promise<AdminTeam | null> | null = null
+  private readonly listeners = new Set<() => void>()
 
   constructor(
     ownerIdentity: string,
@@ -50,6 +54,11 @@ export class TeamController {
       ...this.requests.snapshot(), preview: this.previewValue,
       draft: this.draftValue, outcome: this.outcomeValue,
     }
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
   }
 
   setOwnerIdentity(value: string): void {
@@ -106,6 +115,7 @@ export class TeamController {
       return Promise.reject(new Error('团队变更预览不可用'))
     }
     this.outcomeValue = 'executing'
+    this.notify()
     const operation = this.executeOnce(
       this.target.id,
       this.previewValue.operationToken,
@@ -133,16 +143,19 @@ export class TeamController {
       this.draftValue = null
       this.target = null
       this.outcomeValue = 'idle'
+      this.notify()
       return team
     } catch (error) {
       if (ownerIdentity !== this.requests.snapshot().ownerIdentity) return null
       if (error instanceof NetworkError) {
         this.previewValue = null
         this.outcomeValue = 'unknown'
+        this.notify()
         await this.requests.reload()
         this.draftValue = null
         this.target = null
         this.outcomeValue = 'idle'
+        this.notify()
         return null
       }
       if (error instanceof HttpError && error.code === 'REVISION_CONFLICT') {
@@ -153,8 +166,13 @@ export class TeamController {
       } else {
         this.outcomeValue = 'idle'
       }
+      this.notify()
       throw error
     }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener()
   }
 }
 

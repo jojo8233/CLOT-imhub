@@ -11,6 +11,7 @@ import type {
 } from '@im-hub/shared'
 import { api, NetworkError, type AdminCredentialResult } from '../api/client.js'
 import { EmployeeController, type EmployeeControllerSnapshot, type MutationOutcome } from '../organization-admin/employee-controller.js'
+import { previewWithManualCleanupFallback } from '../organization-admin/manual-cleanup.js'
 import { theme } from '../theme.js'
 import { AdminConfirmationDialog } from './AdminConfirmationDialog.js'
 import { TemporaryPasswordDialog } from './TemporaryPasswordDialog.js'
@@ -34,6 +35,8 @@ export function OrganizationAdminEmployees({ ownerUserId }: { ownerUserId: strin
     outcome: MutationOutcome
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => controller.subscribe(() => setSnapshot(controller.snapshot())), [controller])
 
   const refresh = useCallback(async () => {
     try {
@@ -134,7 +137,13 @@ export function OrganizationAdminEmployees({ ownerUserId }: { ownerUserId: strin
     try {
       const teamResolutions = await collectTeamResolutions(user.id)
       if (teamResolutions === null) return
-      await controller.previewDisable(user, { teamResolutions, allowManualCleanup: true })
+      await previewWithManualCleanupFallback(
+        allowManualCleanup => controller.previewDisable(user, {
+          teamResolutions,
+          allowManualCleanup,
+        }),
+        confirmManualCleanupOverride,
+      )
       setSnapshot(controller.snapshot())
       setDisableTarget(user)
     } catch (cause) {
@@ -166,11 +175,22 @@ export function OrganizationAdminEmployees({ ownerUserId }: { ownerUserId: strin
         setError('转让后的角色必须是 agent、manager 或 auditor')
         return
       }
-      const currentOwnerTeamId = nextRoleInput === 'auditor'
-        ? null
-        : window.prompt('转让后当前 owner 的团队 ID（manager 必填）', '')?.trim() || null
-      if (nextRoleInput === 'manager' && !currentOwnerTeamId) {
-        setError('当前 owner 转为 manager 时必须选择团队')
+      const teamInput = nextRoleInput === 'auditor'
+        ? ''
+        : window.prompt(
+          nextRoleInput === 'manager'
+            ? '转让后当前 owner 负责的团队 ID；多个团队用逗号分隔（至少一个）'
+            : '转让后当前 owner 的团队 ID（可留空）',
+          '',
+        )
+      if (teamInput === null) return
+      const currentOwnerTeamIds = uniqueIds(teamInput)
+      if (nextRoleInput === 'agent' && currentOwnerTeamIds.length > 1) {
+        setError('当前 owner 转为 agent 时最多选择一个团队')
+        return
+      }
+      if (nextRoleInput === 'manager' && currentOwnerTeamIds.length === 0) {
+        setError('当前 owner 转为 manager 时必须至少选择一个团队')
         return
       }
       const teams = await loadAllAdminTeams()
@@ -178,12 +198,12 @@ export function OrganizationAdminEmployees({ ownerUserId }: { ownerUserId: strin
       const managedTeams = uniqueTeams([
         ...targetLedTeams,
         ...(nextRoleInput === 'manager'
-          ? teams.filter(team => team.id === currentOwnerTeamId && !team.disabledAt)
+          ? teams.filter(team => currentOwnerTeamIds.includes(team.id) && !team.disabledAt)
           : []),
       ])
       const teamResolutions = await collectTransferTeamResolutions(
         managedTeams,
-        currentOwnerTeamId,
+        currentOwnerTeamIds,
         ownerUserId,
       )
       if (teamResolutions === null) return
@@ -195,16 +215,19 @@ export function OrganizationAdminEmployees({ ownerUserId }: { ownerUserId: strin
         ownerUserId,
         target.id,
       )
-      const result = await api.previewOwnerTransfer({
-        targetUserId: target.id,
-        currentOwnerNextRole: nextRoleInput,
-        currentOwnerTeamId,
-        teamResolutions,
-        accountResolutions,
-        currentOwnerBaseRevision: currentOwner.revision,
-        targetUserBaseRevision: target.revision,
-        allowManualCleanup: true,
-      })
+      const result = await previewWithManualCleanupFallback(
+        allowManualCleanup => api.previewOwnerTransfer({
+          targetUserId: target.id,
+          currentOwnerNextRole: nextRoleInput,
+          currentOwnerTeamIds,
+          teamResolutions,
+          accountResolutions,
+          currentOwnerBaseRevision: currentOwner.revision,
+          targetUserBaseRevision: target.revision,
+          allowManualCleanup,
+        }),
+        confirmManualCleanupOverride,
+      )
       setTransfer({ target, preview: result.preview, outcome: 'ready' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'owner 转让预览失败')
@@ -334,7 +357,7 @@ export function OrganizationAdminEmployeesContent({
             </div>
             <code>{user.role}</code>
             <span>{user.disabledAt ? '已停用' : '已启用'}</span>
-            <span>{user.teamIds[0] ?? '未分组'}</span>
+            <span>{user.teamIds.length > 0 ? user.teamIds.join('、') : '未分组'}</span>
             <span>{user.ownedAccountCount} 个账号</span>
             <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
               {user.role !== 'owner' && <button className="ih-btn" onClick={() => onEdit(user)}>编辑</button>}
@@ -354,6 +377,13 @@ export function OrganizationAdminEmployeesContent({
 
 function editableRole(value: string | null): value is AdminEditableRole {
   return value === 'agent' || value === 'manager' || value === 'auditor'
+}
+
+function confirmManualCleanupOverride(): boolean {
+  return window.confirm(
+    '检测到仍在线但版本过旧的 Telegram/WhatsApp 客户端，无法自动清理本机登录分区。'
+    + '建议先升级客户端。是否仍继续，并把这些设备保留为逐项人工清理待办？',
+  )
 }
 
 async function collectTeamResolutions(userId: string): Promise<AdminTeamResolution[] | null> {
@@ -378,12 +408,13 @@ async function collectTeamResolutions(userId: string): Promise<AdminTeamResoluti
 
 async function collectTransferTeamResolutions(
   teams: AdminTeam[],
-  currentOwnerTeamId: string | null,
+  currentOwnerTeamIds: string[],
   currentOwnerId: string,
 ): Promise<AdminTeamResolution[] | null> {
+  const ownerTeams = new Set(currentOwnerTeamIds)
   const resolutions: AdminTeamResolution[] = []
   for (const team of teams) {
-    if (team.id === currentOwnerTeamId) {
+    if (ownerTeams.has(team.id)) {
       resolutions.push({
         teamId: team.id,
         action: 'replace_manager',
@@ -406,6 +437,10 @@ async function collectTransferTeamResolutions(
         })
   }
   return resolutions.sort((left, right) => left.teamId.localeCompare(right.teamId))
+}
+
+function uniqueIds(value: string): string[] {
+  return [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))].sort()
 }
 
 export function ownerTransferAccountResolutions(

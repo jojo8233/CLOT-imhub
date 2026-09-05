@@ -50,6 +50,7 @@ export class EmployeeController {
   private previewGeneration = 0
   private outcomeValue: MutationOutcome = 'idle'
   private activeExecution: Promise<AdminUser | null> | null = null
+  private readonly listeners = new Set<() => void>()
 
   constructor(
     ownerIdentity: string,
@@ -65,6 +66,11 @@ export class EmployeeController {
       draft: this.draftValue,
       outcome: this.outcomeValue,
     }
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
   }
 
   setOwnerIdentity(ownerIdentity: string): void {
@@ -129,6 +135,7 @@ export class EmployeeController {
       return Promise.reject(new Error('停用预览不可用'))
     }
     this.outcomeValue = 'executing'
+    this.notify()
     const operation = this.executeDisableOnce(
       userId,
       preview.operationToken,
@@ -166,17 +173,20 @@ export class EmployeeController {
       this.draftValue = null
       this.target = null
       this.outcomeValue = 'idle'
+      this.notify()
       return user
     } catch (error) {
       if (ownerIdentity !== this.requests.snapshot().ownerIdentity) return null
       if (error instanceof NetworkError) {
         this.previewValue = null
         this.outcomeValue = 'unknown'
+        this.notify()
         try {
           await this.requests.reload()
           this.draftValue = null
           this.target = null
           this.outcomeValue = 'idle'
+          this.notify()
           return null
         } catch {
           // 刷新也失败时保持 unknown，禁止用户重复发出结果未知的命令。
@@ -191,8 +201,13 @@ export class EmployeeController {
       } else {
         this.outcomeValue = 'idle'
       }
+      this.notify()
       throw error
     }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener()
   }
 }
 

@@ -78,9 +78,15 @@ export interface AdminAccount {
   teamId: string | null
   cleanupState: AdminCleanupState
   pendingCleanupCount: number
-  /** 仅供 owner 完成人工清理确认；任务 ID 不在界面中展示。 */
-  manualCleanupTaskIds: string[]
+  manualCleanupTasks: AdminManualCleanupTask[]
   revision: number
+}
+
+export interface AdminManualCleanupTask {
+  id: string
+  installationId: string | null
+  reason: DesktopCleanupReason
+  createdAt: string
 }
 
 export interface AdminPage<T> {
@@ -198,7 +204,7 @@ export interface AdminAccountResolution {
 export interface AdminOwnerTransferPreviewRequest {
   targetUserId: string
   currentOwnerNextRole: AdminEditableRole
-  currentOwnerTeamId: string | null
+  currentOwnerTeamIds: string[]
   teamResolutions: AdminTeamResolution[]
   accountResolutions: AdminAccountResolution[]
   currentOwnerBaseRevision: number

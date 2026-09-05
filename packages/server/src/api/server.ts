@@ -174,7 +174,7 @@ export async function buildServer(
     }
   })
 
-  await app.register(authRoutes)
+  await app.register(async instance => authRoutes(instance, { hub }))
   // safeStorage 中的 user.role 只是上次登录快照。原生客户端控制门禁必须
   // 在恢复会话后用服务端每请求实时加载的 actor 刷新，避免已改为 auditor
   // 的用户继续按旧 agent 快照挂载平台会话。

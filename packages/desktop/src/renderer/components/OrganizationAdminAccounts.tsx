@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AdminAccount, AdminCleanupState, Platform } from '@im-hub/shared'
+import type {
+  AdminAccount,
+  AdminCleanupState,
+  AdminManualCleanupTask,
+  Platform,
+} from '@im-hub/shared'
 import { api } from '../api/client.js'
 import { AccountController, type AccountControllerSnapshot } from '../organization-admin/account-controller.js'
+import { previewWithManualCleanupFallback } from '../organization-admin/manual-cleanup.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { AdminConfirmationDialog } from './AdminConfirmationDialog.js'
 
@@ -18,6 +24,8 @@ export function OrganizationAdminAccounts({ ownerUserId }: { ownerUserId: string
   const [cleanupState, setCleanupState] = useState<CleanupFilter>('all')
   const [target, setTarget] = useState<AdminAccount | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => controller.subscribe(() => setSnapshot(controller.snapshot())), [controller])
 
   const refresh = useCallback(async () => {
     try {
@@ -45,11 +53,13 @@ export function OrganizationAdminAccounts({ ownerUserId }: { ownerUserId: string
     const rawTeamId = window.prompt('新团队 ID（留空表示未分组）', account.teamId ?? '')
     if (rawTeamId === null) return
     try {
-      await controller.previewAssignment(account, {
-        ownerUserId,
-        teamId: rawTeamId.trim() || null,
-        allowManualCleanup: account.platform === 'signal',
-      })
+      await previewWithManualCleanupFallback(allowManualCleanup => (
+        controller.previewAssignment(account, {
+          ownerUserId,
+          teamId: rawTeamId.trim() || null,
+          allowManualCleanup,
+        })
+      ))
       setSnapshot(controller.snapshot())
       setTarget(account)
     } catch (cause) {
@@ -69,16 +79,18 @@ export function OrganizationAdminAccounts({ ownerUserId }: { ownerUserId: string
     }
   }
 
-  async function confirmManualCleanup(account: AdminAccount): Promise<void> {
-    if (account.manualCleanupTaskIds.length === 0) return
-    const confirmed = window.confirm(account.platform === 'signal'
-      ? '请先在 Signal 官方“已关联设备”中解除旧设备。是否确认已经完成？'
-      : '是否确认已经完成全部本机人工清理？')
-    if (!confirmed) return
+  async function confirmManualCleanup(
+    account: AdminAccount,
+    task: AdminManualCleanupTask,
+  ): Promise<void> {
     try {
-      for (const taskId of account.manualCleanupTaskIds) {
-        await api.confirmManualDesktopCleanup(taskId)
-      }
+      await confirmOneManualCleanupTask(
+        task.id,
+        () => window.confirm(account.platform === 'signal'
+          ? `请先在 Signal 官方“已关联设备”中解除${installationLabel(task.installationId)}。是否确认这一项已经完成？`
+          : `是否确认已经完成${installationLabel(task.installationId)}的本机人工清理？`),
+        async taskId => { await api.confirmManualDesktopCleanup(taskId) },
+      )
       await refresh()
     } catch (cause) {
       setError(message(cause, '确认人工清理失败，请刷新后重试'))
@@ -99,7 +111,7 @@ export function OrganizationAdminAccounts({ ownerUserId }: { ownerUserId: string
         onCleanupStateChange={setCleanupState}
         onRefresh={() => void refresh()}
         onAssign={account => void previewAssignment(account)}
-        onConfirmManualCleanup={account => void confirmManualCleanup(account)}
+        onConfirmManualCleanup={(account, task) => void confirmManualCleanup(account, task)}
       />
       {error && <div role="alert" style={floatingErrorStyle}>{error}</div>}
       {target && snapshot.preview && (
@@ -129,7 +141,7 @@ export function OrganizationAdminAccountsContent({
   onCleanupStateChange(value: CleanupFilter): void
   onRefresh(): void
   onAssign(account: AdminAccount): void
-  onConfirmManualCleanup(account: AdminAccount): void
+  onConfirmManualCleanup(account: AdminAccount, task: AdminManualCleanupTask): void
 }) {
   return (
     <section style={sectionStyle}>
@@ -166,11 +178,17 @@ export function OrganizationAdminAccountsContent({
                 <span>{account.platform === 'signal'
                   ? '需在 Signal 官方已关联设备中人工解除'
                   : '旧客户端需人工清理本机登录分区'}</span>
-                {account.manualCleanupTaskIds.length > 0 && (
-                  <button className="ih-btn" onClick={() => onConfirmManualCleanup(account)}>
-                    {account.platform === 'signal' ? '确认已在官方解除' : '确认已人工清理'}
-                  </button>
-                )}
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {account.manualCleanupTasks.map(task => (
+                    <div key={task.id} style={manualTaskStyle}>
+                      <span>{installationLabel(task.installationId)} · {cleanupReasonLabel(task.reason)}</span>
+                      <time dateTime={task.createdAt}>{task.createdAt}</time>
+                      <button className="ih-btn" onClick={() => onConfirmManualCleanup(account, task)}>
+                        {account.platform === 'signal' ? '确认已在官方解除' : '确认已人工清理'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </article>
@@ -178,6 +196,25 @@ export function OrganizationAdminAccountsContent({
       </div>
     </section>
   )
+}
+
+export async function confirmOneManualCleanupTask(
+  taskId: string,
+  confirm: () => boolean,
+  complete: (taskId: string) => Promise<void>,
+): Promise<void> {
+  if (!confirm()) return
+  await complete(taskId)
+}
+
+function installationLabel(installationId: string | null): string {
+  return installationId ? `设备 …${installationId.slice(-8)}` : '未知旧设备'
+}
+
+function cleanupReasonLabel(reason: AdminManualCleanupTask['reason']): string {
+  if (reason === 'signal_official_unlink') return '官方解除关联'
+  if (reason === 'unsupported_client_override') return '旧客户端人工清理'
+  return '负责人变更人工清理'
 }
 
 function cleanupLabel(value: AdminCleanupState): string {
@@ -211,5 +248,9 @@ const mutedStyle: React.CSSProperties = { color: theme.color.textMuted, fontSize
 const signalNoticeStyle: React.CSSProperties = {
   width: '100%', color: theme.color.gold, fontSize: theme.font.size.sm,
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+}
+const manualTaskStyle: React.CSSProperties = {
+  display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) minmax(180px, auto) auto',
+  alignItems: 'center', gap: 8, color: theme.color.textMuted,
 }
 const floatingErrorStyle: React.CSSProperties = { position: 'absolute', right: 24, bottom: 20, maxWidth: 460, padding: 10, background: theme.color.dangerSoft, color: theme.color.danger, borderRadius: theme.radius.md }

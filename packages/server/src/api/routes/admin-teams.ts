@@ -31,7 +31,10 @@ const managerChangeBody = z.discriminatedUnion('phase', [
   z.object({
     phase: z.literal('preview'),
     baseRevision: revision,
-    input: z.object({ managerUserId: z.string().uuid() }).strict(),
+    input: z.object({
+      managerUserId: z.string().uuid(),
+      allowManualCleanup: z.boolean(),
+    }).strict(),
   }).strict(),
   z.object({
     phase: z.literal('execute'),
@@ -42,7 +45,7 @@ const archiveBody = z.discriminatedUnion('phase', [
   z.object({
     phase: z.literal('preview'),
     baseRevision: revision,
-    input: z.object({}).strict(),
+    input: z.object({ allowManualCleanup: z.boolean() }).strict(),
   }).strict(),
   z.object({
     phase: z.literal('execute'),
@@ -109,6 +112,7 @@ export async function adminTeamRoutes(
       const result = body.data.phase === 'preview'
         ? await deps.teamService.previewManagerChange(req.actor, params.data.id, {
           managerUserId: body.data.input.managerUserId,
+          allowManualCleanup: body.data.input.allowManualCleanup,
           baseRevision: body.data.baseRevision,
         })
         : await deps.teamService.executeManagerChange(req.actor, params.data.id, {
@@ -129,6 +133,7 @@ export async function adminTeamRoutes(
       const result = body.data.phase === 'preview'
         ? await deps.teamService.previewArchive(req.actor, params.data.id, {
           baseRevision: body.data.baseRevision,
+          allowManualCleanup: body.data.input.allowManualCleanup,
         })
         : await deps.teamService.executeArchive(req.actor, params.data.id, {
           operationToken: body.data.operationToken,

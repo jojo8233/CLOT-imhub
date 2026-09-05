@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AdminAccount, AdminTeam, AdminTeamResolution } from '@im-hub/shared'
-import { ownerTransferAccountResolutions } from './OrganizationAdminEmployees.js'
+import { HttpError } from '../api/client.js'
+import {
+  ownerTransferAccountResolutions,
+} from './OrganizationAdminEmployees.js'
+import { previewWithManualCleanupFallback } from '../organization-admin/manual-cleanup.js'
 
 const teams: AdminTeam[] = [
   { id: 'target-team', name: 'Target', managerUserId: 'target', agentCount: 0, accountCount: 1, disabledAt: null, revision: 2 },
@@ -31,12 +35,33 @@ describe('ownerTransferAccountResolutions', () => {
       { accountId: 'owner-account', ownerUserId: 'target', teamId: 'other-team', baseRevision: 1 },
     ])
   })
+
+  it('旧版在线客户端默认阻断，只有 owner 明确确认后才以人工模式重新预览', async () => {
+    const request = vi.fn()
+      .mockRejectedValueOnce(new HttpError(409, 'client update required', 'CLIENT_UPDATE_REQUIRED'))
+      .mockResolvedValueOnce('preview')
+    const confirm = vi.fn(() => true)
+
+    await expect(previewWithManualCleanupFallback(request, confirm)).resolves.toBe('preview')
+
+    expect(request.mock.calls).toEqual([[false], [true]])
+    expect(confirm).toHaveBeenCalledOnce()
+  })
+
+  it('owner 不确认人工覆盖时保留客户端升级阻断', async () => {
+    const error = new HttpError(409, 'client update required', 'CLIENT_UPDATE_REQUIRED')
+    const request = vi.fn().mockRejectedValue(error)
+
+    await expect(previewWithManualCleanupFallback(request, () => false)).rejects.toBe(error)
+    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith(false)
+  })
 })
 
 function account(id: string, ownerUserId: string, teamId: string | null, revision: number): AdminAccount {
   return {
     id, ownerUserId, teamId, revision, platform: 'telegram', connectionMode: 'adapter',
     displayName: id, status: 'connected', cleanupState: 'not_required', pendingCleanupCount: 0,
-    manualCleanupTaskIds: [],
+    manualCleanupTasks: [],
   }
 }

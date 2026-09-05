@@ -112,7 +112,12 @@ describe('admin account routes', () => {
         id: accountId,
         cleanupState: 'manual_required',
         pendingCleanupCount: 1,
-        manualCleanupTaskIds: [taskId],
+        manualCleanupTasks: [{
+          id: taskId,
+          installationId: null,
+          reason: 'signal_official_unlink',
+          createdAt: expect.any(String),
+        }],
       }],
     })
   })

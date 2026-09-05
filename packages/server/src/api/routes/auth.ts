@@ -9,6 +9,7 @@ import {
   verifyInitialPasswordSetup,
 } from '../../auth/initial-password.js'
 import { signSession } from '../../auth/session.js'
+import type { WsHub } from '../ws.js'
 
 const loginBody = z.object({
   email: z.string().email(),
@@ -36,7 +37,11 @@ const changePasswordBody = z.object({
  */
 const DUMMY_HASH = await hashPassword('timing-equalizer-not-a-real-password')
 
-export async function authRoutes(app: FastifyInstance): Promise<void> {
+export interface AuthRouteDeps {
+  hub: WsHub
+}
+
+export async function authRoutes(app: FastifyInstance, deps: AuthRouteDeps): Promise<void> {
   app.post('/api/auth/login', async (req, reply) => {
     const parsed = loginBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
@@ -154,6 +159,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       userId: updated.id,
       sessionVersion: updated.session_version,
     }, config.JWT_SECRET)
+    deps.hub.revokeUser(updated.id)
     return {
       kind: 'authenticated',
       token,
@@ -208,6 +214,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       userId: updated.id,
       sessionVersion: updated.session_version,
     }, config.JWT_SECRET)
+    deps.hub.revokeUser(updated.id)
     return {
       kind: 'authenticated',
       token,

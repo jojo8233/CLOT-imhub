@@ -88,7 +88,7 @@ describe('OwnerTransferService', () => {
     const result = await previewAndExecute({
       targetUserId: targetAgentId,
       currentOwnerNextRole: 'agent',
-      currentOwnerTeamId: teamId,
+      currentOwnerTeamIds: [teamId],
       teamResolutions: [],
       accountResolutions: [{
         accountId, ownerUserId: owner.userId, teamId, baseRevision: 1,
@@ -127,7 +127,7 @@ describe('OwnerTransferService', () => {
     expect(await service.preview(owner, {
       targetUserId: targetAgentId,
       currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null,
+      currentOwnerTeamIds: [],
       teamResolutions: [],
       accountResolutions: [],
       currentOwnerBaseRevision: 1,
@@ -138,7 +138,7 @@ describe('OwnerTransferService', () => {
     expect(await previewAndExecute({
       targetUserId: targetAgentId,
       currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null,
+      currentOwnerTeamIds: [],
       teamResolutions: [{
         teamId, action: 'replace_manager', replacementManagerUserId: managerId, baseRevision: 1,
       }],
@@ -157,7 +157,7 @@ describe('OwnerTransferService', () => {
     const result = await previewAndExecute({
       targetUserId: auditorId,
       currentOwnerNextRole: 'manager',
-      currentOwnerTeamId: teamId,
+      currentOwnerTeamIds: [teamId],
       teamResolutions: [{
         teamId, action: 'replace_manager', replacementManagerUserId: owner.userId,
         baseRevision: 1,
@@ -179,11 +179,63 @@ describe('OwnerTransferService', () => {
       .toEqual({ owner_user_id: auditorId })
   })
 
+  it('旧 owner 可在同一次原子转让中成为多个团队的主管', async () => {
+    const secondManagerId = await createUser('manager', 'second-manager')
+    const secondTeamId = (await db.insertInto('teams').values({ name: 'Second managed team' })
+      .returning('id').executeTakeFirstOrThrow()).id
+    await db.insertInto('team_members').values({
+      team_id: secondTeamId, user_id: secondManagerId, is_lead: true,
+    }).execute()
+    const firstManagerAccountId = await createAccount(managerId, teamId)
+    const secondManagerAccountId = await createAccount(secondManagerId, secondTeamId)
+
+    const result = await previewAndExecute({
+      targetUserId: auditorId,
+      currentOwnerNextRole: 'manager',
+      currentOwnerTeamIds: [secondTeamId, teamId],
+      teamResolutions: [
+        {
+          teamId, action: 'replace_manager', replacementManagerUserId: owner.userId,
+          baseRevision: 1,
+        },
+        {
+          teamId: secondTeamId, action: 'replace_manager', replacementManagerUserId: owner.userId,
+          baseRevision: 1,
+        },
+      ],
+      accountResolutions: [
+        {
+          accountId: firstManagerAccountId, ownerUserId: auditorId, teamId,
+          baseRevision: 1,
+        },
+        {
+          accountId: secondManagerAccountId, ownerUserId: auditorId, teamId: secondTeamId,
+          baseRevision: 1,
+        },
+      ],
+      currentOwnerBaseRevision: 1,
+      targetUserBaseRevision: 1,
+      allowManualCleanup: false,
+    })
+
+    expect(result).toMatchObject({
+      kind: 'transferred',
+      currentOwner: { role: 'manager', teamIds: [teamId, secondTeamId].sort() },
+      newOwner: { id: auditorId, role: 'owner' },
+    })
+    expect(await db.selectFrom('team_members').select(['team_id', 'user_id', 'is_lead'])
+      .where('team_id', 'in', [teamId, secondTeamId]).where('is_lead', '=', true)
+      .orderBy('team_id').execute()).toEqual([
+      { team_id: [teamId, secondTeamId].sort()[0], user_id: owner.userId, is_lead: true },
+      { team_id: [teamId, secondTeamId].sort()[1], user_id: owner.userId, is_lead: true },
+    ])
+  })
+
   it('当前密码错误时不更改任何角色或会话版本', async () => {
     const preview = await service.preview(owner, {
       targetUserId: auditorId,
       currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null,
+      currentOwnerTeamIds: [],
       teamResolutions: [],
       accountResolutions: [],
       currentOwnerBaseRevision: 1,
@@ -208,7 +260,7 @@ describe('OwnerTransferService', () => {
     const preview = await service.preview(owner, {
       targetUserId: auditorId,
       currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null,
+      currentOwnerTeamIds: [],
       teamResolutions: [],
       accountResolutions: [{
         accountId, ownerUserId: auditorId, teamId: null, baseRevision: 1,
@@ -234,7 +286,7 @@ describe('OwnerTransferService', () => {
     const preview = await service.preview(owner, {
       targetUserId: auditorId,
       currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null,
+      currentOwnerTeamIds: [],
       teamResolutions: [],
       accountResolutions: [],
       currentOwnerBaseRevision: 1,
@@ -265,7 +317,7 @@ describe('OwnerTransferService', () => {
     const preview = await service.preview(owner, {
       targetUserId: auditorId,
       currentOwnerNextRole: 'auditor',
-      currentOwnerTeamId: null,
+      currentOwnerTeamIds: [],
       teamResolutions: [],
       accountResolutions: [{
         accountId, ownerUserId: auditorId, teamId: null, baseRevision: 1,

@@ -8,6 +8,7 @@ import {
   type AdminUser,
   type AdminUserCreate,
   type AdminUserUpdate,
+  type Platform,
 } from '@im-hub/shared'
 import { hashPassword } from '../auth/password.js'
 import type { Database } from '../db/types.js'
@@ -283,6 +284,7 @@ export class UserAdminService {
       const preview = await dependencies.devices.previewOwnershipChange({
         accountId: account.id,
         previousOwnerUserId: userId,
+        platform: account.platform,
         connectionMode: account.connection_mode,
       }, { allowManualCleanup: normalized.allowManualCleanup })
       cleanup.automatic += preview.pendingAutomatic
@@ -372,6 +374,7 @@ export class UserAdminService {
         const cleanup = await dependencies.devices.enqueueOwnershipChange({
           accountId: account.id,
           previousOwnerUserId: userId,
+          platform: account.platform,
           connectionMode: account.connection_mode,
         }, { allowManualCleanup: verified.input.allowManualCleanup }, new DeviceRepo(transaction))
         if (cleanup.unsupportedOnlineInstallations > 0 && !verified.input.allowManualCleanup) {
@@ -539,6 +542,7 @@ type DisableSnapshot =
         id: string
         owner_user_id: string
         team_id: string | null
+        platform: Platform
         connection_mode: 'adapter' | 'native_desktop' | 'web_shell' | 'cloud_api'
         revision: number
       }>
@@ -646,7 +650,7 @@ async function snapshotDisable(
     .filter(resolution => resolution.action === 'archive')
     .map(resolution => resolution.teamId)
   let accountQuery = db.selectFrom('accounts').select([
-    'id', 'owner_user_id', 'team_id', 'connection_mode', 'revision',
+    'id', 'owner_user_id', 'team_id', 'platform', 'connection_mode', 'revision',
   ])
   accountQuery = archivedTeamIds.length === 0
     ? accountQuery.where('owner_user_id', '=', input.userId)

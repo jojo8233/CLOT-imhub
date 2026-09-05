@@ -111,6 +111,8 @@ export class HttpError extends Error {
 let token: string | null = null
 let currentUser: SessionUser | null = null
 let initialPasswordSetupToken: string | null = null
+let passwordRotationInFlight = false
+let deferredSessionRevocation = false
 
 export function hasToken(): boolean {
   return token !== null
@@ -118,6 +120,19 @@ export function hasToken(): boolean {
 
 export function getCurrentUser(): SessionUser | null {
   return currentUser
+}
+
+/**
+ * 改密中的撤权先暂存：只有成功安装 replacement token 后才可忽略。
+ * 已被新 token 取代的旧 WS 事件也不应清掉新会话。
+ */
+export function shouldLogoutForSessionRevocation(sessionSuperseded: boolean): boolean {
+  if (sessionSuperseded) return false
+  if (passwordRotationInFlight) {
+    deferredSessionRevocation = true
+    return false
+  }
+  return true
 }
 
 /** 应用启动时调用：有加密存档就恢复登录态，没有（或解不出来）就返回 null，交给调用方显示登录页。 */
@@ -240,6 +255,7 @@ export interface AdminDisablePreviewInput {
 
 export interface AdminTeamManagerChangeInput {
   managerUserId: string
+  allowManualCleanup: boolean
   baseRevision: number
 }
 
@@ -315,15 +331,31 @@ export const api = {
     }
   },
   async changePassword(currentPassword: string, newPassword: string): Promise<SessionUser> {
-    const res = await request<LoginResponse>('/api/session/password', {
-      method: 'POST',
-      body: JSON.stringify({ currentPassword, newPassword }),
-    })
-    if (res.kind !== 'authenticated') throw new Error('改密响应无效')
-    token = res.token
-    currentUser = res.user
-    await persistSession()
-    return res.user
+    passwordRotationInFlight = true
+    let replacementInstalled = false
+    try {
+      const res = await request<LoginResponse>('/api/session/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      if (res.kind !== 'authenticated') throw new Error('改密响应无效')
+      token = res.token
+      currentUser = res.user
+      await persistSession()
+      replacementInstalled = true
+      return res.user
+    } finally {
+      passwordRotationInFlight = false
+      if (deferredSessionRevocation) {
+        deferredSessionRevocation = false
+        if (!replacementInstalled) {
+          token = null
+          currentUser = null
+          void clearPersistedSession()
+          unauthorizedListener?.()
+        }
+      }
+    }
   },
   async refreshSessionUser(): Promise<SessionUser> {
     const res = await request<{ user: { id: string; role: Role } }>('/api/session/me')
@@ -389,15 +421,22 @@ export const api = {
     request<{ preview: AdminMutationPreview }>(`/api/admin/teams/${teamId}/change-manager`, {
       method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision: input.baseRevision, input: {
         managerUserId: input.managerUserId,
+        allowManualCleanup: input.allowManualCleanup,
       } }),
     }),
   changeAdminTeamManager: (teamId: string, operationToken: string) =>
     request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/change-manager`, {
       method: 'POST', body: JSON.stringify({ phase: 'execute', operationToken }),
     }),
-  previewArchiveAdminTeam: (teamId: string, baseRevision: number) =>
+  previewArchiveAdminTeam: (
+    teamId: string,
+    baseRevision: number,
+    allowManualCleanup: boolean,
+  ) =>
     request<{ preview: AdminMutationPreview }>(`/api/admin/teams/${teamId}/archive`, {
-      method: 'POST', body: JSON.stringify({ phase: 'preview', baseRevision, input: {} }),
+      method: 'POST', body: JSON.stringify({
+        phase: 'preview', baseRevision, input: { allowManualCleanup },
+      }),
     }),
   archiveAdminTeam: (teamId: string, operationToken: string) =>
     request<{ team: AdminTeam }>(`/api/admin/teams/${teamId}/archive`, {
@@ -594,13 +633,17 @@ export const api = {
     })
   },
 
-  connectWs(onEvent: (e: WsServerEvent) => void): WebSocket {
+  connectWs(onEvent: (
+    e: WsServerEvent,
+    context: { sessionSuperseded: boolean },
+  ) => void): WebSocket {
+    const connectionToken = token
     const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws`)
-    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }))
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: connectionToken }))
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data as string) as WsServerEvent | { type: 'auth_ok' }
       if (msg.type === 'auth_ok') return
-      onEvent(msg as WsServerEvent)
+      onEvent(msg as WsServerEvent, { sessionSuperseded: token !== connectionToken })
     }
     return ws
   },

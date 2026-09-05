@@ -7,6 +7,7 @@ import {
   NetworkError,
   onUnauthorized,
   restoreSession,
+  shouldLogoutForSessionRevocation,
   UnauthorizedError,
   type SessionUser,
 } from './api/client.js'
@@ -314,9 +315,10 @@ export function App() {
       // 网络错误或其它错误：不是鉴权问题，允许继续进主界面（列表可能是空的），
       // 好过卡死在白屏或"检查登录状态…"上出不去。
     }
-    wsRef.current = api.connectWs((event) => {
+    wsRef.current = api.connectWs((event, context) => {
       if (generation !== authGenerationRef.current) return
       if (event.type === 'session_revoked') {
+        if (!shouldLogoutForSessionRevocation(context.sessionSuperseded)) return
         void apiLogout()
         backToLogin()
         return

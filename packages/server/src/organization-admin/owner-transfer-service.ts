@@ -6,6 +6,7 @@ import type {
   AdminOwnerTransferPreviewRequest,
   AdminTeamResolution,
   AdminUser,
+  Platform,
   Role,
 } from '@im-hub/shared'
 import { verifyPassword } from '../auth/password.js'
@@ -73,7 +74,7 @@ interface NormalizedAccountResolution {
 interface NormalizedTransferInput {
   targetUserId: string
   currentOwnerNextRole: AdminEditableRole
-  currentOwnerTeamId: string | null
+  currentOwnerTeamIds: string[]
   teamResolutions: NormalizedTeamResolution[]
   accountResolutions: NormalizedAccountResolution[]
   allowManualCleanup: boolean
@@ -95,6 +96,7 @@ type TransferPlan =
         id: string
         owner_user_id: string
         team_id: string | null
+        platform: Platform
         connection_mode: 'adapter' | 'native_desktop' | 'web_shell' | 'cloud_api'
         revision: number
       }>
@@ -136,6 +138,7 @@ export class OwnerTransferService {
       const preview = await this.devices.previewOwnershipChange({
         accountId: account.id,
         previousOwnerUserId: account.owner_user_id,
+        platform: account.platform,
         connectionMode: account.connection_mode,
       }, { allowManualCleanup: normalized.allowManualCleanup })
       cleanup.automatic += preview.pendingAutomatic
@@ -212,6 +215,7 @@ export class OwnerTransferService {
           const cleanup = await this.devices.enqueueOwnershipChange({
             accountId: account.id,
             previousOwnerUserId: account.owner_user_id,
+            platform: account.platform,
             connectionMode: account.connection_mode,
           }, { allowManualCleanup: verified.input.allowManualCleanup }, new DeviceRepo(transaction))
           if (cleanup.unsupportedOnlineInstallations > 0
@@ -263,10 +267,11 @@ export class OwnerTransferService {
           })).where('id', '=', resolution.teamId).execute()
         }
       }
+      const currentOwnerAgentTeamId = verified.input.currentOwnerTeamIds[0]
       if (verified.input.currentOwnerNextRole === 'agent'
-        && verified.input.currentOwnerTeamId !== null) {
+        && currentOwnerAgentTeamId !== undefined) {
         await transaction.insertInto('team_members').values({
-          team_id: verified.input.currentOwnerTeamId,
+          team_id: currentOwnerAgentTeamId,
           user_id: actor.userId,
           is_lead: false,
         }).onConflict(conflict => conflict.columns(['team_id', 'user_id']).doUpdateSet({
@@ -321,7 +326,7 @@ function normalizeTransferInput(input: AdminOwnerTransferPreviewRequest): Normal
   return {
     targetUserId: input.targetUserId,
     currentOwnerNextRole: input.currentOwnerNextRole,
-    currentOwnerTeamId: input.currentOwnerTeamId,
+    currentOwnerTeamIds: uniqueSorted(input.currentOwnerTeamIds),
     teamResolutions,
     accountResolutions,
     allowManualCleanup: input.allowManualCleanup,
@@ -346,10 +351,13 @@ async function buildTransferPlan(
   lock: boolean,
 ): Promise<TransferPlan> {
   if (input.targetUserId === currentOwnerId) return invalidPlan(lock, 'TARGET_USER_INVALID', 1)
-  if (input.currentOwnerNextRole === 'auditor' && input.currentOwnerTeamId !== null) {
+  if (input.currentOwnerNextRole === 'auditor' && input.currentOwnerTeamIds.length > 0) {
     return invalidPlan(lock, 'CURRENT_OWNER_ROLE_INVALID', 1)
   }
-  if (input.currentOwnerNextRole === 'manager' && input.currentOwnerTeamId === null) {
+  if (input.currentOwnerNextRole === 'agent' && input.currentOwnerTeamIds.length > 1) {
+    return invalidPlan(lock, 'CURRENT_OWNER_ROLE_INVALID', input.currentOwnerTeamIds.length)
+  }
+  if (input.currentOwnerNextRole === 'manager' && input.currentOwnerTeamIds.length === 0) {
     return invalidPlan(lock, 'CURRENT_OWNER_ROLE_INVALID', 1)
   }
 
@@ -362,8 +370,8 @@ async function buildTransferPlan(
     .orderBy('team.id').execute()
   const managedTeamIds = uniqueSorted([
     ...targetLed.map(team => team.id),
-    ...(input.currentOwnerNextRole === 'manager' && input.currentOwnerTeamId
-      ? [input.currentOwnerTeamId]
+    ...(input.currentOwnerNextRole === 'manager'
+      ? input.currentOwnerTeamIds
       : []),
   ])
   const resolutionIds = input.teamResolutions.map(resolution => resolution.teamId)
@@ -374,7 +382,7 @@ async function buildTransferPlan(
 
   const referencedTeamIds = uniqueSorted([
     ...managedTeamIds,
-    ...(input.currentOwnerTeamId ? [input.currentOwnerTeamId] : []),
+    ...input.currentOwnerTeamIds,
     ...input.accountResolutions.flatMap(resolution => (
       resolution.teamId === null ? [] : [resolution.teamId]
     )),
@@ -395,7 +403,7 @@ async function buildTransferPlan(
       return invalidPlan(lock, 'TEAM_RESOLUTION_INVALID', 1)
     }
     if (input.currentOwnerNextRole === 'manager'
-      && resolution.teamId === input.currentOwnerTeamId
+      && input.currentOwnerTeamIds.includes(resolution.teamId)
       && (resolution.action !== 'replace_manager'
         || resolution.replacementManagerUserId !== currentOwnerId)) {
       return invalidPlan(lock, 'TEAM_RESOLUTION_INVALID', 1)
@@ -412,16 +420,16 @@ async function buildTransferPlan(
   const archivedTeamIds = input.teamResolutions
     .filter(resolution => resolution.action === 'archive')
     .map(resolution => resolution.teamId)
-  if (input.currentOwnerTeamId !== null) {
-    const currentOwnerTeam = teamRows.find(team => team.id === input.currentOwnerTeamId)
-    const resolution = input.teamResolutions
-      .find(item => item.teamId === input.currentOwnerTeamId)
-    if (!currentOwnerTeam || currentOwnerTeam.disabled_at || resolution?.action === 'archive') {
+  for (const currentOwnerTeamId of input.currentOwnerTeamIds) {
+    const currentOwnerTeam = teamRows.find(team => team.id === currentOwnerTeamId)
+    const resolution = input.teamResolutions.find(item => item.teamId === currentOwnerTeamId)
+    if (!currentOwnerTeam || currentOwnerTeam.disabled_at
+      || (input.currentOwnerNextRole === 'manager' && resolution?.action === 'archive')) {
       return invalidPlan(lock, 'CURRENT_OWNER_ROLE_INVALID', 1)
     }
   }
   const allAccounts = await db.selectFrom('accounts').select([
-    'id', 'owner_user_id', 'team_id', 'connection_mode', 'revision',
+    'id', 'owner_user_id', 'team_id', 'platform', 'connection_mode', 'revision',
   ]).orderBy('id').execute()
   const affectedAccounts = filterAffectedAccounts(
     allAccounts,
@@ -505,7 +513,7 @@ async function buildTransferPlan(
   let lockedAccounts = affectedAccounts
   if (lock) {
     const currentAccounts = await db.selectFrom('accounts').select([
-      'id', 'owner_user_id', 'team_id', 'connection_mode', 'revision',
+      'id', 'owner_user_id', 'team_id', 'platform', 'connection_mode', 'revision',
     ]).orderBy('id').execute()
     const currentAffected = filterAffectedAccounts(
       currentAccounts,
@@ -519,7 +527,7 @@ async function buildTransferPlan(
     lockedAccounts = affectedIds.length === 0
       ? []
       : await db.selectFrom('accounts').select([
-        'id', 'owner_user_id', 'team_id', 'connection_mode', 'revision',
+        'id', 'owner_user_id', 'team_id', 'platform', 'connection_mode', 'revision',
       ]).where('id', 'in', affectedIds).orderBy('id').forUpdate().execute()
   }
   const revisions: AdminRevisionSnapshot = {
@@ -567,8 +575,11 @@ function validAccountResolution(
   if (account.owner_user_id === currentOwnerId) {
     if (resolution.ownerUserId === input.targetUserId) return true
     if (resolution.ownerUserId !== currentOwnerId) return false
-    return input.currentOwnerNextRole !== 'auditor'
-      && resolution.teamId === input.currentOwnerTeamId
+    if (input.currentOwnerNextRole === 'auditor') return false
+    if (input.currentOwnerNextRole === 'agent') {
+      return resolution.teamId === (input.currentOwnerTeamIds[0] ?? null)
+    }
+    return resolution.teamId !== null && input.currentOwnerTeamIds.includes(resolution.teamId)
   }
   if (displaced) return resolution.ownerUserId === input.targetUserId
   return resolution.ownerUserId === account.owner_user_id

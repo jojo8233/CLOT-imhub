@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { emptyCustomerProfile, type KeywordRule } from '@im-hub/shared'
-import { api, logout, UnauthorizedError } from './client.js'
+import {
+  api,
+  logout,
+  NetworkError,
+  onUnauthorized,
+  shouldLogoutForSessionRevocation,
+  UnauthorizedError,
+} from './client.js'
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -31,6 +38,7 @@ function sessionFixture() {
 
 describe('desktop auth session lifecycle', () => {
   afterEach(async () => {
+    onUnauthorized(null)
     await logout()
     delete (globalThis as { imHub?: unknown }).imHub
     vi.unstubAllGlobals()
@@ -108,6 +116,86 @@ describe('desktop auth session lifecycle', () => {
     expect(fetchMock.mock.calls[2]?.[1]?.headers).toMatchObject({
       Authorization: 'Bearer new-session-token',
     })
+  })
+
+  it('撤权先于改密成功响应时暂存事件，保留 replacement token', async () => {
+    const session = sessionFixture()
+    let resolvePasswordChange: (response: Response) => void = () => {
+      throw new Error('password change resolver not initialized')
+    }
+    const pendingPasswordChange = new Promise<Response>(resolve => {
+      resolvePasswordChange = resolve
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated',
+        token: 'old-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockReturnValueOnce(pendingPasswordChange)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const login = await api.login('agent@example.test', 'old-password-value')
+    if (login.kind !== 'authenticated') throw new Error('expected authenticated login')
+    const change = api.changePassword('old-password-value', 'replacement-password')
+
+    expect(shouldLogoutForSessionRevocation(false)).toBe(false)
+    resolvePasswordChange(jsonResponse({
+      kind: 'authenticated',
+      token: 'new-session-token',
+      user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+    }))
+    await change
+    expect(shouldLogoutForSessionRevocation(true)).toBe(false)
+    expect(session.clear).not.toHaveBeenCalled()
+  })
+
+  it('改密成功响应先于旧 WS 撤权时，忽略已被取代的连接事件', async () => {
+    sessionFixture()
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'old-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'new-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      })))
+
+    const login = await api.login('agent@example.test', 'old-password-value')
+    if (login.kind !== 'authenticated') throw new Error('expected authenticated login')
+    await api.changePassword('old-password-value', 'replacement-password')
+
+    expect(shouldLogoutForSessionRevocation(true)).toBe(false)
+  })
+
+  it('已收到撤权但改密 HTTP 结果丢失时立即清除失效会话', async () => {
+    const session = sessionFixture()
+    let rejectPasswordChange: (cause: Error) => void = () => {
+      throw new Error('password change rejecter not initialized')
+    }
+    const pendingPasswordChange = new Promise<Response>((_resolve, reject) => {
+      rejectPasswordChange = reject
+    })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'old-session-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Agent' },
+      }))
+      .mockReturnValueOnce(pendingPasswordChange))
+    const revoked = vi.fn()
+    onUnauthorized(revoked)
+
+    const login = await api.login('agent@example.test', 'old-password-value')
+    if (login.kind !== 'authenticated') throw new Error('expected authenticated login')
+    session.clear.mockClear()
+    const change = api.changePassword('old-password-value', 'replacement-password')
+    expect(shouldLogoutForSessionRevocation(false)).toBe(false)
+    rejectPasswordChange(new Error('response lost'))
+
+    await expect(change).rejects.toBeInstanceOf(NetworkError)
+    expect(revoked).toHaveBeenCalledOnce()
+    expect(session.clear).toHaveBeenCalledOnce()
   })
 
   it('任何普通会话 401 都清除内存和加密存档', async () => {
@@ -305,6 +393,35 @@ describe('organization admin API contracts', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({ baseRevision: 5 })
     expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
       operationToken: 'preview-token',
+    })
+  })
+
+  it('团队换主管和归档预览显式传递人工清理选择', async () => {
+    const response = { preview: {
+      operationToken: 'preview-token', expiresAt: '2026-09-05T01:00:00.000Z', summary: {},
+    } }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'owner-token',
+        user: { id: 'owner-1', role: 'owner', displayName: 'Owner' },
+      }))
+      .mockResolvedValueOnce(jsonResponse(response))
+      .mockResolvedValueOnce(jsonResponse(response))
+    vi.stubGlobal('fetch', fetchMock)
+    const login = await api.login('owner@example.test', 'owner-password')
+    if (login.kind !== 'authenticated') throw new Error('expected owner session')
+
+    await api.previewAdminTeamManagerChange('team-1', {
+      managerUserId: 'manager-2', baseRevision: 4, allowManualCleanup: false,
+    })
+    await api.previewArchiveAdminTeam('team-1', 4, true)
+
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      phase: 'preview', baseRevision: 4,
+      input: { managerUserId: 'manager-2', allowManualCleanup: false },
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      phase: 'preview', baseRevision: 4, input: { allowManualCleanup: true },
     })
   })
 

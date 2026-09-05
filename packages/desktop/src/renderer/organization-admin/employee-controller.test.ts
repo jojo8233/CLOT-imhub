@@ -55,6 +55,8 @@ describe('EmployeeController', () => {
       executeDisable,
       create: vi.fn(),
     })
+    const outcomes: string[] = []
+    controller.subscribe(() => outcomes.push(controller.snapshot().outcome))
     await controller.load({})
     await controller.previewDisable(user(1), { teamResolutions: [], allowManualCleanup: false })
 
@@ -65,6 +67,7 @@ describe('EmployeeController', () => {
     refresh.resolve({ items: [user(2)], nextCursor: null })
     await Promise.all([first, second])
     expect(controller.snapshot().outcome).toBe('idle')
+    expect(outcomes).toEqual(expect.arrayContaining(['executing', 'unknown']))
   })
 
   it('临时密码只存在于 create 的即时返回值，不进入快照', async () => {

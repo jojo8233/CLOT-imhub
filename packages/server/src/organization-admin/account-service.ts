@@ -88,6 +88,7 @@ export class AccountAdminService {
       : await this.devices.previewOwnershipChange({
           accountId: account.id,
           previousOwnerUserId: account.ownerUserId,
+          platform: account.platform,
           connectionMode: account.connectionMode,
         }, { allowManualCleanup: normalized.input.allowManualCleanup })
     if (cleanup.unsupportedOnlineInstallations > 0 && !normalized.input.allowManualCleanup) {
@@ -184,6 +185,7 @@ export class AccountAdminService {
         ? await this.devices.enqueueOwnershipChange({
             accountId: accountRow.id,
             previousOwnerUserId: accountRow.owner_user_id,
+            platform: accountRow.platform,
             connectionMode: accountRow.connection_mode,
           }, { allowManualCleanup: verified.input.allowManualCleanup }, new DeviceRepo(transaction))
         : emptyCleanupPreview()
@@ -335,7 +337,7 @@ export async function loadAdminAccount(
   ]).where('id', '=', accountId).executeTakeFirst()
   if (!row) return null
   const tasks = await db.selectFrom('desktop_cleanup_tasks')
-    .select(['id', 'mode', 'state'])
+    .select(['id', 'installation_id', 'mode', 'reason', 'state', 'created_at'])
     .where('account_id', '=', accountId)
     .execute()
   const pending = tasks.filter(task => task.state === 'pending')
@@ -356,10 +358,16 @@ export async function loadAdminAccount(
     teamId: row.team_id,
     cleanupState,
     pendingCleanupCount: pending.length,
-    manualCleanupTaskIds: pending
+    manualCleanupTasks: pending
       .filter(task => task.mode === 'manual_required')
-      .map(task => task.id)
-      .sort(),
+      .sort((left, right) => left.created_at.getTime() - right.created_at.getTime()
+        || left.id.localeCompare(right.id))
+      .map(task => ({
+        id: task.id,
+        installationId: task.installation_id,
+        reason: task.reason,
+        createdAt: task.created_at.toISOString(),
+      })),
     revision: row.revision,
   }
 }

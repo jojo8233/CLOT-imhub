@@ -29,7 +29,7 @@ const accountResolution = z.object({
 const previewBody = z.object({
   targetUserId: z.string().uuid(),
   currentOwnerNextRole: z.enum(ADMIN_EDITABLE_ROLES),
-  currentOwnerTeamId: z.string().uuid().nullable(),
+  currentOwnerTeamIds: z.array(z.string().uuid()).max(100),
   teamResolutions: z.array(teamResolution).max(100),
   accountResolutions: z.array(accountResolution).max(10_000),
   currentOwnerBaseRevision: revision,

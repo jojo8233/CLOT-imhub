@@ -22,12 +22,19 @@ describe('TeamController', () => {
         409, 'conflict', 'REVISION_CONFLICT', { current },
       )),
     })
+    const outcomes: string[] = []
+    controller.subscribe(() => outcomes.push(controller.snapshot().outcome))
     await controller.load({})
-    await controller.previewChange(team(1), { managerUserId: 'manager-2' })
+    await controller.previewChange(team(1), {
+      managerUserId: 'manager-2', allowManualCleanup: false,
+    })
 
     await expect(controller.executeChange()).rejects.toMatchObject({ code: 'REVISION_CONFLICT' })
     expect(controller.snapshot().items[0]?.revision).toBe(2)
-    expect(controller.snapshot().draft).toEqual({ managerUserId: 'manager-2' })
+    expect(controller.snapshot().draft).toEqual({
+      managerUserId: 'manager-2', allowManualCleanup: false,
+    })
     expect(controller.snapshot().preview).toBeNull()
+    expect(outcomes).toEqual(expect.arrayContaining(['executing', 'conflict']))
   })
 })

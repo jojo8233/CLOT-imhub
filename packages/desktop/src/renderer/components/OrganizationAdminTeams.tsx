@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AdminMutationPreview, AdminTeam } from '@im-hub/shared'
 import { api, NetworkError } from '../api/client.js'
+import { previewWithManualCleanupFallback } from '../organization-admin/manual-cleanup.js'
 import { TeamController, type TeamControllerSnapshot } from '../organization-admin/team-controller.js'
 import { theme } from '../theme.js'
 import { AdminConfirmationDialog } from './AdminConfirmationDialog.js'
@@ -21,6 +22,8 @@ export function OrganizationAdminTeams({ ownerUserId }: { ownerUserId: string })
     outcome: TeamControllerSnapshot['outcome']
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => controller.subscribe(() => setSnapshot(controller.snapshot())), [controller])
 
   const refresh = useCallback(async () => {
     try {
@@ -56,7 +59,9 @@ export function OrganizationAdminTeams({ ownerUserId }: { ownerUserId: string })
     const managerUserId = window.prompt('新主管用户 ID', team.managerUserId ?? '')?.trim()
     if (!managerUserId || managerUserId === team.managerUserId) return
     try {
-      await controller.previewChange(team, { managerUserId })
+      await previewWithManualCleanupFallback(allowManualCleanup => (
+        controller.previewChange(team, { managerUserId, allowManualCleanup })
+      ))
       setSnapshot(controller.snapshot())
       setManagerTarget(team)
     } catch (cause) {
@@ -100,7 +105,9 @@ export function OrganizationAdminTeams({ ownerUserId }: { ownerUserId: string })
       return
     }
     try {
-      const result = await api.previewArchiveAdminTeam(team.id, team.revision)
+      const result = await previewWithManualCleanupFallback(allowManualCleanup => (
+        api.previewArchiveAdminTeam(team.id, team.revision, allowManualCleanup)
+      ))
       setArchiveTarget({ team, preview: result.preview, outcome: 'ready' })
     } catch (cause) {
       setError(message(cause, '归档团队预览失败'))

@@ -52,10 +52,12 @@ export class TeamAdminServiceError extends Error {
 interface ManagerChangeTokenInput {
   teamId: string
   managerUserId: string
+  allowManualCleanup: boolean
 }
 
 interface ArchiveTokenInput {
   teamId: string
+  allowManualCleanup: boolean
 }
 
 export class TeamAdminService {
@@ -178,7 +180,7 @@ export class TeamAdminService {
   async previewManagerChange(
     actor: Actor,
     teamId: string,
-    input: { managerUserId: string; baseRevision: number },
+    input: { managerUserId: string; baseRevision: number; allowManualCleanup: boolean },
   ): Promise<TeamMutationResult> {
     assertOwner(actor)
     const readRepo = new OrganizationReadRepo(this.db)
@@ -201,11 +203,33 @@ export class TeamAdminService {
       teamId,
       [candidate.id],
     )
+    const cleanup = { automatic: 0, manual: 0, unsupportedOnline: 0 }
+    for (const account of snapshot.accounts
+      .filter(row => row.owner_user_id === team.managerUserId)) {
+      const accountCleanup = await this.devices.previewOwnershipChange({
+        accountId: account.id,
+        previousOwnerUserId: account.owner_user_id,
+        platform: account.platform,
+        connectionMode: account.connection_mode,
+      }, { allowManualCleanup: input.allowManualCleanup })
+      cleanup.automatic += accountCleanup.pendingAutomatic
+      cleanup.manual += accountCleanup.manualRequired
+      cleanup.unsupportedOnline += accountCleanup.unsupportedOnlineInstallations
+    }
+    if (cleanup.unsupportedOnline > 0 && !input.allowManualCleanup) {
+      return { kind: 'blocked', blockers: [{
+        code: 'CLIENT_UPDATE_REQUIRED', count: cleanup.unsupportedOnline,
+      }] }
+    }
     const revisions = snapshotRevisions(snapshot)
     const issued = await this.operationTokens.issue<ManagerChangeTokenInput>({
       kind: 'change_team_manager',
       ownerUserId: actor.userId,
-      input: { teamId, managerUserId: input.managerUserId },
+      input: {
+        teamId,
+        managerUserId: input.managerUserId,
+        allowManualCleanup: input.allowManualCleanup,
+      },
       revisions,
     })
     return {
@@ -216,6 +240,8 @@ export class TeamAdminService {
           accountsTransferred: snapshot.accounts
             .filter(account => account.owner_user_id === team.managerUserId).length,
           membershipsChanged: 2,
+          cleanupAutomatic: cleanup.automatic,
+          cleanupManual: cleanup.manual,
         },
       },
     }
@@ -260,9 +286,11 @@ export class TeamAdminService {
         const cleanup = await this.devices.enqueueOwnershipChange({
           accountId: account.id,
           previousOwnerUserId: account.owner_user_id,
+          platform: account.platform,
           connectionMode: account.connection_mode,
-        }, {}, new DeviceRepo(transaction))
-        if (cleanup.unsupportedOnlineInstallations > 0) {
+        }, { allowManualCleanup: verified.input.allowManualCleanup }, new DeviceRepo(transaction))
+        if (cleanup.unsupportedOnlineInstallations > 0
+          && !verified.input.allowManualCleanup) {
           throw new TeamAdminServiceError('CLIENT_UPDATE_REQUIRED')
         }
         await transaction.updateTable('accounts').set(expression => ({
@@ -294,7 +322,7 @@ export class TeamAdminService {
   async previewArchive(
     actor: Actor,
     teamId: string,
-    input: { baseRevision: number },
+    input: { baseRevision: number; allowManualCleanup: boolean },
   ): Promise<TeamMutationResult> {
     assertOwner(actor)
     const team = await new OrganizationReadRepo(this.db).getTeam(teamId)
@@ -302,11 +330,29 @@ export class TeamAdminService {
     if (team.revision !== input.baseRevision) return { kind: 'conflict', current: team }
     if (team.disabledAt) return { kind: 'blocked', blockers: [{ code: 'TEAM_ARCHIVED', count: 1 }] }
     const snapshot = await this.snapshotTeamOperation(actor.userId, teamId)
+    const cleanup = { automatic: 0, manual: 0, unsupportedOnline: 0 }
+    for (const account of snapshot.accounts
+      .filter(row => row.owner_user_id === team.managerUserId)) {
+      const accountCleanup = await this.devices.previewOwnershipChange({
+        accountId: account.id,
+        previousOwnerUserId: account.owner_user_id,
+        platform: account.platform,
+        connectionMode: account.connection_mode,
+      }, { allowManualCleanup: input.allowManualCleanup })
+      cleanup.automatic += accountCleanup.pendingAutomatic
+      cleanup.manual += accountCleanup.manualRequired
+      cleanup.unsupportedOnline += accountCleanup.unsupportedOnlineInstallations
+    }
+    if (cleanup.unsupportedOnline > 0 && !input.allowManualCleanup) {
+      return { kind: 'blocked', blockers: [{
+        code: 'CLIENT_UPDATE_REQUIRED', count: cleanup.unsupportedOnline,
+      }] }
+    }
     const revisions = snapshotRevisions(snapshot)
     const issued = await this.operationTokens.issue<ArchiveTokenInput>({
       kind: 'archive_team',
       ownerUserId: actor.userId,
-      input: { teamId },
+      input: { teamId, allowManualCleanup: input.allowManualCleanup },
       revisions,
     })
     return {
@@ -318,6 +364,8 @@ export class TeamAdminService {
           accountsTransferred: snapshot.accounts
             .filter(account => account.owner_user_id === team.managerUserId).length,
           membershipsRemoved: snapshot.memberships.length,
+          cleanupAutomatic: cleanup.automatic,
+          cleanupManual: cleanup.manual,
         },
       },
     }
@@ -355,9 +403,11 @@ export class TeamAdminService {
           const cleanup = await this.devices.enqueueOwnershipChange({
             accountId: account.id,
             previousOwnerUserId: account.owner_user_id,
+            platform: account.platform,
             connectionMode: account.connection_mode,
-          }, {}, new DeviceRepo(transaction))
-          if (cleanup.unsupportedOnlineInstallations > 0) {
+          }, { allowManualCleanup: verified.input.allowManualCleanup }, new DeviceRepo(transaction))
+          if (cleanup.unsupportedOnlineInstallations > 0
+            && !verified.input.allowManualCleanup) {
             throw new TeamAdminServiceError('CLIENT_UPDATE_REQUIRED')
           }
         }
@@ -465,7 +515,7 @@ async function snapshotTeamRows(
   if (lock) teamQuery = teamQuery.forUpdate()
   const team = await teamQuery.executeTakeFirst()
   let accountQuery = db.selectFrom('accounts')
-    .select(['id', 'owner_user_id', 'connection_mode', 'revision'])
+    .select(['id', 'owner_user_id', 'platform', 'connection_mode', 'revision'])
     .where('team_id', '=', teamId).orderBy('id')
   if (lock) accountQuery = accountQuery.forUpdate()
   const accounts = await accountQuery.execute()

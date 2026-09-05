@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../../db/types.js'
 import type { MessageRouteDeps } from './messages.js'
@@ -13,6 +13,7 @@ let db: typeof import('../../db/client.js').db
 let hashPassword: typeof import('../../auth/password.js').hashPassword
 let verifyPassword: typeof import('../../auth/password.js').verifyPassword
 let verifySession: typeof import('../../auth/session.js').verifySession
+let hub: InstanceType<typeof import('../ws.js').WsHub>
 
 const insertedUserIds: string[] = []
 
@@ -56,7 +57,8 @@ beforeAll(async () => {
   hashPassword = passwordModule.hashPassword
   verifyPassword = passwordModule.verifyPassword
   verifySession = sessionModule.verifySession
-  app = await serverModule.buildServer({} as MessageRouteDeps, new wsModule.WsHub())
+  hub = new wsModule.WsHub()
+  app = await serverModule.buildServer({} as MessageRouteDeps, hub)
 })
 
 afterEach(async () => {
@@ -257,5 +259,33 @@ describe('organization authentication routes', () => {
       url: '/api/session/me',
       headers: { authorization: `Bearer ${replacementToken}` },
     })).statusCode).toBe(200)
+  })
+
+  it('自助改密提交后立即撤销该用户已经连接的旧 WebSocket', async () => {
+    const user = await insertUser({ password: 'synthetic-current-ws-password' })
+    const loginResponse = await login(user.email, 'synthetic-current-ws-password')
+    const oldToken = loginResponse.json<{ token: string }>().token
+    const socket = {
+      readyState: 1,
+      OPEN: 1,
+      send: vi.fn(),
+      close: vi.fn(),
+      on: vi.fn(),
+    }
+    hub.add(user.id, socket as never)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/session/password',
+      headers: { authorization: `Bearer ${oldToken}` },
+      payload: {
+        currentPassword: 'synthetic-current-ws-password',
+        newPassword: 'synthetic-next-ws-password',
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'session_revoked' }))
+    expect(socket.close).toHaveBeenCalledWith(4001, 'session revoked')
   })
 })
