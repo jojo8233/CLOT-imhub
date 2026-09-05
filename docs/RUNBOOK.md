@@ -407,7 +407,7 @@ Telegram：
 - 档案库查询矩阵与右栏一致：owner 全局、manager 当前带队团队、agent 本人账号、auditor 全局只读；
   筛选不可见账号只返回空页，不返回可用于枚举账号的存在性信息；
 - 客户档案只支持人工维护；产品已取消自动提取、提取建议和“重新提取”入口。公司内部关键词告警
-  已按 5.5 节实现；团队管理界面和管理后台尚未实现；
+  已按 5.5 节实现；公司内部组织与管理中心已按 5.6 节实现并通过自动化验证；
 - “翻译历史”页面已从功能中心删除；当前消息译文仍在会话气泡内显示，`message_translations` 仍用于
   当前译文缓存与恢复，但系统不提供翻译版本历史页；
 - WhatsApp Web 的可见 DOM 正文不会因本功能上传或形成中央消息归档；本功能没有修改三平台翻译、
@@ -452,6 +452,63 @@ Business Platform Cloud API Webhook 入站文字走统一消息仓储，会参�
 首版没有正则、邮件、企业微信 webhook、公开订阅、agent 申请/owner 审批告警权限。迁移与自动化
 验证也不能替代真实平台消息验收；真实验收必须另行授权，并遵守不记录正文、规则、业务标识或平台
 会话资料的约束。
+
+### 5.6 公司内部组织与管理中心（M4-4）
+
+M4-4 只供公司内部使用，不提供公网注册、邀请或客户入口。只有唯一启用的 `owner` 能看见并使用
+“管理中心”；`manager`、`auditor`、`agent` 的管理 API 固定返回 `403`。员工、团队和平台账号页签
+支持首次强制改密、即时撤权、团队生命周期、账号归属和 owner 原子转让；所有业务读取仍沿用原有
+RBAC 范围。
+
+组织管理依赖中心服务端和 PostgreSQL。部署时必须使用以下顺序，不能直接打开写开关：
+
+1. 在旧服务端仍运行时加载目标环境变量，执行只读体检：
+
+   ```bash
+   set -a; source .env; set +a
+   pnpm --filter @im-hub/server preflight
+   ```
+
+   “组织结构”必须通过；失败输出只有问题代码与数量，由管理员先人工修正 owner、主管、成员或账号
+   归属，不能让脚本自动猜测负责人。
+2. 备份数据库后执行 `pnpm db:migrate`，确认 `0016_organization_admin` 已应用。不要在真实组织数据上
+   运行 down migration。
+3. 部署新服务端，并保持 `.env` 中 `ORGANIZATION_ADMIN_WRITES_ENABLED=false`。此时普通聊天、档案和
+   告警不受影响，owner 只能核对管理中心的员工、团队、账号及清理状态列表；修改接口返回
+   `ADMIN_WRITES_DISABLED`。
+4. 升级 macOS 和 Windows 客户端。新版客户端必须支持 `session_revoked`、安装实例登记、挂载同步和
+   按账号分区清理；仍在线且未升级的 Telegram/WhatsApp 本地账号设备会默认阻断转移，
+   只有 owner 阅读影响后明确覆盖，才会改为逐项人工清理待办。离线设备不阻断服务端转移，
+   但其清理待办仍保留至设备再次同步。
+5. 让仍在使用的每台新版客户端至少完成一次公司登录和平台账号挂载同步。运维只核对安装实例、挂载
+   与待办数量，不导出设备凭证、平台标识、session/profile 路径或聊天正文。例如可在服务器本机执行
+   以下只读聚合：
+
+   ```sql
+   select count(*) as active_installations
+   from desktop_installations where revoked_at is null;
+   select count(*) as known_account_mounts from account_device_mounts;
+   select mode, state, count(*)
+   from desktop_cleanup_tasks group by mode, state order by mode, state;
+   ```
+6. owner 在管理中心核对员工、团队、唯一主管、账号负责人和设备清理状态；完成 macOS/Windows 人工
+   验收清单后，才把 `ORGANIZATION_ADMIN_WRITES_ENABLED=true` 并重启服务端。
+7. 所有员工重新登录一次。缺少 `sessionVersion` 的旧 JWT 会失效；不要通过恢复旧 token 绕过重新
+   登录。
+
+账号转移后，Telegram 与 WhatsApp Web 仅在新版客户端声明分区清理能力时自动清理已知旧挂载；离线、
+退役或旧版设备保留人工待办。单账号转移、员工停用、owner 转让、团队换主管和归档都遵循相同规则：
+默认阻断在线旧版客户端，只有 owner 在摘要前明确选择才改为人工待办。Signal 始终不自动删除共享 profile：公司必须在 Signal 官方“已关联
+设备”中人工解除，然后由 owner 在各自管理界面按旧安装实例逐项确认，不能一次关闭同账号的全部待办。
+确认只关闭所选待办，不代表 im-hub 擦除了 profile。
+已完成的清理任务保留 30 天后由后续设备同步清除。
+
+回滚时先把 `ORGANIZATION_ADMIN_WRITES_ENABLED=false` 并重启服务端；这只阻止新的组织修改，不会反转
+已经提交的停用、角色、团队、账号归属或 owner 转让。已提交状态必须用新的向前管理操作修正；待清理
+任务不能靠删除或强制完成冒充设备已清理。Signal 的 `manual_required` 只有在官方解除后才能确认。
+
+本检查点只完成自动化验证，尚未在真实 macOS/Windows 发布包上执行本节人工验收，也未对开发库或
+生产库运行 `0016`；启用写操作前必须补齐这些步骤。
 
 ---
 
