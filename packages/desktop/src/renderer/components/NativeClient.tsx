@@ -23,6 +23,7 @@ import {
 import { nativeControlGrantIsUsable } from '../native-control-grant.js'
 import { useStore } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
+import { whatsAppProductSurface, whatsAppWebAccount } from '../whatsapp-product-policy.js'
 import { EmptyHint, IconButton } from './ui.js'
 
 /**
@@ -111,9 +112,7 @@ export function nativeAccountIdsToMount(
   if (!supportsWebview) return []
   return accounts
     .filter(account => nativeClientSupported(account.platform)
-      && (account.platform !== 'whatsapp'
-        || account.connection_mode === 'adapter'
-        || account.connection_mode === 'web_shell')
+      && (account.platform !== 'whatsapp' || whatsAppWebAccount(account))
       && nativeAccountControllable(account, user)
       && desktopMountAllowed(account))
     .map(account => account.id)
@@ -143,9 +142,7 @@ export function ownedLocalAccountIds(
   return accounts.filter(account => nativeAccountControllable(account, user)
     && ((capabilities.webview
       && nativeClientSupported(account.platform)
-      && (account.platform !== 'whatsapp'
-        || account.connection_mode === 'adapter'
-        || account.connection_mode === 'web_shell'))
+      && (account.platform !== 'whatsapp' || whatsAppWebAccount(account)))
       || (capabilities.signalDesktop
         && account.platform === 'signal'
         && account.connection_mode === 'native_desktop')))
@@ -309,13 +306,11 @@ export function NativeClient() {
         Signal Desktop 宿主桥接不可用。<br />请重新启动 im-hub 桌面开发进程。
       </EmptyHint>
     )
-  } else if (active.platform === 'whatsapp'
-    && active.connection_mode !== 'adapter'
-    && active.connection_mode !== 'web_shell') {
+  } else if (whatsAppProductSurface(active) === 'legacy_cloud') {
     overlay = (
       <EmptyHint>
-        这个账号不是 WhatsApp 官方网页壳，不会加载 web.whatsapp.com。<br />
-        Business Platform 需要单独完成 Cloud API 授权与 Webhook 配置。
+        旧 Cloud 账号（当前产品不支持连接）。<br />
+        该账号不会加载 WhatsApp Web，也不会打开 Cloud 会话工作区。
       </EmptyHint>
     )
   } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform)) {
