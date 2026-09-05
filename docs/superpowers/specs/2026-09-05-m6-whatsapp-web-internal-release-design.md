@@ -1,7 +1,7 @@
 # M6 WhatsApp Web 公司内部发布设计
 
 日期：2026-09-05
-状态：已确认，待实施计划
+状态：Tasks 1–8 已实现并通过本机自动化/DMG 冒烟；GitHub Windows 包与 macOS/Windows 人工验收待完成
 
 ## 1. 背景与目标
 
@@ -194,6 +194,18 @@ partition、其他账号缓存或 im-hub 登录会话。
 im-hub-<version>-mac-<arch>-internal-unsigned.dmg
 im-hub-<version>-win-<arch>-internal-unsigned.exe
 ```
+
+每个平台安装包必须同行提供匹配版本/提交/平台/架构的非敏感 manifest，以及
+`internal-unsigned-third-party-licenses.json` 生产依赖许可证清单。缺少任一文件都视为构建失败，
+不得只分发安装包本体。
+
+专用脚本在 production build 后生成包含版本、固定来源哈希和全部 `out/` 文件哈希的本地证明；
+`electron-builder` 的 `beforePack` 钩子必须在同一环境中验证该证明，证明文件本身不进入安装包，
+专用脚本退出时必须删除证明，防止后续直接打包复用。
+直接运行打包器、使用开发构建残留、改变任一输出或改变来源都必须失败。打包器只写入唯一暂存目录，
+当前版本/平台/架构的安装包、manifest 和桌面依赖许可证清单全部完成后才发布；失败路径清理当前
+三件套，不得把旧版本或其他架构误写入 manifest。许可证清单去除本机路径，显式包含随包 Electron
+和 renderer 运行组件，并拒绝服务端专用依赖。
 
 配置为未来 Apple 签名/公证和 Windows Authenticode 保留环境变量接口。没有对应证书时不得运行
 伪签名步骤，也不得去掉 `internal-unsigned` 标记。

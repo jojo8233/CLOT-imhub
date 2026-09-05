@@ -814,3 +814,29 @@ integrated guest registered`，实际 ACI 首次绑定与 grant verify 成功；
 - Telegram 独立补丁开发服务为选择正确既有提交而重启；im-hub 服务端、官方 Signal 客户端与
   Telegram 服务端适配器没有重启。全程未记录或输出平台 profile/session、账号标识、消息正文、
   消息键、媒体引用、token、二维码、验证码或密钥。PR #19 仍未合并，Issue #12 仍未关闭。
+
+## 29. M6 WhatsApp Web 内部包自动化完成 checkpoint（2026-09-05）
+
+- 当前员工添加入口已收敛为 WhatsApp Web-only；Cloud API 服务端、schema、migration 和测试保留且
+  默认关闭。旧 `cloud_api` 账号仍可由 owner 管理，但会话区域只显示不可连接占位，不挂载 webview
+  或 Cloud 会话工作区。WhatsApp Web 可见 DOM 仍不进入中央归档、客户档案关联或关键词告警。
+- 内部包固定 `org.imhub.desktop`、`im-hub`、公司 HTTPS/WSS 来源和 `internal-unsigned` 标识；macOS
+  使用 DMG，Windows 使用 NSIS。安装包旁必须有只含构建元数据的 manifest 与生产依赖许可证清单，
+  Windows 同仓 PR/手动 workflow artifact 保留 7 天。打包前证明钩子校验当前 `out/` 哈希、版本与
+  固定来源；直接调用打包器、开发构建残留或来源不一致均失败。唯一暂存目录只发布精确匹配当前
+  版本/平台/架构的三件套，失败不留孤立安装包。更新仍为人工覆盖安装。
+- 最终评审修复提交 `4f4411a` 后，`pnpm typecheck` exit 0；完整 `pnpm test` 为 144 个测试文件、
+  1083 passed、0 failed；内部 production build 为 main 29、preload 37、renderer 170 modules。
+  保留域名 macOS 冒烟生成
+  `im-hub-0.1.0-internal.1-mac-arm64-internal-unsigned.dmg`、对应
+  `im-hub-0.1.0-internal.1-mac-arm64-internal-unsigned.manifest.json` 和许可证清单；manifest 精确记录
+  `4f4411a`。专用脚本退出后不保留一次性证明，随后即使带相同内部环境直接运行
+  `electron-builder` 仍为 exit 1；本次 DMG 内 `app.asar` 扫描确认公司构建
+  来源存在，`http://localhost:4000` / `ws://localhost:4000` 均无命中。
+- 许可证清单含 36 个桌面生产/随包运行组件，Electron、React、ReactDOM、Scheduler、QR 和 Zustand
+  均存在，
+  Fastify/Kysely/BullMQ/ioredis 等服务端包为 0，本机绝对路径为 0；最终 `release/` 只保留 DMG、
+  manifest、license 三个文件，没有旧版本、解包目录或暂存目录。
+- Signal Windows 宿主继续属于 M5，不纳入 M6 验收。本节只记录代码、自动化和保留域名 DMG 冒烟
+  事实；GitHub Windows 包尚待 Task 9 运行，macOS 安装只读验收与 Windows 安装/唯一一次用户确认
+  发送均尚未执行，不能提前标记通过。

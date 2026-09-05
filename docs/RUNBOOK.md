@@ -237,7 +237,8 @@ ConversationModel id、草稿正文、最终消息键、profile 或 token，也�
 `.env.example` 配置 `SIGNAL_CLI_BINARY` 和 `SIGNAL_DATA_DIR` 并重启服务端。用户可见 UI 不会
 再生成 CLI 二维码。
 
-WhatsApp Web 补丁模式不需要 Meta/Cloud 凭据：owner 创建的账号登记为
+WhatsApp 员工添加入口现在只提供 Web 版，不显示、探测或进入 Cloud API 授权。有权创建账号的员工
+创建后固定登记为
 `connection_mode=web_shell`，会话区域加载精确 `https://web.whatsapp.com`，二维码仍在页面内
 扫描，每个账号使用独立 Electron partition。页面登录后，窄 preload 从 WhatsApp 本地状态取得
 当前账号标识；服务端只允许 owner 首次绑定，后续身份不一致会撤销短时 control grant。账号标识、
@@ -255,9 +256,9 @@ partition 的独立 IndexedDB 保存 `attemptId`、首次 context revision、正
 点击页面原生发送按钮。只有观察到一条正文匹配、发送前不存在且带真实 `data-id` 的新出站 DOM
 消息后才报告成功；超时、结果丢失或进程重启后的 pending attempt 都禁止自动再点一次。成功由
 外壳 ACK 后删除账本记录。当前兼容层只提供可见纯文字双语和翻译坞发送，不把 DOM 消息回传为
-中央归档，也不承诺媒体、回应、删除或 WhatsApp 页面选择器的长期稳定性。历史
-`connection_mode=adapter` 账号保留原值，但页面身份绑定与补丁 bridge 按 `web_shell` 同等处理；
-不要为了启用补丁批量改写或删除账号。
+中央归档，也不进入客户档案关联或关键词告警，不承诺媒体、回应、删除或 WhatsApp 页面选择器的
+长期稳定性。历史 `connection_mode=adapter` 账号保留原值，但页面身份绑定与补丁 bridge 按
+`web_shell` 同等处理；不要为了启用补丁批量改写或删除账号。
 
 若页面没有出现，先检查网络和页面错误提示，不要清理其他平台或其他账号的 partition。登录后若长时间停在
 启动进度页，检查控制台是否出现 `aquire-persistent-storage-denied`；宿主只应允许精确
@@ -266,31 +267,50 @@ WhatsApp 主框架的 `persistent-storage`，不要为了绕过该错误放宽�
 `webview.isLoading()`；WhatsApp 登录后该标志可能长期为 `true`，应按已附着的精确 origin
 显示页面，同时由 preload 继续核对身份、会话与 composer，并用 `did-fail-load` 处理真实主框架错误。
 
-WhatsApp 统一消息链使用独立的 Business Platform `cloud_api` 路线。代码已接入 Meta Embedded
-Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 attempt/状态账本与 im-hub
-自有双语会话视图；默认仍关闭。`web_shell` 的 DOM 双语不等于 Cloud API 的可信 Webhook、中央归档
-和官方消息状态能力。启用 Cloud API 前按以下顺序准备：
+WhatsApp Business Platform `cloud_api` 的联合类型、数据库值、migration、Meta onboarding、Webhook、
+Graph client、加密 secret store 和自动化测试作为兼容后端继续保留，默认
+`WHATSAPP_CLOUD_ENABLED=false`。它不属于当前员工产品：添加账号页没有 Cloud 选项，也不调用 Cloud
+配置接口。已有 `cloud_api` 账号不改写、不删除，owner 仍可在管理中心转移或删除，但会话区域只显示
+“旧 Cloud 账号（当前产品不支持连接）”，不会挂载 WhatsApp webview 或 Cloud 会话工作区。
 
-1. 在 Meta Business/Developer 中准备应用、业务资质与 Embedded Signup configuration；给服务端
-   准备一个公开 HTTPS origin。Webhook callback 固定为
-   `${WHATSAPP_PUBLIC_BASE_URL}/api/webhooks/whatsapp`，验证值使用私下配置的
-   `WHATSAPP_WEBHOOK_VERIFY_TOKEN`，并订阅 WhatsApp `messages` 字段。
-2. 只在服务器本机填写 `.env.example` 已列出的 `WHATSAPP_*` 变量；不要把值粘贴到工单、聊天、
-   日志或 renderer。`WHATSAPP_SECRET_MASTER_KEY` 用 `openssl rand -base64 32` 生成。确认 URL、应用
-   和 secret 均就绪后才设 `WHATSAPP_CLOUD_ENABLED=true`。
-3. 执行 `pnpm db:migrate` 后重启服务端。owner 在“添加 WhatsApp 账号”中选择 Cloud API；桌面端只
-   打开公开 HTTPS onboarding 页面，一次性 ticket 走 URL fragment 并立即清除，Meta code 在同源
-   服务端交换。access token 只以 AES-256-GCM 密文保存，账号行只存 secret reference。
-4. WABA id、phone-number id 会由服务端调用 Graph API 复核并订阅 Webhook。入站纯文字直接使用
-   Webhook `messages[].id` 进入中央消息/翻译管线；中文译英文，其余语言译中文，然后在 Cloud API
-   自有会话视图中显示原文与译文。媒体目前只做安全忽略和聚合告警，不能当成已接入。
-5. 出站必须带 `attemptId`，账本绑定账号、会话、员工、目标、正文 SHA-256 与授权 revision；只有
-   Graph API 返回最终 `messages[].id` 后才报告成功。超时、响应丢失、2xx 缺少最终 ID 或进程重启
-   后都不得自动换 attempt 重发，结果保持未知并等待人工对账；禁止套用 Telegram 或 Signal ID 算法。
+不要为当前 M6 内部包配置或试开 Cloud API。未来若公司重新批准该路线，必须另开设计与真实 Meta
+验收；不能把保留的代码和自动化写成已交付能力，也不能把 WhatsApp Web DOM id 当作 Cloud `wamid`。
 
-在真实 Meta 配置完成前不要重启当前服务端来“试开” Cloud API：缺少任何必需变量都会被配置
-校验明确拒绝。第一次真实续验最多使用一条无敏感纯文字，先验证签名 Webhook、唯一落库、双语
-显示和最终平台 ID，再另行扩大媒体或模板消息范围。
+### 2.8 WhatsApp Web 内部无签名安装包
+
+M6 内部包固定 `appId=org.imhub.desktop`、product name `im-hub`，手动覆盖安装且没有自动更新。
+macOS 产物为 DMG，Windows 产物为当前用户安装、可选择目录的 NSIS EXE；两者名称和应用内都明确
+标记 `internal-unsigned`。构建期必须固定一个无凭据、无路径的公司 HTTPS origin，并由同一配置派生
+WSS；内部包缺少或收到非法地址时直接失败，绝不回退 localhost。员工电脑不需要安装 Node、
+PostgreSQL、Redis 或翻译服务。
+
+只能通过 `package:internal:mac` / `package:internal:win` 生成可分发候选。脚本先为当前 `out/` 文件、
+版本和固定来源生成哈希证明，`electron-builder` 的 `beforePack` 钩子再次校验；直接打包、开发构建
+残留、来源不一致或文件被改动都会失败；脚本退出时删除该一次性证明，不能供后续直接打包复用。
+安装包先在唯一暂存目录生成，只有精确匹配当前版本/平台/
+架构的安装包、manifest 和许可证清单全部成功后才一起移入 `release/`；失败时不保留本版本的孤立
+安装包。许可证清单只枚举桌面依赖，去除本机绝对路径，并必须包含 Electron、React/ReactDOM、
+QR 与 Zustand，不得混入 Fastify、Kysely、BullMQ 或 Redis 客户端等服务端依赖。
+
+保留域名只用于验证打包链路，生成物不可分发：
+
+```bash
+IM_HUB_SERVER_URL=https://imhub.example.test pnpm --filter @im-hub/desktop package:internal:mac
+```
+
+生成真实内部包时，操作员先从批准的本地部署环境加载实际 `IM_HUB_SERVER_URL`，不要 `echo`、复制到
+命令历史、文档或工单；随后运行同一 `package:internal:mac` 命令。GitHub Environment
+`internal-test` 必须配置名为 `IM_HUB_SERVER_URL` 的配置变量，值不进入仓库或本文档。Windows 工作流
+只为同仓 PR 或合并后的手动触发构建，artifact 精确保留 7 天。每个平台产物必须同时带对应 manifest
+和 `internal-unsigned-third-party-licenses.json` 许可证清单，否则不得分发。
+
+当前 macOS 冒烟构建只证明无签名 DMG 可以生成且包内 renderer 没有服务端 localhost 回退；macOS
+安装/只读检查与 Windows 安装/单条受控发送均尚未执行，不能提前记录为通过。Signal Windows 宿主
+仍属于 M5，不进入本 M6 验收。
+
+回滚时停止分发新包并覆盖安装上一内部版本，不删除 `userData`、账号 partition 或平台 profile。
+卸载、换机、离职或账号转移前，先完成应用内对应清理任务，并在 WhatsApp 官方“已关联设备”中人工
+解除目标设备；不能把卸载或删除本地目录记作官方解除完成。
 
 ---
 
@@ -304,6 +324,8 @@ Signup、WABA Webhook、Graph 纯文字发送、加密 secret store、发送 att
 | 跑类型检查 | `pnpm typecheck` |
 | 跑 migration | `pnpm db:migrate` |
 | 灌/重灌演示数据 | `pnpm --filter @im-hub/server seed` |
+| 构建 macOS 内部包 | `pnpm --filter @im-hub/desktop package:internal:mac`（先安全加载实际 `IM_HUB_SERVER_URL`） |
+| 构建 Windows 内部包 | GitHub `Windows internal package` 工作流（`internal-test` Environment） |
 
 服务端、migration、seed 和数据库测试需要先加载 `.env`；纯桌面构建、桌面开发和
 `typecheck` 不需要加载服务端密钥。
@@ -388,7 +410,7 @@ Telegram：
 - [ ] 编辑入站文字后旧译文立即消失，只有新 revision 的译文可以重新出现；重开 Signal 后由中央快照恢复
 - [ ] WhatsApp `web_shell` 登录后，当前可见的既有及新纯文字气泡按中英文方向显示译文；滚动加载后也会补译，选择器失效必须出现可见错误
 - [ ] WhatsApp 翻译坞只在新出站 DOM `data-id` 确认后显示成功；制造结果未知时相同 attempt 不得重复点击发送
-- [ ] WhatsApp `cloud_api` 代码已具备 WABA Webhook + im-hub 自有双语会话视图；配置真实 Meta 授权后用最多一条无敏感纯文字续验
+- [ ] WhatsApp 旧 `cloud_api` 账号只显示不可连接占位，仍可由 owner 在管理中心转移或删除；当前员工添加入口不得出现 Cloud 授权
 - [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
 
 ### 5.4 客户档案库（M4-1/M4-2）
@@ -548,16 +570,18 @@ P0 验收范围内已确认、但**属于设计内已知限制、不是 bug**的
   已进入开发态。M5/M6 现按优先级并行：Signal Desktop 8.25.0 已完成独立真实关联、
   同一物理窗口承载、冷启动恢复、跨平台标签切换和原生文字/图片/贴纸发送；入站文字 bridge
   已完成代码、自动化验证和一条真实消息的唯一落库证据；未 ACK 事件的 IndexedDB outbox、
-  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp `web_shell` 已按用户确认的
+  dead-letter 运维、故障提示和真实跨进程续收证据也已完成。WhatsApp 当前员工入口仅为
+  `web_shell`，已按用户确认的
   TranGPT 式模式加入 owner-only 身份绑定、可见纯文字 DOM 双语、当前会话/草稿桥接和发送 attempt
-  账本；它仍不是稳定消息协议，也没有中央 DOM 消息归档。独立 `cloud_api` 已完成授权、Webhook、
-  纯文字收发账本和自有双语视图的代码与自动化，但尚未配置真实 Meta 应用和公开 HTTPS 回调。
+  账本；它仍不是稳定消息协议，也没有中央 DOM 消息归档，不向客户档案或关键词告警供数。独立
+  `cloud_api` 的服务端、schema 和测试仍保留但默认关闭；员工界面不提供创建/授权入口，旧 Cloud
+  账号只可管理且不可进入会话。
   Signal 图片/贴纸结构化元数据的真实唯一落库已通过；附件二进制、其他
   入站媒体尚未接入；Signal 编辑/删除/回应真实续验已完成，当前会话与可见原生草稿翻译写入也已
   通过真实客户端续验。纯文字自动发送的真实单条送达与最终 ID 主链已通过；a24 的成功态 UI 竞态
-  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp Cloud API 尚无真实授权、
-  Webhook 回调和单条消息证据，不能当成完整接入。Signal 正式安装包、上游更新和 WhatsApp
-  Business Platform 闭环仍待后续，Zoom
+  已在 a25 修复并自动化验证，但按单条上限未再次真实发送；WhatsApp Cloud API 不属于当前员工
+  产品，不能因后端代码存在而写成已接入。WhatsApp Web 的内部无签名打包已实现，macOS/Windows
+  人工验收仍待执行；Signal 正式安装包与 Windows 宿主继续属于 M5，Zoom
   延后到 M8。
   M3-3/M3-4 已接通 Telegram context/composer 与持久消息 outbox，
   约定范围的真实故障矩阵已完成；shadow 对账和安装包分发仍未完成，不能当成已上线能力。
