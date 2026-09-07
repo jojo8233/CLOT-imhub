@@ -49,7 +49,10 @@ async function createWindow(): Promise<void> {
       process.env.IM_HUB_SERVER_URL,
     )
     const wsUrl = desktopWebSocketUrl(compiledInternalWsUrl(), serverUrl)
-    const renderer = await startRendererServer({ connectSources: [serverUrl, wsUrl] })
+    const renderer = await startRendererServer({
+      mainOutputDirectory: import.meta.dirname,
+      connectSources: [serverUrl, wsUrl],
+    })
     win.once('closed', () => { renderer.server.close() })
     try {
       await win.loadURL(renderer.url)
