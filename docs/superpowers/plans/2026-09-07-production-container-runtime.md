@@ -19,7 +19,7 @@
 - Redis uses AOF and a persistent volume; PostgreSQL, TDLib, Signal fallback data, Caddy data/config/logs use separate persistent volumes.
 - Production files under `/etc/im-hub` are mode `600` and never copied into Git/build context/image layers or printed by validation commands.
 - No deployment/rollback script may run `docker compose down -v`, prune named volumes, or execute migration `down()`.
-- `WHATSAPP_CLOUD_ENABLED=false`, `DEFAULT_TRANSLATION_PROVIDER=deepl`, `TRUST_PROXY_HOPS=1`, and exact origin `https://imhub.jojo2333.net` are fixed production policy.
+- `WHATSAPP_CLOUD_ENABLED=false`, `DEFAULT_TRANSLATION_PROVIDER=deepl`, `TRUSTED_PROXY_CIDRS=172.30.0.2/32`, and exact origin `https://imhub.jojo2333.net` are fixed production policy.
 
 ---
 
@@ -188,6 +188,10 @@ services:
 ```
 
 Add a one-shot `migrate` service using the same image, `postgres:16` with `pg_isready`, `redis:7` with `--appendonly yes --requirepass`, and `caddy:2` with only `80:80` and `443:443`. Pin image major versions; release scripts tag the app with exact SHA.
+
+Define `edge` with a fixed non-overlapping IPv4 subnet `172.30.0.0/24`, assign Caddy `172.30.0.2`, and inject
+`TRUSTED_PROXY_CIDRS=172.30.0.2/32` into the application policy. The application must never use
+`trustProxy: true` or numeric hop-count trust.
 
 - [ ] **Step 4: Add Caddy TLS, WebSocket proxy, logging, and health policy**
 

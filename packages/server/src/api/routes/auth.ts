@@ -10,6 +10,7 @@ import {
 } from '../../auth/initial-password.js'
 import { signSession } from '../../auth/session.js'
 import type { WsHub } from '../ws.js'
+import type { AuthRateLimits } from '../rate-limit.js'
 
 const loginBody = z.object({
   email: z.string().email(),
@@ -39,10 +40,11 @@ const DUMMY_HASH = await hashPassword('timing-equalizer-not-a-real-password')
 
 export interface AuthRouteDeps {
   hub: WsHub
+  rateLimits: AuthRateLimits
 }
 
 export async function authRoutes(app: FastifyInstance, deps: AuthRouteDeps): Promise<void> {
-  app.post('/api/auth/login', async (req, reply) => {
+  app.post('/api/auth/login', { preHandler: deps.rateLimits.guardLogin }, async (req, reply) => {
     const parsed = loginBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 
@@ -97,7 +99,9 @@ export async function authRoutes(app: FastifyInstance, deps: AuthRouteDeps): Pro
     } satisfies LoginResponse
   })
 
-  app.post('/api/auth/initial-password/complete', async (req, reply) => {
+  app.post('/api/auth/initial-password/complete', {
+    preHandler: deps.rateLimits.guardInitialPassword,
+  }, async (req, reply) => {
     const parsed = initialPasswordBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 
@@ -171,7 +175,9 @@ export async function authRoutes(app: FastifyInstance, deps: AuthRouteDeps): Pro
     } satisfies LoginResponse
   })
 
-  app.post('/api/session/password', async (req, reply) => {
+  app.post('/api/session/password', {
+    preHandler: deps.rateLimits.guardPasswordChange,
+  }, async (req, reply) => {
     const parsed = changePasswordBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' })
 

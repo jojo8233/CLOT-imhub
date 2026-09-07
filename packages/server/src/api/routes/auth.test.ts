@@ -14,6 +14,7 @@ let hashPassword: typeof import('../../auth/password.js').hashPassword
 let verifyPassword: typeof import('../../auth/password.js').verifyPassword
 let verifySession: typeof import('../../auth/session.js').verifySession
 let hub: InstanceType<typeof import('../ws.js').WsHub>
+let buildServer: typeof import('../server.js').buildServer
 
 const insertedUserIds: string[] = []
 
@@ -58,7 +59,8 @@ beforeAll(async () => {
   verifyPassword = passwordModule.verifyPassword
   verifySession = sessionModule.verifySession
   hub = new wsModule.WsHub()
-  app = await serverModule.buildServer({} as MessageRouteDeps, hub)
+  buildServer = serverModule.buildServer
+  app = await buildServer({} as MessageRouteDeps, hub)
 })
 
 afterEach(async () => {
@@ -287,5 +289,167 @@ describe('organization authentication routes', () => {
     expect(response.statusCode).toBe(200)
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'session_revoked' }))
     expect(socket.close).toHaveBeenCalledWith(4001, 'session revoked')
+  })
+
+  it('第十一次同账号登录在密码工作前被统一限速', async () => {
+    const known = await insertUser({ password: 'synthetic-known-password' })
+    const limitedApp = await buildServer(
+      {} as MessageRouteDeps,
+      new (await import('../ws.js')).WsHub(),
+      { trustedProxyCidrs: ['127.0.0.1'] },
+    )
+
+    try {
+      const scenarios = [
+        { email: 'missing-rate-limit-user@example.test', clientIp: '198.51.100.10' },
+        { email: known.email, clientIp: '198.51.100.20' },
+      ]
+      const blockedBodies: unknown[] = []
+
+      for (const scenario of scenarios) {
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          const response = await limitedApp.inject({
+            method: 'POST',
+            url: '/api/auth/login',
+            headers: { 'x-forwarded-for': scenario.clientIp },
+            payload: { email: scenario.email, password: 'synthetic-wrong-password' },
+          })
+          expect(response.statusCode).toBe(401)
+          expect(response.json()).toEqual({ error: 'invalid credentials' })
+        }
+
+        const blocked = await limitedApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          headers: { 'x-forwarded-for': scenario.clientIp },
+          payload: { email: scenario.email, password: 'synthetic-wrong-password' },
+        })
+        expect(blocked.statusCode).toBe(429)
+        blockedBodies.push(blocked.json())
+      }
+
+      expect(blockedBodies[0]).toEqual({
+        error: 'too many requests',
+        retryAfterSeconds: expect.any(Number),
+      })
+      expect(blockedBodies[1]).toEqual(blockedBodies[0])
+    } finally {
+      await limitedApp.close()
+    }
+  })
+
+  it('第三十一次同 IP 登录在轮换邮箱时仍被限速', async () => {
+    const limitedApp = await buildServer(
+      {} as MessageRouteDeps,
+      new (await import('../ws.js')).WsHub(),
+      { trustedProxyCidrs: ['127.0.0.1'] },
+    )
+
+    try {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const response = await limitedApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          headers: { 'x-forwarded-for': '198.51.100.30' },
+          payload: {
+            email: `rotating-login-${attempt}@example.test`,
+            password: 'synthetic-wrong-password',
+          },
+        })
+        expect(response.statusCode).toBe(401)
+      }
+
+      const blocked = await limitedApp.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        headers: { 'x-forwarded-for': '198.51.100.30' },
+        payload: {
+          email: 'rotating-login-30@example.test',
+          password: 'synthetic-wrong-password',
+        },
+      })
+      expect(blocked.statusCode).toBe(429)
+      expect(blocked.json()).toEqual({
+        error: 'too many requests',
+        retryAfterSeconds: expect.any(Number),
+      })
+    } finally {
+      await limitedApp.close()
+    }
+  })
+
+  it('第十一次首次改密尝试在 token 校验前被限速', async () => {
+    const limitedApp = await buildServer({} as MessageRouteDeps, new (await import('../ws.js')).WsHub())
+
+    try {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const response = await limitedApp.inject({
+          method: 'POST',
+          url: '/api/auth/initial-password/complete',
+          headers: { authorization: `InitialPassword synthetic-invalid-setup-token-${attempt}` },
+          payload: { newPassword: 'synthetic-replacement-password' },
+        })
+        expect(response.statusCode).toBe(401)
+      }
+
+      const blocked = await limitedApp.inject({
+        method: 'POST',
+        url: '/api/auth/initial-password/complete',
+        headers: { authorization: 'InitialPassword synthetic-invalid-setup-token-10' },
+        payload: { newPassword: 'synthetic-replacement-password' },
+      })
+      expect(blocked.statusCode).toBe(429)
+      expect(blocked.json()).toEqual({
+        error: 'too many requests',
+        retryAfterSeconds: expect.any(Number),
+      })
+    } finally {
+      await limitedApp.close()
+    }
+  })
+
+  it('第十一次已登录用户改密尝试在密码校验前被限速', async () => {
+    const user = await insertUser({ password: 'synthetic-password-rate-limit-current' })
+    const limitedApp = await buildServer({} as MessageRouteDeps, new (await import('../ws.js')).WsHub())
+
+    try {
+      const loginResponse = await limitedApp.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { email: user.email, password: 'synthetic-password-rate-limit-current' },
+      })
+      expect(loginResponse.statusCode).toBe(200)
+      const token = loginResponse.json<{ token: string }>().token
+
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const response = await limitedApp.inject({
+          method: 'POST',
+          url: '/api/session/password',
+          headers: { authorization: `Bearer ${token}` },
+          payload: {
+            currentPassword: 'synthetic-wrong-current-password',
+            newPassword: 'synthetic-replacement-password',
+          },
+        })
+        expect(response.statusCode).toBe(403)
+      }
+
+      const blocked = await limitedApp.inject({
+        method: 'POST',
+        url: '/api/session/password',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          currentPassword: 'synthetic-wrong-current-password',
+          newPassword: 'synthetic-replacement-password',
+        },
+      })
+      expect(blocked.statusCode).toBe(429)
+      expect(blocked.json()).toEqual({
+        error: 'too many requests',
+        retryAfterSeconds: expect.any(Number),
+      })
+    } finally {
+      await limitedApp.close()
+    }
   })
 })

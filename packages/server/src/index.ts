@@ -43,6 +43,10 @@ const healthRedis = new Redis(config.REDIS_URL, {
   connectTimeout: 3000,
   maxRetriesPerRequest: 1,
 })
+const rateLimitRedis = new Redis(config.REDIS_URL, {
+  connectTimeout: 3000,
+  maxRetriesPerRequest: 1,
+})
 let applicationInitialized = false
 
 const gateway = new TranslationGateway(
@@ -409,6 +413,7 @@ const app = await buildServer({
     refresher: telegramShadowRefresher,
   },
 }, hub, {
+  rateLimitRedis,
   healthChecks: {
     database: async () => {
       await sql`select 1`.execute(db)
@@ -442,7 +447,7 @@ const keywordAlertServer = await startKeywordAlertServerLifecycle({
   },
   closeApp: () => app.close(),
   quitRedis: async () => {
-    await Promise.all([redis.quit(), healthRedis.quit()])
+    await Promise.all([redis.quit(), healthRedis.quit(), rateLimitRedis.quit()])
   },
   destroyDb: () => db.destroy(),
   onError: (code, count) => {

@@ -4,7 +4,7 @@
 
 **Goal:** Make the Fastify application safe to expose through the production Caddy/Cloudflare path with validated configuration, health probes, Redis-backed authentication limits, and a one-time owner bootstrap.
 
-**Architecture:** Refactor environment parsing into a testable production-aware boundary, inject health/rate-limit dependencies into `buildServer`, and keep bootstrap as a separate CLI that can only transact against an empty database. Caddy is the sole network hop to the application, so Fastify trusts exactly one proxy hop and rate-limit keys use normalized client IP plus a hash of normalized email.
+**Architecture:** Refactor environment parsing into a testable production-aware boundary, inject health/rate-limit dependencies into `buildServer`, and keep bootstrap as a separate CLI that can only transact against an empty database. Caddy is the sole network peer allowed to forward client addresses, so Fastify trusts only its configured container CIDR and rate-limit keys use normalized client IP plus a hash of normalized email.
 
 **Tech Stack:** TypeScript ESM, Fastify 5, `@fastify/rate-limit` 11.2.0+, ioredis, Kysely/PostgreSQL, Argon2id, Vitest, pnpm 10.
 
@@ -16,7 +16,7 @@
 - Work only in `/private/tmp/im-hub-m3-outbox`; do not modify either main checkout or any production server during this plan.
 - Use Node.js 22+ and pnpm 10; production mode is explicit and must reject development placeholder secrets.
 - Use `@fastify/rate-limit` version `>=11.2.0` because earlier versions have an IPv6 key-normalization bypass; keep `ipv6Subnet: 64`. See the [official compatibility table](https://github.com/fastify/fastify-rate-limit#compatibility) and [security advisory](https://github.com/fastify/fastify-rate-limit/security/advisories/GHSA-grpc-p53c-r64v).
-- Trust one proxy hop only when production config says so; do not trust arbitrary public forwarding headers.
+- Trust only the exact direct Caddy container CIDR; do not use Fastify's disabled numeric hop-count mode or trust arbitrary public forwarding headers.
 - Never print or commit password values, database/Redis/JWT/provider secrets, token contents, customer text, QR, code, 2FA, or platform sessions.
 - Health responses contain status only, not version, account count, connection strings, queues, errors, or stack traces.
 - Production owner bootstrap reads the password without echo and refuses any non-empty user table.
@@ -32,7 +32,7 @@
 
 **Interfaces:**
 - Produces: `parseConfig(env: NodeJS.ProcessEnv): Config`.
-- Produces: `APP_ENV: 'development' | 'test' | 'production'`, `PUBLIC_ORIGIN`, `TRUST_PROXY_HOPS`.
+- Produces: `APP_ENV: 'development' | 'test' | 'production'`, `PUBLIC_ORIGIN`, `TRUSTED_PROXY_CIDRS`.
 - Consumes: provider configuration from the translation plan.
 
 - [ ] **Step 1: Write failing production config tests**
@@ -44,15 +44,15 @@ const minimumEnv: NodeJS.ProcessEnv = {
   JWT_SECRET: 'synthetic-production-jwt-secret-with-more-than-32-characters',
 }
 
-it('accepts an exact HTTPS production origin and one trusted proxy hop', () => {
+it('accepts an exact HTTPS production origin and one trusted Caddy CIDR', () => {
   const config = parseConfig({
     ...minimumEnv,
     APP_ENV: 'production',
     PUBLIC_ORIGIN: 'https://imhub.jojo2333.net',
-    TRUST_PROXY_HOPS: '1',
+    TRUSTED_PROXY_CIDRS: '172.30.0.2/32',
   })
   expect(config.PUBLIC_ORIGIN).toBe('https://imhub.jojo2333.net')
-  expect(config.TRUST_PROXY_HOPS).toBe(1)
+  expect(config.TRUSTED_PROXY_CIDRS).toEqual(['172.30.0.2/32'])
 })
 
 it.each([
@@ -65,7 +65,7 @@ it.each([
 })
 ```
 
-Also assert production rejects `JWT_SECRET=change-me-in-production`, the development DB password/URL, `TRUST_PROXY_HOPS` other than `1`, and `WHATSAPP_CLOUD_ENABLED=true` when the internal Web-only release policy is active.
+Also assert production rejects `JWT_SECRET=change-me-in-production`, the development DB password/URL, a missing/invalid/non-singleton `TRUSTED_PROXY_CIDRS`, and `WHATSAPP_CLOUD_ENABLED=true` when the internal Web-only release policy is active.
 
 - [ ] **Step 2: Run config tests and verify missing parser failures**
 
@@ -80,8 +80,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
   return schema.superRefine((value, ctx) => {
     if (value.APP_ENV !== 'production') return
     assertExactHttpsOrigin(value.PUBLIC_ORIGIN, ctx)
-    if (value.TRUST_PROXY_HOPS !== 1) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TRUST_PROXY_HOPS'], message: 'production requires one trusted proxy hop' })
+    if (value.TRUSTED_PROXY_CIDRS.length !== 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TRUSTED_PROXY_CIDRS'], message: 'production requires the direct Caddy CIDR' })
     }
   }).parse(env)
 }
@@ -89,7 +89,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
 export const config = parseConfig(process.env)
 ```
 
-Keep the existing WhatsApp Cloud cross-field validation. `.env.example` lists `APP_ENV=development`, `PUBLIC_ORIGIN=` and `TRUST_PROXY_HOPS=0` with no real secrets.
+Keep the existing WhatsApp Cloud cross-field validation. `.env.example` lists `APP_ENV=development`, `PUBLIC_ORIGIN=` and `TRUSTED_PROXY_CIDRS=` with no real secrets.
 
 - [ ] **Step 4: Run config and current server tests**
 
@@ -219,7 +219,7 @@ it('rejects the eleventh login in fifteen minutes with the same body for known a
 })
 ```
 
-Add proxy tests proving `TRUST_PROXY_HOPS=0` ignores injected XFF and `TRUST_PROXY_HOPS=1` uses exactly the right-most address supplied by the sole Caddy hop. Include IPv4-mapped IPv6 and `/64` IPv6 rotation cases.
+Add proxy tests proving an empty trusted CIDR list ignores injected XFF and an exact direct Caddy CIDR uses only the right-most forwarded address. Include IPv4-mapped IPv6 and `/64` IPv6 rotation cases.
 
 - [ ] **Step 3: Run focused tests and verify the missing limiter**
 
@@ -239,9 +239,9 @@ return `login-account:${normalizeIP(request.ip, 64)}:${emailHash}`
 
 Run both login guards after body parsing but before database/password work. Return identical invalid-credential responses for nonexistent, disabled, expired, and wrong-password cases. Never log the rate-limit key.
 
-- [ ] **Step 5: Wire one trusted Caddy hop and verify**
+- [ ] **Step 5: Wire the exact trusted Caddy peer and verify**
 
-Configure Fastify with `trustProxy: config.TRUST_PROXY_HOPS === 0 ? false : 1`. Production `index.ts` passes a dedicated Redis connection for rate limiting; tests use an isolated/in-memory store and fake clock.
+Configure Fastify with `trustProxy: config.TRUSTED_PROXY_CIDRS.length > 0 ? config.TRUSTED_PROXY_CIDRS : false`. Fastify 5.12+ deliberately disables numeric hop-count trust because it cannot authenticate the direct peer. Production `index.ts` passes a dedicated Redis connection for rate limiting; tests use an isolated/in-memory store and fake clock.
 
 Run: `pnpm exec vitest run packages/server/src/api/rate-limit.test.ts packages/server/src/api/routes/auth.test.ts packages/server/src/api/server.test.ts`
 
@@ -425,7 +425,7 @@ git commit -m "feat(server): add production readiness preflight"
 
 - [ ] **Step 1: Document production-only commands and boundaries**
 
-Add a production section describing `preflight:production`, interactive `bootstrap-owner`, health paths, one trusted Caddy hop, rate limits, no seed, and provider availability. Show variable names only.
+Add a production section describing `preflight:production`, interactive `bootstrap-owner`, health paths, the exact trusted Caddy CIDR, rate limits, no seed, and provider availability. Show variable names only.
 
 - [ ] **Step 2: Run focused server verification**
 

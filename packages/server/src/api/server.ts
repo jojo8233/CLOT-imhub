@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
+import rateLimit from '@fastify/rate-limit'
+import type Redis from 'ioredis'
 import type { Actor } from '@im-hub/shared'
 import { config } from '../config.js'
 import { db } from '../db/client.js'
@@ -47,6 +49,7 @@ import {
   translationPreferenceRoutes,
 } from './routes/translation-preferences.js'
 import { healthRoutes, type HealthChecks } from './routes/health.js'
+import { createAuthRateLimits } from './rate-limit.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -80,6 +83,8 @@ export interface BuildServerOptions {
   actorRepo?: ActorRepo
   deviceService?: DeviceService
   healthChecks?: HealthChecks
+  rateLimitRedis?: Redis
+  trustedProxyCidrs?: string[]
 }
 
 export interface BuildServerDeps extends MessageRouteDeps {
@@ -107,6 +112,7 @@ export async function buildServer(
     redis: async (): Promise<void> => {},
     initialized: (): boolean => false,
   }
+  const trustedProxyCidrs = options.trustedProxyCidrs ?? config.TRUSTED_PROXY_CIDRS
   const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
   const readRepo = deps.organizationAdmin?.readRepo ?? new OrganizationReadRepo(db)
   const operationTokens = new AdminOperationTokenService(config.JWT_SECRET)
@@ -136,6 +142,7 @@ export async function buildServer(
       ?? config.ORGANIZATION_ADMIN_WRITES_ENABLED,
   }
   const app = Fastify({
+    trustProxy: trustedProxyCidrs.length > 0 ? trustedProxyCidrs : false,
     logger: {
       redact: {
         paths: ['req.headers.authorization', 'req.headers.x-im-hub-device-credential'],
@@ -162,6 +169,14 @@ export async function buildServer(
   })
 
   await app.register(websocket)
+  await app.register(rateLimit, {
+    global: false,
+    redis: options.rateLimitRedis,
+    skipOnError: false,
+    ipv6Subnet: 64,
+    nameSpace: 'im-hub-auth-rate-limit-',
+  })
+  const authRateLimits = createAuthRateLimits(app)
   await app.register(async instance => healthRoutes(instance, healthChecks))
 
   app.addHook('onRequest', async (req, reply) => {
@@ -187,7 +202,7 @@ export async function buildServer(
     }
   })
 
-  await app.register(async instance => authRoutes(instance, { hub }))
+  await app.register(async instance => authRoutes(instance, { hub, rateLimits: authRateLimits }))
   // safeStorage 中的 user.role 只是上次登录快照。原生客户端控制门禁必须
   // 在恢复会话后用服务端每请求实时加载的 actor 刷新，避免已改为 auditor
   // 的用户继续按旧 agent 快照挂载平台会话。

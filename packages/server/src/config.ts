@@ -1,10 +1,32 @@
+import { isIP } from 'node:net'
 import { z } from 'zod'
 import { parseTelegramTdlibShadowAccountIds } from './shadow/rollout.js'
+
+function parseTrustedProxyCidrs(value: string, ctx: z.RefinementCtx): string[] {
+  if (value.trim() === '') return []
+  const entries = value.split(',').map(entry => entry.trim())
+  const valid = entries.every((entry) => {
+    const [address, prefix, extra] = entry.split('/')
+    const version = address ? isIP(address) : 0
+    if (extra !== undefined || version === 0 || !prefix || !/^\d+$/.test(prefix)) return false
+    const bits = Number(prefix)
+    return bits >= 0 && bits <= (version === 4 ? 32 : 128)
+  })
+  if (!valid) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'TRUSTED_PROXY_CIDRS 必须是逗号分隔的 IPv4/IPv6 CIDR',
+    })
+    return z.NEVER
+  }
+  return [...new Set(entries)]
+}
 
 const schema = z.object({
   APP_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PUBLIC_ORIGIN: z.string().default(''),
-  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(1).default(0),
+  TRUSTED_PROXY_CIDRS: z.string().default('')
+    .transform((value, ctx) => parseTrustedProxyCidrs(value, ctx)),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   JWT_SECRET: z.string()
@@ -69,11 +91,11 @@ const schema = z.object({
       })
     }
 
-    if (value.TRUST_PROXY_HOPS !== 1) {
+    if (value.TRUSTED_PROXY_CIDRS.length !== 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['TRUST_PROXY_HOPS'],
-        message: 'TRUST_PROXY_HOPS 在生产环境必须为 1',
+        path: ['TRUSTED_PROXY_CIDRS'],
+        message: 'TRUSTED_PROXY_CIDRS 在生产环境必须只包含直接 Caddy 代理的 CIDR',
       })
     }
 

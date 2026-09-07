@@ -12,7 +12,7 @@ const minimumProductionEnv: NodeJS.ProcessEnv = {
   REDIS_URL: 'redis://:synthetic-production-password@redis:6379',
   JWT_SECRET: 'synthetic-production-jwt-secret-with-more-than-32-characters',
   PUBLIC_ORIGIN: 'https://imhub.jojo2333.net',
-  TRUST_PROXY_HOPS: '1',
+  TRUSTED_PROXY_CIDRS: '172.30.0.2/32',
 }
 
 beforeAll(async () => {
@@ -20,12 +20,12 @@ beforeAll(async () => {
 })
 
 describe('parseConfig production boundary', () => {
-  it('accepts an exact HTTPS production origin and one trusted proxy hop', () => {
+  it('accepts an exact HTTPS production origin and one trusted Caddy CIDR', () => {
     const parsed = parseConfig(minimumProductionEnv)
 
     expect(parsed.APP_ENV).toBe('production')
     expect(parsed.PUBLIC_ORIGIN).toBe('https://imhub.jojo2333.net')
-    expect(parsed.TRUST_PROXY_HOPS).toBe(1)
+    expect(parsed.TRUSTED_PROXY_CIDRS).toEqual(['172.30.0.2/32'])
   })
 
   it.each([
@@ -43,11 +43,16 @@ describe('parseConfig production boundary', () => {
     })).toThrow('PUBLIC_ORIGIN')
   })
 
-  it.each(['0', '2'])('rejects production trust proxy hop count %s', (hops) => {
+  it.each([
+    '',
+    '127.0.0.1',
+    '172.30.0.2/33',
+    '172.30.0.2/32,172.30.0.3/32',
+  ])('rejects unsafe production trusted proxy CIDRs %j', (trustedProxyCidrs) => {
     expect(() => parseConfig({
       ...minimumProductionEnv,
-      TRUST_PROXY_HOPS: hops,
-    })).toThrow('TRUST_PROXY_HOPS')
+      TRUSTED_PROXY_CIDRS: trustedProxyCidrs,
+    })).toThrow('TRUSTED_PROXY_CIDRS')
   })
 
   it('rejects the documented development database password in production', () => {
@@ -82,7 +87,7 @@ describe('parseConfig production boundary', () => {
       ...minimumProductionEnv,
       APP_ENV: 'development',
       PUBLIC_ORIGIN: '',
-      TRUST_PROXY_HOPS: '0',
+      TRUSTED_PROXY_CIDRS: '',
       WHATSAPP_CLOUD_ENABLED: 'true',
       WHATSAPP_META_APP_ID: 'synthetic-app-id',
       WHATSAPP_META_CONFIG_ID: 'synthetic-config-id',
