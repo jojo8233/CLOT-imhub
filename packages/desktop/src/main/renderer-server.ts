@@ -11,7 +11,7 @@ const RENDERER_CONTENT_TYPE: Record<string, string> = {
 
 export interface RendererServerOptions {
   connectSources: readonly string[]
-  rendererRoot?: string
+  mainOutputDirectory: string
 }
 
 function canonicalConnectSources(sources: readonly string[]): string {
@@ -29,7 +29,7 @@ function canonicalConnectSources(sources: readonly string[]): string {
 export async function startRendererServer(
   options: RendererServerOptions,
 ): Promise<{ server: Server; url: string }> {
-  const rendererRoot = normalize(options.rendererRoot ?? join(import.meta.dirname, '../renderer'))
+  const rendererRoot = normalize(join(options.mainOutputDirectory, '../renderer'))
   const connectSources = canonicalConnectSources(options.connectSources)
   const server = createServer((request, response) => {
     void (async () => {

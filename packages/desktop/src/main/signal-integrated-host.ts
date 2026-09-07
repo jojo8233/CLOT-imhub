@@ -264,6 +264,7 @@ export function createHost(signalOptions: BrowserWindowConstructorOptions): Brow
     if (shellLoaded) return
     shellLoaded = true
     const renderer = await startRendererServer({
+      mainOutputDirectory: import.meta.dirname,
       connectSources: [serverOrigins.httpOrigin, serverOrigins.wsOrigin],
     })
     rendererServer = renderer.server
