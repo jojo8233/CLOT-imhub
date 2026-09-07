@@ -8,6 +8,7 @@ import {
   licenseArguments,
   matchingInternalArtifactBasenames,
   normalizeProductionLicenseInventory,
+  pnpmInvocation,
   unpackedOutputBasename,
   verifyInternalReleaseAttestation,
   unsignedBuildEnvironment,
@@ -43,6 +44,21 @@ describe('internal desktop packaging', () => {
     expect(licenseArguments()).toEqual([
       '--silent', '--filter', '@im-hub/desktop', 'licenses:prod',
     ])
+  })
+
+  it('launches pnpm command shims through cmd.exe only on Windows', () => {
+    expect(pnpmInvocation(
+      ['exec', 'electron-vite', 'build'],
+      'win32',
+      { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    )).toEqual({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', 'pnpm.cmd', 'exec', 'electron-vite', 'build'],
+    })
+    expect(pnpmInvocation(['exec', 'electron-vite', 'build'], 'darwin')).toEqual({
+      command: 'pnpm',
+      args: ['exec', 'electron-vite', 'build'],
+    })
   })
 
   it('forces this channel to remain unsigned without exposing inherited signing config', () => {

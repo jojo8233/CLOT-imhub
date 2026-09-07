@@ -235,8 +235,18 @@ export function normalizeProductionLicenseInventory(inventory, runtimeComponents
   return Object.fromEntries(Object.entries(normalized).sort(([left], [right]) => left.localeCompare(right)))
 }
 
-function pnpmCommand() {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+export function pnpmInvocation(
+  args,
+  platform = process.platform,
+  environment = process.env,
+) {
+  if (platform === 'win32') {
+    return {
+      command: environment.ComSpec ?? 'cmd.exe',
+      args: ['/d', '/s', '/c', 'pnpm.cmd', ...args],
+    }
+  }
+  return { command: 'pnpm', args }
 }
 
 function run(command, args, options = {}) {
@@ -254,6 +264,11 @@ function run(command, args, options = {}) {
   return result.stdout ?? ''
 }
 
+function runPnpm(args, options = {}) {
+  const invocation = pnpmInvocation(args, process.platform, options.env)
+  return run(invocation.command, invocation.args, options)
+}
+
 function validateTarget(target) {
   if (target !== 'mac' && target !== 'win') {
     throw new Error('internal package target must be mac or win')
@@ -267,8 +282,7 @@ function validateTarget(target) {
 }
 
 function productionLicenseInventory(environment) {
-  const rawInventory = run(
-    pnpmCommand(),
+  const rawInventory = runPnpm(
     licenseArguments(),
     { capture: true, env: environment, label: 'production license inventory' },
   )
@@ -337,7 +351,7 @@ export function packageInternal(target, environment = process.env) {
 
   let stagingDirectory = null
   try {
-    run(pnpmCommand(), ['exec', 'electron-vite', 'build'], {
+    runPnpm(['exec', 'electron-vite', 'build'], {
       env: unsignedEnvironment,
       label: 'desktop build',
     })
@@ -351,7 +365,7 @@ export function packageInternal(target, environment = process.env) {
 
     const licenses = productionLicenseInventory(unsignedEnvironment)
     stagingDirectory = mkdtempSync(resolve(releaseDirectory, '.internal-staging-'))
-    run(pnpmCommand(), [
+    runPnpm([
       'exec',
       'electron-builder',
       ...builderArguments(target),
