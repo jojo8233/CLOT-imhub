@@ -14,6 +14,8 @@ import { runTranslateJob } from './pipeline/translate-job.js'
 import { TranslationCache } from './translation/cache.js'
 import { TranslationGateway } from './translation/gateway.js'
 import { createConfiguredTranslationProviders } from './translation/providers/index.js'
+import { KyselyTranslationPreferenceRepo } from './translation/preference-repo.js'
+import { TranslationPreferenceService } from './translation/preference-service.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
 import {
@@ -42,6 +44,11 @@ const gateway = new TranslationGateway(
   createConfiguredTranslationProviders(config),
   new TranslationCache(redis),
   ['deepl', 'claude', 'openai'],
+)
+const translationPreferences = new TranslationPreferenceService(
+  new KyselyTranslationPreferenceRepo(db),
+  gateway.availableProviders(),
+  config.DEFAULT_TRANSLATION_PROVIDER,
 )
 
 const adapters = new AdapterManager([
@@ -376,6 +383,7 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
 const app = await buildServer({
   adapters,
   gateway,
+  translationPreferences,
   ...(whatsappCloudService
     ? {
         whatsappCloud: whatsappCloudService,
