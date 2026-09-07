@@ -13,9 +13,7 @@ import { BullTranslateQueue, TRANSLATE_QUEUE, type TranslateJobData } from './pi
 import { runTranslateJob } from './pipeline/translate-job.js'
 import { TranslationCache } from './translation/cache.js'
 import { TranslationGateway } from './translation/gateway.js'
-import { DeeplProvider } from './translation/providers/deepl.js'
-import { OpenAiProvider } from './translation/providers/openai.js'
-import { ClaudeProvider } from './translation/providers/claude.js'
+import { createConfiguredTranslationProviders } from './translation/providers/index.js'
 import { WsHub } from './api/ws.js'
 import { buildServer } from './api/server.js'
 import {
@@ -41,11 +39,7 @@ import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 
 const gateway = new TranslationGateway(
-  [
-    new DeeplProvider(config.DEEPL_API_KEY, config.DEEPL_ENDPOINT),
-    new OpenAiProvider(config.OPENAI_API_KEY),
-    new ClaudeProvider(config.ANTHROPIC_API_KEY),
-  ],
+  createConfiguredTranslationProviders(config),
   new TranslationCache(redis),
   ['deepl', 'claude', 'openai'],
 )
