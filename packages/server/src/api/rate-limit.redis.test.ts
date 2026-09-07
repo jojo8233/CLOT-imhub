@@ -23,7 +23,7 @@ function testRedisUrl(): string {
   const value = process.env.TEST_REDIS_URL ?? 'redis://127.0.0.1:6379'
   const url = new URL(value)
   if (!['redis:', 'rediss:'].includes(url.protocol)
-    || !['127.0.0.1', '::1', 'localhost'].includes(url.hostname)) {
+    || !['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)) {
     throw new Error('TEST_REDIS_URL 必须指向 loopback 测试实例')
   }
   return value
