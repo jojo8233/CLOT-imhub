@@ -52,13 +52,21 @@ export async function translateRoutes(app: FastifyInstance, deps: TranslateRoute
         return { translated: '', detectedLang: 'und', provider: 'none', failed: false }
       }
       try {
+        const requestedProvider = config.DEFAULT_TRANSLATION_PROVIDER
         const r = await deps.gateway.translate({
           text,
           from: sourceLang ?? 'auto',
           to: targetLang,
-          config: { global: config.DEFAULT_TRANSLATION_PROVIDER },
+          config: { global: requestedProvider },
         })
-        return { translated: r.text, detectedLang: r.detectedLang, provider: r.provider, failed: false }
+        return {
+          translated: r.text,
+          detectedLang: r.detectedLang,
+          requestedProvider,
+          provider: r.provider,
+          downgraded: r.provider !== requestedProvider,
+          failed: false,
+        }
       } catch (err) {
         // 单条失败不拖垮整批：客户端一次要 20 条，一条挂掉就让 20 条全没有
         // 是很差的体验。失败的那条标出来，客户端可以显示原文并稍后重试。

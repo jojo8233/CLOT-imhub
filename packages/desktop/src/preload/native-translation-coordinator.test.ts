@@ -14,7 +14,15 @@ function result(
   detectedLang: string,
   failed = false,
 ): NativeTranslationBatchResult {
-  return { translated, detectedLang, provider: 'test', failed }
+  if (failed) return { translated, detectedLang, provider: 'none', failed: true }
+  return {
+    translated,
+    detectedLang,
+    requestedProvider: 'deepl',
+    provider: 'deepl',
+    downgraded: false,
+    failed: false,
+  }
 }
 
 function gateway(overrides: Partial<NativeTranslationGatewayPort> = {}): NativeTranslationGatewayPort {

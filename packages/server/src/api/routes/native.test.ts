@@ -433,7 +433,15 @@ describe('native bridge routes', () => {
       payload: { texts: ['hello'], targetLang: 'zh' },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ results: [{ translated: '你好', failed: false }] })
+    expect(response.json()).toMatchObject({
+      results: [{
+        translated: '你好',
+        requestedProvider: 'deepl',
+        provider: 'deepl',
+        downgraded: false,
+        failed: false,
+      }],
+    })
     expect(translate).toHaveBeenCalledOnce()
   })
 
