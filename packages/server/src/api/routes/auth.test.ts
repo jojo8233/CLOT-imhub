@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import type { Database } from '../../db/types.js'
 import type { MessageRouteDeps } from './messages.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET = 'organization-auth-route-test-secret-32'
 

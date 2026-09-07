@@ -8,7 +8,7 @@ import { testDatabaseUrl } from '../db/test-db.js'
 import { DeviceRepo } from './device-repo.js'
 import { DeviceService } from './device-service.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 
 const db = new Kysely<Database>({
   dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: testDatabaseUrl() }) }),

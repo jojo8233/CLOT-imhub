@@ -7,7 +7,7 @@ import { testDatabaseUrl } from '../db/test-db.js'
 import { KyselyWhatsAppCloudRepo, WHATSAPP_ACCESS_TOKEN_PURPOSE } from './repo.js'
 import { SecretCipher } from './secret-cipher.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 
 const db = new Kysely<Database>({
   dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: testDatabaseUrl() }) }),

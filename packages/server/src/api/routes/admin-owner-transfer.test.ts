@@ -12,7 +12,7 @@ import { DeviceService } from '../../organization-admin/device-service.js'
 import { AdminOperationTokenService } from '../../organization-admin/operation-token.js'
 import { OwnerTransferService } from '../../organization-admin/owner-transfer-service.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET = 'owner-transfer-route-secret-32-characters'
 

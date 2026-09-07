@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { MessageRouteDeps } from './messages.js'
 
 process.env.APP_ENV = 'test'
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET ??= 'health-route-test-secret-with-more-than-32-characters'
 

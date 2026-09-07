@@ -6,7 +6,7 @@ import type { Database } from '../types.js'
 import { testDatabaseUrl } from '../test-db.js'
 import { down, up } from './0014_customer_profile_library.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 
 const db = new Kysely<Database>({
   dialect: new PostgresDialect({

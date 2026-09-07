@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const workflow = readFileSync(
@@ -9,6 +11,14 @@ const packageJson = JSON.parse(readFileSync(
   new URL('../../../package.json', import.meta.url),
   'utf8',
 ))
+
+function testFilesUnder(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return testFilesUnder(path)
+    return entry.isFile() && entry.name.endsWith('.test.ts') ? [path] : []
+  })
+}
 
 describe('Windows internal package workflow', () => {
   it('supports first-PR and later manual builds without fork packaging', () => {
@@ -30,5 +40,27 @@ describe('Windows internal package workflow', () => {
     expect(packageJson.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/)
     expect(workflow.match(/uses: pnpm\/action-setup@v4/g)).toHaveLength(2)
     expect(workflow).not.toMatch(/pnpm\/action-setup@v4\n\s+with:\s*\{\s*version:/)
+  })
+
+  it('preserves a database connection supplied by the CI runner', () => {
+    const serverSource = fileURLToPath(new URL('../../server/src/', import.meta.url))
+    const overrides = testFilesUnder(serverSource).filter(path => (
+      /process\.env\.DATABASE_URL\s*=(?!=)/.test(readFileSync(path, 'utf8'))
+    ))
+
+    expect(overrides).toEqual([])
+  })
+
+  it('creates and migrates the isolated test database before running tests', () => {
+    const databaseUrl = workflow.match(/DATABASE_URL:\s*(\S+)/)?.[1]
+    expect(databaseUrl).toBeDefined()
+    expect(new URL(databaseUrl).pathname).toBe('/imhub_test')
+
+    const createDatabase = workflow.indexOf('CREATE DATABASE imhub_test')
+    const migrateDatabase = workflow.indexOf('- run: pnpm db:migrate')
+    const runTests = workflow.indexOf('- run: pnpm test')
+    expect(createDatabase).toBeGreaterThan(-1)
+    expect(migrateDatabase).toBeGreaterThan(createDatabase)
+    expect(runTests).toBeGreaterThan(migrateDatabase)
   })
 })

@@ -33,7 +33,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imhub
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imhub_test
       REDIS_URL: redis://127.0.0.1:6379
       JWT_SECRET: github-actions-isolated-test-secret-32-characters
     steps:
@@ -43,6 +43,7 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE imhub_test'
+      - run: pnpm db:migrate
       - run: pnpm typecheck
       - run: pnpm test
 

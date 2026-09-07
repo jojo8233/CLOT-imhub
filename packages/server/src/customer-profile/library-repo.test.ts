@@ -8,7 +8,7 @@ import { testDatabaseUrl } from '../db/test-db.js'
 import { CustomerProfileCursorError } from './library-query.js'
 import { ScopedCustomerProfileRepo } from './repo.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 
 const db = new Kysely<Database>({
   dialect: new PostgresDialect({

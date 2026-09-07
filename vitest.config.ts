@@ -1,4 +1,7 @@
 import { defineConfig } from 'vitest/config'
+import { testDatabaseUrl } from './packages/server/src/db/test-db.js'
+
+process.env.DATABASE_URL = testDatabaseUrl()
 
 export default defineConfig({
   test: {

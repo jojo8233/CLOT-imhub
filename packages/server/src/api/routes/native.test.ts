@@ -15,7 +15,7 @@ import type { ActorRepo } from '../actor.js'
 
 const TEST_JWT_SECRET = 'native-route-test-secret-32-chars'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET = TEST_JWT_SECRET
 

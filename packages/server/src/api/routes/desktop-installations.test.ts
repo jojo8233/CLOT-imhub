@@ -10,7 +10,7 @@ import type { MessageRouteDeps } from './messages.js'
 import { DeviceRepo } from '../../organization-admin/device-repo.js'
 import { DeviceService } from '../../organization-admin/device-service.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET = 'desktop-installations-route-secret-32'
 

@@ -10,7 +10,7 @@ import type { MessageRouteDeps } from './messages.js'
 
 // server.ts 在模块加载期静态 import config.js，而 config.js 在加载期就 schema.parse(process.env)。
 // 必须在任何触达 config.js / db/client.js 的 import 执行之前把这些填好，所以用动态 import。
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET ??= 'messages-route-test-secret-32-chars'
 
