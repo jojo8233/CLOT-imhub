@@ -8,7 +8,15 @@ test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 
 mode_of() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+  if stat -f '%Lp' "$1" >/dev/null 2>&1; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
+sha256_of() {
+  openssl dgst -sha256 "$1" | awk '{print $NF}'
 }
 
 write_input() {
@@ -53,13 +61,13 @@ if grep -Eq 'synthetic-.*-secret|0123456789abcdef' "$init_log"; then
   exit 1
 fi
 
-before_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+before_hash="$(sha256_of "$config_root/app.env")"
 if IMHUB_CONFIG_ROOT="$config_root" IMHUB_TEST_INPUT_FILE="$valid_input" \
   bash "$initializer" --test-input > "$test_root/overwrite.log" 2>&1; then
   echo 'initializer overwrote existing config' >&2
   exit 1
 fi
-after_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+after_hash="$(sha256_of "$config_root/app.env")"
 test "$before_hash" = "$after_hash"
 
 expect_invalid() {
@@ -137,7 +145,7 @@ if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
   exit 1
 fi
 
-before_rollback_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+before_rollback_hash="$(sha256_of "$config_root/app.env")"
 new_openai="$test_root/new-openai"
 write_input "$new_openai" 'synthetic-new-openai-secret'
 if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
@@ -149,12 +157,12 @@ if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
   echo 'rotation ignored a failed readiness check' >&2
   exit 1
 fi
-after_rollback_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+after_rollback_hash="$(sha256_of "$config_root/app.env")"
 test "$before_rollback_hash" = "$after_rollback_hash"
 grep -q 'previous config could not be restored and verified; immediate operator action required' \
   "$test_root/rollback.log"
 
-before_signal_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+before_signal_hash="$(sha256_of "$config_root/app.env")"
 signal_input="$test_root/signal-input"
 signal_marker="$test_root/signal-marker"
 signal_docker_log="$test_root/signal-docker.log"
@@ -167,7 +175,7 @@ if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
   echo 'rotation ignored a termination signal' >&2
   exit 1
 fi
-after_signal_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+after_signal_hash="$(sha256_of "$config_root/app.env")"
 test "$before_signal_hash" = "$after_signal_hash"
 test "$(grep -c 'force-recreate app' "$signal_docker_log")" -eq 2
 if ! grep -q 'interrupted rotation restored and verified previous config' "$test_root/signal.log"; then
