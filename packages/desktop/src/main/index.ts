@@ -1,9 +1,16 @@
 import { join } from 'node:path'
 import { BrowserWindow, app } from 'electron'
 
+import {
+  compiledInternalServerUrl,
+  compiledInternalWsUrl,
+  desktopServerUrl,
+  desktopWebSocketUrl,
+} from '../internal-release-config.js'
 import { attachImHubWindowRuntime } from './imhub-window-runtime.js'
+import { startRendererServer } from './renderer-server.js'
 
-function createWindow(): void {
+async function createWindow(): Promise<void> {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -35,18 +42,37 @@ function createWindow(): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     // 开发模式自动开 DevTools：渲染进程的报错否则完全看不见
     win.webContents.openDevTools({ mode: 'right' })
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL)
+    await win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+    const serverUrl = desktopServerUrl(
+      compiledInternalServerUrl(),
+      process.env.IM_HUB_SERVER_URL,
+    )
+    const wsUrl = desktopWebSocketUrl(compiledInternalWsUrl(), serverUrl)
+    const renderer = await startRendererServer({ connectSources: [serverUrl, wsUrl] })
+    win.once('closed', () => { renderer.server.close() })
+    try {
+      await win.loadURL(renderer.url)
+    } catch (error) {
+      renderer.server.close()
+      throw error
+    }
   }
 }
 
-void app.whenReady().then(() => {
-  createWindow()
+function handleWindowStartFailure(): void {
+  console.error('[desktop] im-hub 窗口启动失败')
+  app.quit()
+}
+
+void app.whenReady().then(async () => {
+  await createWindow()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      void createWindow().catch(handleWindowStartFailure)
+    }
   })
-})
+}).catch(handleWindowStartFailure)
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

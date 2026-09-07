@@ -1,7 +1,47 @@
+import { isIP } from 'node:net'
 import { z } from 'zod'
 import { parseTelegramTdlibShadowAccountIds } from './shadow/rollout.js'
 
+function parseTrustedProxyCidrs(value: string, ctx: z.RefinementCtx): string[] {
+  if (value.trim() === '') return []
+  const entries = value.split(',').map(entry => entry.trim())
+  const valid = entries.every((entry) => {
+    const [address, prefix, extra] = entry.split('/')
+    const version = address ? isIP(address) : 0
+    if (extra !== undefined || version === 0 || !prefix || !/^\d+$/.test(prefix)) return false
+    const bits = Number(prefix)
+    return bits >= 0 && bits <= (version === 4 ? 32 : 128)
+  })
+  if (!valid) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'TRUSTED_PROXY_CIDRS 必须是逗号分隔的 IPv4/IPv6 CIDR',
+    })
+    return z.NEVER
+  }
+  return [...new Set(entries)]
+}
+
+function isSingleHostCidr(value: string): boolean {
+  const [address, prefix, extra] = value.split('/')
+  if (extra !== undefined || address === undefined || prefix === undefined) return false
+  const version = isIP(address)
+  return (version === 4 && prefix === '32') || (version === 6 && prefix === '128')
+}
+
+function decodeUrlComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
 const schema = z.object({
+  APP_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PUBLIC_ORIGIN: z.string().default(''),
+  TRUSTED_PROXY_CIDRS: z.string().default('')
+    .transform((value, ctx) => parseTrustedProxyCidrs(value, ctx)),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   JWT_SECRET: z.string()
@@ -52,44 +92,123 @@ const schema = z.object({
     .transform(value => value === 'true'),
   PORT: z.coerce.number().default(4000),
 }).superRefine((value, ctx) => {
-  if (!value.WHATSAPP_CLOUD_ENABLED) return
-  for (const field of [
-    'WHATSAPP_META_APP_ID',
-    'WHATSAPP_META_CONFIG_ID',
-    'WHATSAPP_META_APP_SECRET',
-    'WHATSAPP_WEBHOOK_VERIFY_TOKEN',
-    'WHATSAPP_PUBLIC_BASE_URL',
-    'WHATSAPP_SECRET_MASTER_KEY',
-  ] as const) {
-    if (value[field] === '') {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} 未配置` })
-    }
-  }
-  if (value.WHATSAPP_SECRET_MASTER_KEY !== '') {
-    const decoded = Buffer.from(value.WHATSAPP_SECRET_MASTER_KEY, 'base64')
-    if (decoded.length !== 32) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['WHATSAPP_SECRET_MASTER_KEY'],
-        message: 'WHATSAPP_SECRET_MASTER_KEY 必须是 32 字节 base64',
-      })
-    }
-  }
-  if (value.WHATSAPP_PUBLIC_BASE_URL !== '') {
+  if (value.APP_ENV === 'production') {
     try {
-      const url = new URL(value.WHATSAPP_PUBLIC_BASE_URL)
-      if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
-        throw new Error('invalid public URL')
+      const publicOrigin = new URL(value.PUBLIC_ORIGIN)
+      if (publicOrigin.protocol !== 'https:' || publicOrigin.origin !== value.PUBLIC_ORIGIN) {
+        throw new Error('unsafe production origin')
       }
     } catch {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['WHATSAPP_PUBLIC_BASE_URL'],
-        message: 'WHATSAPP_PUBLIC_BASE_URL 必须是无凭据/查询/fragment 的 HTTPS URL',
+        path: ['PUBLIC_ORIGIN'],
+        message: 'PUBLIC_ORIGIN 在生产环境必须是精确 HTTPS origin，不含路径、凭据、查询或 fragment',
       })
+    }
+
+    const trustedProxyCidr = value.TRUSTED_PROXY_CIDRS[0]
+    if (value.TRUSTED_PROXY_CIDRS.length !== 1
+      || trustedProxyCidr === undefined
+      || !isSingleHostCidr(trustedProxyCidr)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUSTED_PROXY_CIDRS'],
+        message: 'TRUSTED_PROXY_CIDRS 在生产环境必须是直接 Caddy 代理的单个 /32 或 /128 CIDR',
+      })
+    }
+
+    const databaseUrl = new URL(value.DATABASE_URL)
+    const databaseUsername = decodeUrlComponent(databaseUrl.username)
+    const databasePassword = decodeUrlComponent(databaseUrl.password)
+    const databaseName = decodeUrlComponent(databaseUrl.pathname.slice(1))
+    if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)
+      || !databaseUsername
+      || !databasePassword
+      || !databaseName
+      || databasePassword === 'imhub_dev'
+      || databaseName.endsWith('_test')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DATABASE_URL'],
+        message: 'DATABASE_URL 在生产环境必须使用 PostgreSQL 协议、非空账号/口令和非测试数据库',
+      })
+    }
+
+    const redisUrl = new URL(value.REDIS_URL)
+    if (!['redis:', 'rediss:'].includes(redisUrl.protocol)
+      || !decodeUrlComponent(redisUrl.password)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['REDIS_URL'],
+        message: 'REDIS_URL 在生产环境必须使用 Redis 协议和非空口令',
+      })
+    }
+
+    const deeplEndpoint = new URL(value.DEEPL_ENDPOINT)
+    if (deeplEndpoint.protocol !== 'https:'
+      || deeplEndpoint.username
+      || deeplEndpoint.password
+      || deeplEndpoint.search
+      || deeplEndpoint.hash) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DEEPL_ENDPOINT'],
+        message: 'DEEPL_ENDPOINT 在生产环境必须是无凭据、查询或 fragment 的 HTTPS URL',
+      })
+    }
+
+    if (value.WHATSAPP_CLOUD_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['WHATSAPP_CLOUD_ENABLED'],
+        message: 'WHATSAPP_CLOUD_ENABLED 在内部 WhatsApp Web 生产版本中必须关闭',
+      })
+    }
+  }
+
+  if (value.WHATSAPP_CLOUD_ENABLED) {
+    for (const field of [
+      'WHATSAPP_META_APP_ID',
+      'WHATSAPP_META_CONFIG_ID',
+      'WHATSAPP_META_APP_SECRET',
+      'WHATSAPP_WEBHOOK_VERIFY_TOKEN',
+      'WHATSAPP_PUBLIC_BASE_URL',
+      'WHATSAPP_SECRET_MASTER_KEY',
+    ] as const) {
+      if (value[field] === '') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} 未配置` })
+      }
+    }
+    if (value.WHATSAPP_SECRET_MASTER_KEY !== '') {
+      const decoded = Buffer.from(value.WHATSAPP_SECRET_MASTER_KEY, 'base64')
+      if (decoded.length !== 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['WHATSAPP_SECRET_MASTER_KEY'],
+          message: 'WHATSAPP_SECRET_MASTER_KEY 必须是 32 字节 base64',
+        })
+      }
+    }
+    if (value.WHATSAPP_PUBLIC_BASE_URL !== '') {
+      try {
+        const url = new URL(value.WHATSAPP_PUBLIC_BASE_URL)
+        if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+          throw new Error('invalid public URL')
+        }
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['WHATSAPP_PUBLIC_BASE_URL'],
+          message: 'WHATSAPP_PUBLIC_BASE_URL 必须是无凭据/查询/fragment 的 HTTPS URL',
+        })
+      }
     }
   }
 })
 
-export const config = schema.parse(process.env)
+export function parseConfig(env: NodeJS.ProcessEnv): Config {
+  return schema.parse(env)
+}
+
+export const config = parseConfig(process.env)
 export type Config = z.infer<typeof schema>

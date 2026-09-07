@@ -541,6 +541,69 @@ RBAC 范围。
 本检查点只完成自动化验证，尚未在真实 macOS/Windows 发布包上执行本节人工验收，也未对开发库或
 生产库运行 `0016`；启用写操作前必须补齐这些步骤。
 
+### 5.7 生产服务器应用就绪流程
+
+本节只覆盖应用本身的生产门禁；容器、Caddy、Cloudflare、防火墙、备份和服务器发布仍按后续
+production container/runtime 计划执行。生产环境不能运行开发 `seed`，也不能用演示账号或
+`dev-password` 代替首个管理员初始化。
+
+生产配置必须从服务器上的受限环境文件加载。操作和排障时只核对以下变量名是否存在，不要用
+`echo`、`env`、`printenv`、shell tracing 或错误日志输出它们的值：
+
+- `APP_ENV`、`PUBLIC_ORIGIN`、`TRUSTED_PROXY_CIDRS`
+- `DATABASE_URL`、`REDIS_URL`、`JWT_SECRET`
+- `DEEPL_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`
+- `TELEGRAM_API_ID`、`TELEGRAM_API_HASH`
+- `DEFAULT_TRANSLATION_PROVIDER`、`ORGANIZATION_ADMIN_WRITES_ENABLED`
+- `WHATSAPP_CLOUD_ENABLED`
+
+固定策略是 `APP_ENV=production`、精确 HTTPS `PUBLIC_ORIGIN`、三家翻译 provider 都可用、Telegram
+凭据成对存在、组织管理写入开启，以及内部 WhatsApp Web 版本关闭 Cloud API。应用只信任直接
+Caddy 容器的精确 `/32` CIDR；不能改成 `trustProxy: true`、数字 hop count 或任意网段。桌面包的
+`IM_HUB_SERVER_URL` 与 `PUBLIC_ORIGIN` 使用同一个精确 origin。
+
+macOS/Windows 独立安装包不会用 `file://` 页面直接请求生产 API，也不要求服务端信任字面量
+`Origin: null`。打包入口会在 `127.0.0.1` 随机端口启动仅提供内置静态文件的临时页面服务，按
+`IM_HUB_SERVER_URL` 生成精确 `connect-src` CSP，并保持 Electron `webSecurity` 开启；窗口关闭时
+同步关闭该临时服务。Signal 同窗宿主复用同一静态页面服务边界。
+随机端口会让 Chromium Web Storage 的 origin 随启动变化，因此当前未持久化的面板布局可能恢复为
+默认值；登录态仍只经 `safeStorage` bridge 持久化，不依赖 `localStorage`。布局跨启动持久化后续应
+复用受控主进程存储 bridge，不能为保留 Web Storage 而重新允许 `Origin: null`。
+
+首次部署按以下顺序执行：
+
+1. 加载生产环境文件后运行 migration：
+
+   ```bash
+   set -a; source /etc/im-hub/app.env; set +a
+   pnpm db:migrate
+   ```
+
+2. 运行只读生产预检：
+
+   ```bash
+   pnpm --filter @im-hub/server preflight:production
+   ```
+
+   输出只包含固定检查名及 `ok`/`missing`。任一项为 `missing` 时退出码非零；脚本不会打印连接串、
+   密钥、上游响应或数据库错误正文，也不会写 schema、用户或账号数据。
+3. 仅当 `users` 表为空时，在交互式 TTY 中创建首个 owner：
+
+   ```bash
+   pnpm --filter @im-hub/server bootstrap-owner
+   ```
+
+   email、显示名称和临时密码都不能作为命令行参数。密码输入两次且终端不回显；创建后 24 小时
+   到期，并强制 owner 首次登录先修改密码。命令在事务与 advisory lock 内重新检查空库，并发或
+   重复执行只允许一个成功。已有任何用户时必须停下核对，不能改跑 `seed`。
+4. 启动 production 服务。入口会自动再次执行同一预检，未通过时在创建平台适配器前退出。
+5. Caddy/容器就绪检查使用 `GET /health/live` 和 `GET /health/ready`。前者只证明进程存活；后者仅在
+   PostgreSQL、Redis 和应用初始化全部完成后返回 200。响应不包含版本、账号数、连接信息或错误正文。
+
+登录、首次改密和常规改密都受 15 分钟 Redis 限流保护；登录同时按可信客户端 IP 与
+“IP + 规范化邮箱的 SHA-256”计数，IPv6 按 `/64` 聚合。限流 Redis 故障时鉴权入口返回不含内部
+错误的 503，不会无界放行。不要在排障时临时放宽代理信任或绕过限流。
+
 ---
 
 ## 6. 上线前必做

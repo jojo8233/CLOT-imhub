@@ -37,8 +37,42 @@ import { WhatsAppGraphClient } from './whatsapp-cloud/graph-client.js'
 import { KyselyWhatsAppCloudRepo } from './whatsapp-cloud/repo.js'
 import { decodeSecretMasterKey, SecretCipher } from './whatsapp-cloud/secret-cipher.js'
 import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
+import {
+  createBoundedProbeDb,
+  createProductionPreflightDependencies,
+  createProductionPreflightRedis,
+  formatProductionPreflight,
+  isProductionPreflightReady,
+  runProductionPreflight,
+} from './production/preflight.js'
+import { createSecurityCriticalRedis } from './production/redis-client.js'
+
+const probeDb = createBoundedProbeDb(config.DATABASE_URL)
+
+async function passesProductionPreflight(): Promise<boolean> {
+  if (config.APP_ENV !== 'production') return true
+  const preflightRedis = createProductionPreflightRedis(config.REDIS_URL)
+  try {
+    const result = await runProductionPreflight(
+      config,
+      createProductionPreflightDependencies(probeDb, preflightRedis),
+    )
+    process.stdout.write(formatProductionPreflight(result))
+    return isProductionPreflightReady(result)
+  } finally {
+    preflightRedis.disconnect()
+  }
+}
+
+if (!await passesProductionPreflight()) {
+  await Promise.all([db.destroy(), probeDb.destroy()])
+  process.exit(1)
+}
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
+const healthRedis = createSecurityCriticalRedis(config.REDIS_URL)
+const rateLimitRedis = createSecurityCriticalRedis(config.REDIS_URL)
+let applicationInitialized = false
 
 const gateway = new TranslationGateway(
   createConfiguredTranslationProviders(config),
@@ -403,7 +437,19 @@ const app = await buildServer({
     coverage: telegramShadowCoverage,
     refresher: telegramShadowRefresher,
   },
-}, hub)
+}, hub, {
+  rateLimitRedis,
+  healthChecks: {
+    database: async () => {
+      await sql`select 1`.execute(probeDb)
+    },
+    redis: async () => {
+      const response = await healthRedis.ping()
+      if (response !== 'PONG') throw new Error('redis ping failed')
+    },
+    initialized: () => applicationInitialized,
+  },
+})
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
 
 // TDLib 被强杀时可能来不及走完 authorizationStateClosed，本地 session 数据库
@@ -425,13 +471,18 @@ const keywordAlertServer = await startKeywordAlertServerLifecycle({
       .map(a => () => adapters.disconnect(a.id)))
   },
   closeApp: () => app.close(),
-  quitRedis: () => redis.quit(),
-  destroyDb: () => db.destroy(),
+  quitRedis: async () => {
+    await Promise.all([redis.quit(), healthRedis.quit(), rateLimitRedis.quit()])
+  },
+  destroyDb: async () => {
+    await Promise.all([db.destroy(), probeDb.destroy()])
+  },
   onError: (code, count) => {
     console.error(`[server-lifecycle] code=${code} count=${count}`)
   },
 })
 if (!keywordAlertServer.ok) process.exit(1)
+applicationInitialized = true
 
 const handleShutdownSignal = createKeywordAlertShutdownSignalHandler({
   lifecycle: keywordAlertServer.lifecycle,
