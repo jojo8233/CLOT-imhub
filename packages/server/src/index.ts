@@ -357,11 +357,12 @@ new Worker<TranslateJobData>(TRANSLATE_QUEUE, async (job) => {
     },
     // P0 只有全局默认引擎；会话/账号/团队级覆盖在 P2 随管理后台一起补
     loadEngineConfig: async () => ({ global: config.DEFAULT_TRANSLATION_PROVIDER }),
-    hasTranslation: async (messageId, targetLang) => {
+    hasTranslation: async (messageId, targetLang, provider) => {
       const row = await db.selectFrom('message_translations')
         .select('message_id')
         .where('message_id', '=', messageId)
         .where('target_lang', '=', targetLang)
+        .where('provider', '=', provider)
         .executeTakeFirst()
       return row !== undefined
     },

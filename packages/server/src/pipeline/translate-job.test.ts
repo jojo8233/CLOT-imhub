@@ -96,6 +96,18 @@ describe('runTranslateJob', () => {
     expect(d.saveTranslation).not.toHaveBeenCalled()
   })
 
+  it('只按请求的 provider 槽位判断已有译文', async () => {
+    const d = deps({
+      loadEngineConfig: vi.fn().mockResolvedValue({ conversation: 'claude', global: 'deepl' }),
+      hasTranslation: vi.fn().mockResolvedValue(true),
+    })
+
+    await runTranslateJob(job, d as never)
+
+    expect(d.hasTranslation).toHaveBeenCalledWith('msg-1', 'zh', 'claude')
+    expect(d.gateway.translate).not.toHaveBeenCalled()
+  })
+
   it('把检测到的源语言交给原子写入', async () => {
     const d = deps()
     await runTranslateJob(job, d as never)
@@ -124,8 +136,8 @@ describe('runTranslateJob', () => {
 
     await runTranslateJob(job, d as never)
 
-    expect(d.hasTranslation).toHaveBeenNthCalledWith(1, 'msg-1', 'zh')
-    expect(d.hasTranslation).toHaveBeenNthCalledWith(2, 'msg-1', 'en')
+    expect(d.hasTranslation).toHaveBeenNthCalledWith(1, 'msg-1', 'zh', 'deepl')
+    expect(d.hasTranslation).toHaveBeenNthCalledWith(2, 'msg-1', 'en', 'deepl')
     expect(d.gateway.translate).toHaveBeenNthCalledWith(1, expect.objectContaining({ to: 'zh' }))
     expect(d.gateway.translate).toHaveBeenNthCalledWith(2, expect.objectContaining({
       from: 'ZH', to: 'en',

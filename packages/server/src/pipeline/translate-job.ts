@@ -1,5 +1,9 @@
-import type { WsTranslationEvent } from '@im-hub/shared'
-import type { EngineConfig, TranslationGateway } from '../translation/gateway.js'
+import type { TranslationProviderName, WsTranslationEvent } from '@im-hub/shared'
+import {
+  resolveProvider,
+  type EngineConfig,
+  type TranslationGateway,
+} from '../translation/gateway.js'
 import type { TranslateJobData } from './queue.js'
 import { bilingualTranslationTarget } from '../translation/incoming-target.js'
 
@@ -17,12 +21,16 @@ export interface TranslateJobDeps {
   } | null>
   loadEngineConfig(conversationId: string): Promise<EngineConfig>
   /** 已有译文时跳过：MessageIngestor 对重复消息也会派发任务，靠这里挡住重复翻译 */
-  hasTranslation(messageId: string, targetLang: string): Promise<boolean>
+  hasTranslation(
+    messageId: string,
+    targetLang: string,
+    provider: TranslationProviderName,
+  ): Promise<boolean>
   gateway: Pick<TranslationGateway, 'translate'>
   saveTranslation(input: {
     messageId: string
     targetLang: string
-    provider: string
+    provider: TranslationProviderName
     translatedText: string
     revision: string
     detectedLang: string | null
@@ -43,10 +51,11 @@ export async function runTranslateJob(data: TranslateJobData, deps: TranslateJob
 
   // BullMQ 的 jobId 去重只在任务还在队列里时有效；任务完成并被清理后，
   // 同一 messageId 再次入队会真的再跑一遍。这里兜住那种情况。
-  let targetLang = bilingualTranslationTarget(message.bodyLang)
-  if (await deps.hasTranslation(message.id, targetLang)) return
-
   const config = await deps.loadEngineConfig(data.conversationId)
+  const requestedProvider = resolveProvider(config)
+  let targetLang = bilingualTranslationTarget(message.bodyLang)
+  if (await deps.hasTranslation(message.id, targetLang, requestedProvider)) return
+
   let result = await deps.gateway.translate({
     text: message.body, from: 'auto', to: targetLang, config,
   })
@@ -54,7 +63,7 @@ export async function runTranslateJob(data: TranslateJobData, deps: TranslateJob
   const detectedTarget = bilingualTranslationTarget(detectedLang)
   if (detectedTarget !== targetLang) {
     targetLang = detectedTarget
-    if (await deps.hasTranslation(message.id, targetLang)) return
+    if (await deps.hasTranslation(message.id, targetLang, requestedProvider)) return
     result = await deps.gateway.translate({
       text: message.body,
       from: detectedLang === 'und' ? 'auto' : detectedLang,

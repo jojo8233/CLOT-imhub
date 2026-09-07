@@ -38,7 +38,7 @@ describe('createMigrationProvider', () => {
     const here = path.dirname(fileURLToPath(import.meta.url))
     const migrations = await createMigrationProvider(path.join(here, 'migrations')).getMigrations()
 
-    expect(Object.keys(migrations).at(-1)).toBe('0016_organization_admin')
-    expect(Object.keys(migrations)).toHaveLength(16)
+    expect(Object.keys(migrations).at(-1)).toBe('0017_translation_provider_preferences')
+    expect(Object.keys(migrations)).toHaveLength(17)
   })
 })

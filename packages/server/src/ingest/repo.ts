@@ -1,5 +1,5 @@
 import { sql, type Kysely, type Transaction } from 'kysely'
-import type { Direction } from '@im-hub/shared'
+import type { Direction, TranslationProviderName } from '@im-hub/shared'
 import type { Database } from '../db/types.js'
 import { recordTelegramShadowObservation } from '../shadow/telegram-repo.js'
 import type { TelegramShadowObservation } from '../shadow/telegram.js'
@@ -15,7 +15,7 @@ import {
 export interface SaveTranslationIfCurrentInput {
   messageId: string
   targetLang: string
-  provider: string
+  provider: TranslationProviderName
   translatedText: string
   revision: string
   detectedLang: string | null
@@ -261,9 +261,8 @@ export class KyselyMessageRepo implements MessageRepo {
         target_lang: input.targetLang,
         provider: input.provider,
         translated_text: input.translatedText,
-      }).onConflict(oc => oc.columns(['message_id', 'target_lang']).doUpdateSet({
+      }).onConflict(oc => oc.columns(['message_id', 'target_lang', 'provider']).doUpdateSet({
         translated_text: input.translatedText,
-        provider: input.provider,
       })).execute()
       if (input.detectedLang) {
         await trx.updateTable('messages')
@@ -331,6 +330,7 @@ export class KyselyMessageRepo implements MessageRepo {
         .select('translated_text')
         .where('message_id', '=', row.id)
         .where('target_lang', '=', bilingualTranslationTarget(row.body_lang))
+        .where('provider', '=', 'deepl')
         .executeTakeFirst()
       action({
         id: row.id,
@@ -548,7 +548,7 @@ export class KyselyMessageRepo implements MessageRepo {
             insert into message_translations (message_id, target_lang, provider, translated_text, created_at)
             select ${newRow.id}::uuid, target_lang, provider, translated_text, created_at
             from message_translations where message_id = ${oldRow.id}::uuid
-            on conflict (message_id, target_lang) do nothing
+            on conflict (message_id, target_lang, provider) do nothing
           `.execute(trx)
         }
         await trx.updateTable('messages')
