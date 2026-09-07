@@ -56,6 +56,9 @@ cd "$repo_root"
 git cat-file -e "${release_sha}^{commit}" 2>/dev/null || fail 'release commit is unavailable'
 head_sha="$(git rev-parse HEAD)"
 test "$head_sha" = "$release_sha" || fail 'checkout does not match release SHA'
+main_sha="$(git rev-parse refs/remotes/origin/main 2>/dev/null)" \
+  || fail 'origin/main release reference is unavailable'
+test "$main_sha" = "$release_sha" || fail 'release SHA is not the current origin/main'
 test -z "$(git status --porcelain)" || fail 'release checkout is not clean'
 test -x "$backup_script" || fail 'backup script is unavailable'
 command -v flock >/dev/null 2>&1 || fail 'flock is unavailable'

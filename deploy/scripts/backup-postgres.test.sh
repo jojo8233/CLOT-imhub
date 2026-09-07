@@ -7,6 +7,14 @@ restore_script="$repo_root/deploy/scripts/restore-postgres-smoke.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 
+mode_of() {
+  if stat -f '%Lp' "$1" >/dev/null 2>&1; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
 fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
 printf '%s\n' \
@@ -50,7 +58,7 @@ test -f "$daily/manual.dump"
 
 latest_dump="$(awk '/^created / { print $2; exit }' "$backup_log")"
 test -n "$latest_dump"
-mode="$(stat -f '%Lp' "$latest_dump" 2>/dev/null || stat -c '%a' "$latest_dump")"
+mode="$(mode_of "$latest_dump")"
 test "$mode" = '600'
 
 if grep -q 'synthetic-dump-contents' "$backup_log" "$docker_log"; then

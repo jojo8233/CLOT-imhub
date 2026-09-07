@@ -42,6 +42,14 @@ const signingEnvironmentKeys = [
   'APPLE_APP_SPECIFIC_PASSWORD',
   'APPLE_TEAM_ID',
 ]
+const forcedUnsignedEnvironmentKeys = [
+  'IM_HUB_INTERNAL_RELEASE',
+  'CSC_IDENTITY_AUTO_DISCOVERY',
+]
+const removedUnsignedEnvironmentKeys = new Set([
+  ...signingEnvironmentKeys,
+  ...forcedUnsignedEnvironmentKeys,
+])
 
 export function builderArguments(target) {
   if (target === 'mac') return ['--mac', 'dmg', '--publish', 'never']
@@ -54,12 +62,14 @@ export function licenseArguments() {
 }
 
 export function unsignedBuildEnvironment(environment) {
-  const unsignedEnvironment = {
-    ...environment,
-    IM_HUB_INTERNAL_RELEASE: '1',
-    CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+  const unsignedEnvironment = { ...environment }
+  for (const key of Object.keys(unsignedEnvironment)) {
+    if (removedUnsignedEnvironmentKeys.has(key.toUpperCase())) {
+      delete unsignedEnvironment[key]
+    }
   }
-  for (const key of signingEnvironmentKeys) delete unsignedEnvironment[key]
+  unsignedEnvironment.IM_HUB_INTERNAL_RELEASE = '1'
+  unsignedEnvironment.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
   return unsignedEnvironment
 }
 
@@ -235,8 +245,18 @@ export function normalizeProductionLicenseInventory(inventory, runtimeComponents
   return Object.fromEntries(Object.entries(normalized).sort(([left], [right]) => left.localeCompare(right)))
 }
 
-function pnpmCommand() {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+export function pnpmInvocation(
+  args,
+  platform = process.platform,
+  environment = process.env,
+) {
+  if (platform === 'win32') {
+    return {
+      command: environment.ComSpec ?? 'cmd.exe',
+      args: ['/d', '/s', '/c', 'pnpm.cmd', ...args],
+    }
+  }
+  return { command: 'pnpm', args }
 }
 
 function run(command, args, options = {}) {
@@ -254,6 +274,11 @@ function run(command, args, options = {}) {
   return result.stdout ?? ''
 }
 
+function runPnpm(args, options = {}) {
+  const invocation = pnpmInvocation(args, process.platform, options.env)
+  return run(invocation.command, invocation.args, options)
+}
+
 function validateTarget(target) {
   if (target !== 'mac' && target !== 'win') {
     throw new Error('internal package target must be mac or win')
@@ -267,8 +292,7 @@ function validateTarget(target) {
 }
 
 function productionLicenseInventory(environment) {
-  const rawInventory = run(
-    pnpmCommand(),
+  const rawInventory = runPnpm(
     licenseArguments(),
     { capture: true, env: environment, label: 'production license inventory' },
   )
@@ -337,7 +361,7 @@ export function packageInternal(target, environment = process.env) {
 
   let stagingDirectory = null
   try {
-    run(pnpmCommand(), ['exec', 'electron-vite', 'build'], {
+    runPnpm(['exec', 'electron-vite', 'build'], {
       env: unsignedEnvironment,
       label: 'desktop build',
     })
@@ -351,7 +375,7 @@ export function packageInternal(target, environment = process.env) {
 
     const licenses = productionLicenseInventory(unsignedEnvironment)
     stagingDirectory = mkdtempSync(resolve(releaseDirectory, '.internal-staging-'))
-    run(pnpmCommand(), [
+    runPnpm([
       'exec',
       'electron-builder',
       ...builderArguments(target),

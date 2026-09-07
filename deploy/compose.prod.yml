@@ -100,8 +100,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.server
     networks:
-      - edge
-      - data
+      edge:
+        ipv4_address: 172.30.0.3
+      data:
     depends_on:
       postgres:
         condition: service_healthy

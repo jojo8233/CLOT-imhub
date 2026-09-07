@@ -11,12 +11,14 @@ release_sha='1234567890abcdef1234567890abcdef12345678'
 previous_sha='abcdef1234567890abcdef1234567890abcdef12'
 older_sha='1111111111111111111111111111111111111111'
 unrecorded_sha='9999999999999999999999999999999999999999'
+unmerged_sha='2222222222222222222222222222222222222222'
 state_root="$test_root/state"
 releases_root="$test_root/releases"
 release_link="$test_root/current"
 call_log="$test_root/calls.log"
 running_image_file="$test_root/running-image"
-mkdir -p "$releases_root/$release_sha" "$releases_root/$previous_sha" "$releases_root/$older_sha"
+mkdir -p "$releases_root/$release_sha" "$releases_root/$previous_sha" \
+  "$releases_root/$older_sha" "$releases_root/$unmerged_sha"
 
 fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
@@ -24,6 +26,7 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "git %s\\n" "$*" >> "$IMHUB_RELEASE_CALL_LOG"' \
   'if [[ "$1 $2" == "rev-parse HEAD" ]]; then printf "%s\\n" "$IMHUB_TEST_HEAD"; exit 0; fi' \
+  'if [[ "$1 $2" == "rev-parse refs/remotes/origin/main" ]]; then [[ "${IMHUB_TEST_MAIN_UNAVAILABLE:-false}" != true ]] || exit 1; printf "%s\\n" "$IMHUB_TEST_MAIN"; exit 0; fi' \
   'if [[ "$1 $2" == "status --porcelain" ]]; then [[ "${IMHUB_TEST_DIRTY:-false}" != true ]] || printf "%s\\n" " M synthetic"; exit 0; fi' \
   'exit 0' > "$fake_bin/git"
 chmod 700 "$fake_bin/git"
@@ -63,6 +66,7 @@ release_env=(
   IMHUB_RELEASE_CALL_LOG="$call_log"
   IMHUB_TEST_RUNNING_IMAGE_FILE="$running_image_file"
   IMHUB_TEST_HEAD="$release_sha"
+  IMHUB_TEST_MAIN="$release_sha"
   IMHUB_BACKUP_SCRIPT="$fake_backup"
   IMHUB_RELEASE_READINESS_ATTEMPTS=1
   IMHUB_RELEASE_READINESS_SLEEP_SECONDS=0
@@ -70,6 +74,28 @@ release_env=(
 
 if env "${release_env[@]}" bash "$deploy_script" main > "$test_root/invalid-deploy.log" 2>&1; then
   echo 'deploy accepted a branch name' >&2
+  exit 1
+fi
+
+: > "$call_log"
+if env "${release_env[@]}" IMHUB_TEST_HEAD="$unmerged_sha" \
+  bash "$deploy_script" "$unmerged_sha" > "$test_root/unmerged-deploy.log" 2>&1; then
+  echo 'deploy accepted a release outside origin/main' >&2
+  exit 1
+fi
+if grep -q 'docker build' "$call_log"; then
+  echo 'deploy built an unmerged release image' >&2
+  exit 1
+fi
+
+: > "$call_log"
+if env "${release_env[@]}" IMHUB_TEST_MAIN_UNAVAILABLE=true \
+  bash "$deploy_script" "$release_sha" > "$test_root/missing-main-deploy.log" 2>&1; then
+  echo 'deploy accepted a release without origin/main' >&2
+  exit 1
+fi
+if grep -q 'docker build' "$call_log"; then
+  echo 'deploy built a release without origin/main' >&2
   exit 1
 fi
 

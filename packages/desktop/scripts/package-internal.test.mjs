@@ -8,6 +8,7 @@ import {
   licenseArguments,
   matchingInternalArtifactBasenames,
   normalizeProductionLicenseInventory,
+  pnpmInvocation,
   unpackedOutputBasename,
   verifyInternalReleaseAttestation,
   unsignedBuildEnvironment,
@@ -45,6 +46,21 @@ describe('internal desktop packaging', () => {
     ])
   })
 
+  it('launches pnpm command shims through cmd.exe only on Windows', () => {
+    expect(pnpmInvocation(
+      ['exec', 'electron-vite', 'build'],
+      'win32',
+      { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    )).toEqual({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', 'pnpm.cmd', 'exec', 'electron-vite', 'build'],
+    })
+    expect(pnpmInvocation(['exec', 'electron-vite', 'build'], 'darwin')).toEqual({
+      command: 'pnpm',
+      args: ['exec', 'electron-vite', 'build'],
+    })
+  })
+
   it('forces this channel to remain unsigned without exposing inherited signing config', () => {
     const env = unsignedBuildEnvironment({
       PATH: '/test/bin',
@@ -52,6 +68,10 @@ describe('internal desktop packaging', () => {
       CSC_LINK: 'dummy-signing-material',
       WIN_CSC_LINK: 'dummy-windows-signing-material',
       APPLE_ID: 'dummy-apple-id',
+      csc_key_password: 'mixed-case-password',
+      Win_Csc_Key_Password: 'mixed-case-windows-password',
+      Csc_Identity_Auto_Discovery: 'true',
+      im_hub_internal_release: '0',
     })
     expect(env).toMatchObject({
       PATH: '/test/bin',
@@ -62,6 +82,10 @@ describe('internal desktop packaging', () => {
     expect(env).not.toHaveProperty('CSC_LINK')
     expect(env).not.toHaveProperty('WIN_CSC_LINK')
     expect(env).not.toHaveProperty('APPLE_ID')
+    expect(env).not.toHaveProperty('csc_key_password')
+    expect(env).not.toHaveProperty('Win_Csc_Key_Password')
+    expect(env).not.toHaveProperty('Csc_Identity_Auto_Discovery')
+    expect(env).not.toHaveProperty('im_hub_internal_release')
   })
 
   it('writes a non-sensitive manifest', () => {

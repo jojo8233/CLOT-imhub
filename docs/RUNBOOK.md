@@ -608,7 +608,8 @@ shell：
 ### 5.8 生产容器配置初始化与单项轮换
 
 生产容器定义位于 `deploy/compose.prod.yml`。只有 Caddy 发布 80/443；应用、PostgreSQL 和 Redis
-不发布宿主端口。所有服务固定为 `linux/amd64`，与已确认的 Ubuntu x86_64 生产主机一致。提交前可用
+不发布宿主端口。`edge` 网络显式保留 Caddy `172.30.0.2` 与 app `172.30.0.3`，避免动态地址分配抢占
+Caddy 的可信代理地址。所有服务固定为 `linux/amd64`，与已确认的 Ubuntu x86_64 生产主机一致。提交前可用
 合成示例验证 Compose 网络、持久卷、Redis AOF、固定代理 CIDR 和 Caddy 语法，验证器不会把渲染后
 的环境值写到标准输出：
 
@@ -698,7 +699,8 @@ sudo journalctl -u im-hub-backup.service -n 20 --no-pager
 ### 5.10 精确 SHA 发布与应用回滚
 
 服务器上的每个 release checkout 必须位于 SHA 命名目录，HEAD 与准备发布的 40 位小写 Git SHA
-完全一致且工作树干净。发布脚本按“构建镜像 → 启动并等待数据服务 → migration 前备份 → migration
+完全一致、工作树干净，且该 SHA 必须等于 checkout 中可信 `refs/remotes/origin/main` 的当前 tip；未合并
+分支、过期主线或缺失远端主线引用都会在 Docker 构建和备份前失败。发布脚本按“构建镜像 → 启动并等待数据服务 → migration 前备份 → migration
 → app/Caddy → readiness → production preflight → 原子记录 current/previous”的顺序执行：
 
 ```bash
