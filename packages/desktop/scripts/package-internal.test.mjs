@@ -68,6 +68,10 @@ describe('internal desktop packaging', () => {
       CSC_LINK: 'dummy-signing-material',
       WIN_CSC_LINK: 'dummy-windows-signing-material',
       APPLE_ID: 'dummy-apple-id',
+      csc_key_password: 'mixed-case-password',
+      Win_Csc_Key_Password: 'mixed-case-windows-password',
+      Csc_Identity_Auto_Discovery: 'true',
+      im_hub_internal_release: '0',
     })
     expect(env).toMatchObject({
       PATH: '/test/bin',
@@ -78,6 +82,10 @@ describe('internal desktop packaging', () => {
     expect(env).not.toHaveProperty('CSC_LINK')
     expect(env).not.toHaveProperty('WIN_CSC_LINK')
     expect(env).not.toHaveProperty('APPLE_ID')
+    expect(env).not.toHaveProperty('csc_key_password')
+    expect(env).not.toHaveProperty('Win_Csc_Key_Password')
+    expect(env).not.toHaveProperty('Csc_Identity_Auto_Discovery')
+    expect(env).not.toHaveProperty('im_hub_internal_release')
   })
 
   it('writes a non-sensitive manifest', () => {

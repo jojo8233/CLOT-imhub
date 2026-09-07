@@ -699,7 +699,8 @@ sudo journalctl -u im-hub-backup.service -n 20 --no-pager
 ### 5.10 精确 SHA 发布与应用回滚
 
 服务器上的每个 release checkout 必须位于 SHA 命名目录，HEAD 与准备发布的 40 位小写 Git SHA
-完全一致且工作树干净。发布脚本按“构建镜像 → 启动并等待数据服务 → migration 前备份 → migration
+完全一致、工作树干净，且该 SHA 必须等于 checkout 中可信 `refs/remotes/origin/main` 的当前 tip；未合并
+分支、过期主线或缺失远端主线引用都会在 Docker 构建和备份前失败。发布脚本按“构建镜像 → 启动并等待数据服务 → migration 前备份 → migration
 → app/Caddy → readiness → production preflight → 原子记录 current/previous”的顺序执行：
 
 ```bash

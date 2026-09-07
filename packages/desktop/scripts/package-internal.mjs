@@ -42,6 +42,14 @@ const signingEnvironmentKeys = [
   'APPLE_APP_SPECIFIC_PASSWORD',
   'APPLE_TEAM_ID',
 ]
+const forcedUnsignedEnvironmentKeys = [
+  'IM_HUB_INTERNAL_RELEASE',
+  'CSC_IDENTITY_AUTO_DISCOVERY',
+]
+const removedUnsignedEnvironmentKeys = new Set([
+  ...signingEnvironmentKeys,
+  ...forcedUnsignedEnvironmentKeys,
+])
 
 export function builderArguments(target) {
   if (target === 'mac') return ['--mac', 'dmg', '--publish', 'never']
@@ -54,12 +62,14 @@ export function licenseArguments() {
 }
 
 export function unsignedBuildEnvironment(environment) {
-  const unsignedEnvironment = {
-    ...environment,
-    IM_HUB_INTERNAL_RELEASE: '1',
-    CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+  const unsignedEnvironment = { ...environment }
+  for (const key of Object.keys(unsignedEnvironment)) {
+    if (removedUnsignedEnvironmentKeys.has(key.toUpperCase())) {
+      delete unsignedEnvironment[key]
+    }
   }
-  for (const key of signingEnvironmentKeys) delete unsignedEnvironment[key]
+  unsignedEnvironment.IM_HUB_INTERNAL_RELEASE = '1'
+  unsignedEnvironment.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
   return unsignedEnvironment
 }
 
