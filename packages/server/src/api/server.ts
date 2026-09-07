@@ -46,6 +46,7 @@ import { adminOwnerTransferRoutes } from './routes/admin-owner-transfer.js'
 import {
   translationPreferenceRoutes,
 } from './routes/translation-preferences.js'
+import { healthRoutes, type HealthChecks } from './routes/health.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -78,6 +79,7 @@ export interface BuildServerOptions {
    */
   actorRepo?: ActorRepo
   deviceService?: DeviceService
+  healthChecks?: HealthChecks
 }
 
 export interface BuildServerDeps extends MessageRouteDeps {
@@ -100,6 +102,11 @@ export async function buildServer(
   options: BuildServerOptions = {},
 ): Promise<FastifyInstance> {
   const actorRepo = options.actorRepo ?? defaultActorRepo
+  const healthChecks = options.healthChecks ?? {
+    database: async (): Promise<void> => {},
+    redis: async (): Promise<void> => {},
+    initialized: (): boolean => false,
+  }
   const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
   const readRepo = deps.organizationAdmin?.readRepo ?? new OrganizationReadRepo(db)
   const operationTokens = new AdminOperationTokenService(config.JWT_SECRET)
@@ -155,12 +162,15 @@ export async function buildServer(
   })
 
   await app.register(websocket)
+  await app.register(async instance => healthRoutes(instance, healthChecks))
 
   app.addHook('onRequest', async (req, reply) => {
     // /api/auth/ 自己校验密码；/ws 自己在首帧里鉴权。两者都不走这个钩子。
     const pathname = req.url.split('?', 1)[0]
     if (req.url.startsWith('/api/auth/')
       || req.url.startsWith('/ws')
+      || pathname === '/health/live'
+      || pathname === '/health/ready'
       || pathname === '/api/webhooks/whatsapp'
       || pathname === '/whatsapp/cloud/onboard'
       || pathname === '/api/whatsapp/cloud/onboard/complete') return

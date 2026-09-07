@@ -39,6 +39,11 @@ import { decodeSecretMasterKey, SecretCipher } from './whatsapp-cloud/secret-cip
 import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
+const healthRedis = new Redis(config.REDIS_URL, {
+  connectTimeout: 3000,
+  maxRetriesPerRequest: 1,
+})
+let applicationInitialized = false
 
 const gateway = new TranslationGateway(
   createConfiguredTranslationProviders(config),
@@ -403,7 +408,18 @@ const app = await buildServer({
     coverage: telegramShadowCoverage,
     refresher: telegramShadowRefresher,
   },
-}, hub)
+}, hub, {
+  healthChecks: {
+    database: async () => {
+      await sql`select 1`.execute(db)
+    },
+    redis: async () => {
+      const response = await healthRedis.ping()
+      if (response !== 'PONG') throw new Error('redis ping failed')
+    },
+    initialized: () => applicationInitialized,
+  },
+})
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
 
 // TDLib 被强杀时可能来不及走完 authorizationStateClosed，本地 session 数据库
@@ -425,13 +441,16 @@ const keywordAlertServer = await startKeywordAlertServerLifecycle({
       .map(a => () => adapters.disconnect(a.id)))
   },
   closeApp: () => app.close(),
-  quitRedis: () => redis.quit(),
+  quitRedis: async () => {
+    await Promise.all([redis.quit(), healthRedis.quit()])
+  },
   destroyDb: () => db.destroy(),
   onError: (code, count) => {
     console.error(`[server-lifecycle] code=${code} count=${count}`)
   },
 })
 if (!keywordAlertServer.ok) process.exit(1)
+applicationInitialized = true
 
 const handleShutdownSignal = createKeywordAlertShutdownSignalHandler({
   lifecycle: keywordAlertServer.lifecycle,
