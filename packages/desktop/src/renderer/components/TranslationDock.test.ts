@@ -1,8 +1,65 @@
 import { describe, expect, it, vi } from 'vitest'
 import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
-import { sendCurrentNativeDraft, shouldTranslateOnKeyDown } from './TranslationDock.js'
+import {
+  nativeCommandCanContinue,
+  nativeConnectionUnavailableReason,
+  nativeDraftProviderChangePatch,
+  sendCurrentNativeDraft,
+  shouldTranslateOnKeyDown,
+} from './TranslationDock.js'
+
+describe('TranslationDock native bridge gate', () => {
+  it('keeps composer actions blocked until the bridge is ready', () => {
+    expect(nativeConnectionUnavailableReason('whatsapp', 'failed', '页面版本暂不兼容'))
+      .toBe('页面版本暂不兼容')
+    expect(nativeConnectionUnavailableReason('whatsapp', 'waiting', null))
+      .toBe('等待 WhatsApp 原生输入桥接')
+    expect(nativeConnectionUnavailableReason('whatsapp', 'loading', null))
+      .toBe('等待 WhatsApp 原生输入桥接')
+    expect(nativeConnectionUnavailableReason('whatsapp', 'ready', null)).toBeNull()
+  })
+
+  it('rechecks bridge health after every asynchronous boundary', () => {
+    const context = {
+      accountId: 'account-1', platformConversationId: 'chat-1', contextRevision: 7,
+    }
+    const state = (connection: 'ready' | 'failed') => ({
+      activeAccountId: 'account-1',
+      nativeBridgeByAccount: {
+        'account-1': {
+          connection,
+          context: {
+            platformConversationId: 'chat-1',
+            contextRevision: 7,
+          },
+        },
+      },
+    })
+
+    expect(nativeCommandCanContinue(context, state('ready'))).toBe(true)
+    expect(nativeCommandCanContinue(context, state('failed'))).toBe(false)
+  })
+})
 
 describe('TranslationDock keyboard handling', () => {
+  it('切换本次 provider 会废弃旧译文和旧发送 attempt', () => {
+    expect(nativeDraftProviderChangePatch('openai')).toEqual({
+      selectedProvider: 'openai',
+      requestedProvider: null,
+      actualProvider: null,
+      downgraded: false,
+      translatedText: '',
+      backTranslated: null,
+      status: 'idle',
+      error: null,
+      sendAttemptId: null,
+      sendAttemptDraft: null,
+      sendAttemptFingerprint: null,
+      sendAttemptContextRevision: null,
+      sendAttemptConfirmed: false,
+    })
+  })
+
   it('只在非 IME 组合输入的 Enter 触发翻译', () => {
     expect(shouldTranslateOnKeyDown({
       key: 'Enter', shiftKey: false, isComposing: false,

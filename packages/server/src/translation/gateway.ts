@@ -33,12 +33,7 @@ export interface TranslationResult {
 
 export class AllProvidersFailedError extends Error {
   constructor(readonly failures: { provider: ProviderName; error: unknown }[]) {
-    super(
-      'all translation providers failed: ' +
-        failures
-          .map((f) => `${f.provider} (${f.error instanceof Error ? f.error.message : String(f.error)})`)
-          .join('; '),
-    )
+    super(`all translation providers failed: ${failures.map(failure => failure.provider).join(', ')}`)
   }
 }
 
@@ -57,6 +52,10 @@ export class TranslationGateway {
     private readonly fallbackOrder: ProviderName[],
   ) {
     this.byName = new Map(providers.map(p => [p.name, p]))
+  }
+
+  availableProviders(): ProviderName[] {
+    return [...this.byName.keys()]
   }
 
   /** 首选引擎排最前，其余按 fallbackOrder 兜底，且只保留已注册的引擎。 */
@@ -85,7 +84,8 @@ export class TranslationGateway {
     const attempts = this.order(preferred)
 
     for (const name of attempts) {
-      const provider = this.byName.get(name)!
+      const provider = this.byName.get(name)
+      if (!provider) continue
       try {
         const out = await provider.translate(req.text, req.from, req.to)
         // 只有首选引擎的结果才写缓存。降级结果写进去的话，一次瞬时故障会被
@@ -98,17 +98,29 @@ export class TranslationGateway {
         if (err instanceof ProviderFailedError) {
           const level = name === preferred ? console.error : console.warn
           level(
-            `[translation-gateway] ${name} 翻译失败${name === preferred ? '（这是首选引擎，检查它的 API key 与配额）' : '，降级到下一个'}:`,
-            err.message,
+            `[translation-gateway] ${name} 翻译失败${name === preferred ? '（这是首选引擎，检查配置与配额）' : '，降级到下一个'}`,
+            providerFailureSummary(err.cause),
           )
         } else {
           // 非 ProviderFailedError = provider 自身有 bug。继续降级仍是对的运行时行为，
           // 但必须喊出来，否则一个坏掉的 provider 会被永久当成"引擎故障"静默跳过。
-          console.error(`[translation-gateway] ${name} 抛出了非 ProviderFailedError，这是 provider 的 bug:`, err)
+          console.error(
+            `[translation-gateway] ${name} 抛出了非 ProviderFailedError，这是 provider 的 bug`,
+            providerFailureSummary(err),
+          )
         }
       }
     }
 
     throw new AllProvidersFailedError(failures)
   }
+}
+
+function providerFailureSummary(reason: unknown): { category: string; status?: number } {
+  const category = reason instanceof Error && reason.name ? reason.name : typeof reason
+  if (typeof reason !== 'object' || reason === null) return { category }
+  const status = (reason as Record<string, unknown>).status
+  return typeof status === 'number' && Number.isSafeInteger(status)
+    ? { category, status }
+    : { category }
 }

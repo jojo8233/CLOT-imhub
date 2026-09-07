@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Kysely, PostgresDialect } from 'kysely'
 import pg from 'pg'
-import type { Role } from '@im-hub/shared'
+import type { Role, TranslationProviderName } from '@im-hub/shared'
 import type { Database } from '../../db/types.js'
 import { testDatabaseUrl } from '../../db/test-db.js'
 import type { ActorRepo } from '../actor.js'
@@ -43,6 +43,10 @@ let token: string
 let auditorToken: string
 let accountId: string
 let conversationId: string
+let resolveTranslationProvider: ReturnType<typeof vi.fn<(
+  userId: string,
+  override?: TranslationProviderName,
+) => Promise<TranslationProviderName>>>
 
 beforeEach(async () => {
   // 干净状态：按外键依赖倒序清空
@@ -77,6 +81,7 @@ beforeEach(async () => {
   translate = vi.fn()
   adapterSend = vi.fn().mockResolvedValue('platform-msg-id')
   whatsappSend = vi.fn().mockResolvedValue('wamid.cloud-final')
+  resolveTranslationProvider = vi.fn().mockResolvedValue('deepl')
 
   const deps: MessageRouteDeps = {
     adapters: { send: adapterSend } as never,
@@ -86,7 +91,14 @@ beforeEach(async () => {
 
   ;({ buildServer } = await import('../server.js'))
   ;({ signSession } = await import('../../auth/session.js'))
-  app = await buildServer(deps, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
+  app = await buildServer({
+    ...deps,
+    translationPreferences: {
+      get: vi.fn() as never,
+      set: vi.fn() as never,
+      resolve: resolveTranslationProvider,
+    },
+  }, new (await import('../ws.js')).WsHub(), { actorRepo: fakeActorRepo() })
   token = await signSession({ userId: OWNER_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
   auditorToken = await signSession({ userId: AUDITOR_ID, sessionVersion: 1 }, process.env.JWT_SECRET!)
 })
@@ -139,6 +151,29 @@ describe('GET /api/conversations/:id/messages', () => {
       }),
     ])
   })
+
+  it('同一语言的多 provider 译文只返回当前用户选中的一份', async () => {
+    resolveTranslationProvider.mockResolvedValueOnce('claude')
+    const message = await db.insertInto('messages').values({
+      conversation_id: conversationId, account_id: accountId, platform: 'telegram',
+      platform_message_id: 'multi-provider-message', direction: 'in', sender_external_id: 'c1',
+      body: 'Hello', body_lang: 'en', sent_at: new Date('2026-08-31T00:00:00Z'),
+      media_refs: JSON.stringify([]) as never, raw: JSON.stringify({}) as never,
+    }).returning('id').executeTakeFirstOrThrow()
+    await db.insertInto('message_translations').values([
+      { message_id: message.id, target_lang: 'zh', provider: 'deepl', translated_text: 'DeepL 译文' },
+      { message_id: message.id, target_lang: 'zh', provider: 'claude', translated_text: 'Claude 译文' },
+    ]).execute()
+
+    const response = await app.inject({
+      method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: auth(token),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(resolveTranslationProvider).toHaveBeenCalledWith(OWNER_ID)
+    expect(response.json().messages).toHaveLength(1)
+    expect(response.json().messages[0]).toMatchObject({ translated_text: 'Claude 译文' })
+  })
 })
 
 describe('POST /api/messages/translate-preview', () => {
@@ -174,10 +209,41 @@ describe('POST /api/messages/translate-preview', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
-      translated: 'Hello', backTranslated: '你好', targetLang: 'en', provider: 'deepl',
+      translated: 'Hello', backTranslated: '你好', targetLang: 'en',
+      requestedProvider: 'deepl', provider: 'deepl', downgraded: false,
     })
     expect(translate).toHaveBeenNthCalledWith(1, expect.objectContaining({ text: '你好', to: 'en' }))
     expect(translate).toHaveBeenNthCalledWith(2, expect.objectContaining({ text: 'Hello', from: 'en', to: 'zh' }))
+  })
+
+  it('显式 provider 同时用于正译与回译，不改写用户默认选择', async () => {
+    resolveTranslationProvider.mockResolvedValueOnce('claude')
+    translate
+      .mockResolvedValueOnce({
+        text: 'Hello', detectedLang: 'zh', provider: 'deepl', cached: false,
+        downgradedFrom: ['claude'],
+      })
+      .mockResolvedValueOnce({
+        text: '你好', detectedLang: 'en', provider: 'deepl', cached: false,
+        downgradedFrom: ['claude'],
+      })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/messages/translate-preview',
+      headers: auth(token), payload: { conversationId, text: '你好', provider: 'claude' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(resolveTranslationProvider).toHaveBeenCalledWith(OWNER_ID, 'claude')
+    expect(translate).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      config: { global: 'claude' },
+    }))
+    expect(translate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      config: { global: 'claude' },
+    }))
+    expect(res.json()).toMatchObject({
+      requestedProvider: 'claude', provider: 'deepl', downgraded: true,
+    })
   })
 
   it('目标语言跟随客户最近一条入向消息的检测语言', async () => {

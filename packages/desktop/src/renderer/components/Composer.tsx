@@ -1,8 +1,16 @@
+import type { TranslationProviderName, TranslationResultMeta } from '@im-hub/shared'
 import { useEffect, useRef, useState } from 'react'
 import { api, HttpError } from '../api/client.js'
 import { useStore } from '../store.js'
 import { CHAT_MAX_WIDTH } from '../layout.js'
 import { theme } from '../theme.js'
+import { TranslationProviderSelect } from './TranslationProviderSelect.js'
+import {
+  translationProviderLabel,
+  translationProviderNotice,
+} from './translation-provider-ui.js'
+
+export { translationProviderNotice } from './translation-provider-ui.js'
 
 const LANG_OPTIONS: { code: string; label: string }[] = [
   { code: 'en', label: 'English' },
@@ -22,10 +30,20 @@ const SEND_LOCK_MS = 300
 /** 手动改英文预览后，等打字告一段落再重新拉回译对照，不然每敲一个字都发请求。 */
 const BACK_TRANSLATE_DEBOUNCE_MS = 600
 
+export function translatePreviewForProvider(
+  client: Pick<typeof api, 'translatePreview'>,
+  conversationId: string,
+  text: string,
+  provider: TranslationProviderName,
+) {
+  return client.translatePreview(conversationId, text, provider)
+}
+
 export function Composer() {
   const conversationId = useStore(s => s.activeConversationId)
   const conversations = useStore(s => s.conversations)
   const updateConversationTargetLang = useStore(s => s.updateConversationTargetLang)
+  const translationPreference = useStore(s => s.translationPreference)
   const conv = conversations.find(c => c.id === conversationId)
 
   const [zh, setZh] = useState('')
@@ -45,6 +63,8 @@ export function Composer() {
   const [error, setError] = useState<string | null>(null)
   const [justSent, setJustSent] = useState<string | null>(null)
   const [hovering, setHovering] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState<TranslationProviderName>('deepl')
+  const [translationMeta, setTranslationMeta] = useState<TranslationResultMeta | null>(null)
 
   const previewRef = useRef<HTMLTextAreaElement>(null)
   // 单调递增的请求代号：任何新动作（重新翻译/回译刷新/发送/切会话）都会让更早的在途响应作废，
@@ -72,6 +92,7 @@ export function Composer() {
     setSendLocked(false)
     setError(null)
     setJustSent(null)
+    setTranslationMeta(null)
     sendAttemptIdRef.current = null
     setLockedLang(conv?.target_lang ?? null)
     setResolvedLang(conv?.target_lang ?? null)
@@ -79,6 +100,25 @@ export function Composer() {
     // 这里只想在 conversationId 真正变化时重置，用 conv 会导致列表刷新就误触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId])
+
+  // 新登录用户的偏好快照到达时初始化“本次翻译”。登出会 reset
+  // store，因此不会把上一位员工的选择带进新会话。
+  useEffect(() => {
+    if (!translationPreference) return
+    reqIdRef.current++
+    if (backTranslateTimerRef.current) clearTimeout(backTranslateTimerRef.current)
+    if (sendLockTimerRef.current) clearTimeout(sendLockTimerRef.current)
+    setSelectedProvider(translationPreference.userDefault)
+    setPreview('')
+    setPreviewSourceZh('')
+    setBackTranslated(null)
+    setTranslationMeta(null)
+    setManuallyEdited(false)
+    setTranslating(false)
+    setBackTranslating(false)
+    setSendLocked(false)
+    sendAttemptIdRef.current = null
+  }, [translationPreference?.userDefault])
 
   // 卸载时清掉定时器，避免组件已经不在了还去 setState。
   useEffect(() => () => {
@@ -90,6 +130,7 @@ export function Composer() {
     setPreview('')
     setPreviewSourceZh('')
     setBackTranslated(null)
+    setTranslationMeta(null)
     setManuallyEdited(false)
     setSendLocked(false)
     if (sendLockTimerRef.current) clearTimeout(sendLockTimerRef.current)
@@ -104,12 +145,22 @@ export function Composer() {
     setError(null)
     setJustSent(null)
     try {
-      const res = await api.translatePreview(conversationId, zh)
+      const res = await translatePreviewForProvider(
+        api,
+        conversationId,
+        zh,
+        selectedProvider,
+      )
       if (reqIdRef.current !== myReqId) return // 会话已切换或被更新的动作取代，丢弃
       setPreview(res.translated)
       setPreviewSourceZh(zh)
       setBackTranslated(res.backTranslated)
       setResolvedLang(res.targetLang)
+      setTranslationMeta({
+        requestedProvider: res.requestedProvider,
+        provider: res.provider,
+        downgraded: res.downgraded,
+      })
       setManuallyEdited(false) // 全新翻译结果，清掉「已手动修改」标记
       setTranslating(false)
       setSendLocked(true)
@@ -120,10 +171,10 @@ export function Composer() {
         previewRef.current?.focus()
         previewRef.current?.select()
       })
-    } catch (e) {
+    } catch {
       if (reqIdRef.current !== myReqId) return
       setTranslating(false)
-      setError(e instanceof Error ? `翻译失败：${e.message}` : '翻译失败，请重试')
+      setError('翻译失败，请稍后重试')
     }
   }
 
@@ -139,7 +190,12 @@ export function Composer() {
     const myReqId = ++reqIdRef.current
     setBackTranslating(true)
     try {
-      const res = await api.translatePreview(conversationId, text)
+      const res = await translatePreviewForProvider(
+        api,
+        conversationId,
+        text,
+        selectedProvider,
+      )
       if (reqIdRef.current !== myReqId) return
       setBackTranslated(res.backTranslated)
       setResolvedLang(res.targetLang)
@@ -149,6 +205,17 @@ export function Composer() {
     } finally {
       if (reqIdRef.current === myReqId) setBackTranslating(false)
     }
+  }
+
+  function handleSelectProvider(provider: TranslationProviderName): void {
+    if (provider === selectedProvider) return
+    reqIdRef.current++
+    if (backTranslateTimerRef.current) clearTimeout(backTranslateTimerRef.current)
+    setSelectedProvider(provider)
+    setTranslating(false)
+    setBackTranslating(false)
+    setError(null)
+    clearPreviewState()
   }
 
   function handlePreviewChange(value: string): void {
@@ -376,6 +443,16 @@ export function Composer() {
                 回译不可用（不影响发送）
               </div>
             )}
+            {translationMeta && (
+              <div style={{
+                fontSize: theme.font.size.xs,
+                color: translationMeta.downgraded ? theme.color.status.reconnecting : theme.color.textFaint,
+                marginTop: 4,
+              }}>
+                {translationProviderNotice(translationMeta)
+                  ?? `由 ${translationProviderLabel(translationMeta.provider)} 翻译`}
+              </div>
+            )}
           </div>
         )}
 
@@ -418,6 +495,13 @@ export function Composer() {
           >
             {lockedLang != null ? '🔒 已锁定' : '🔓 自动'}
           </button>
+
+          <TranslationProviderSelect
+            value={selectedProvider}
+            providers={translationPreference?.providers ?? []}
+            disabled={!conversationId || sending}
+            onChange={handleSelectProvider}
+          />
 
           <div style={{
             display: 'flex', gap: theme.space.sm, marginLeft: 'auto', flexShrink: 0,

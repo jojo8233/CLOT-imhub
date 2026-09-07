@@ -1,0 +1,76 @@
+name: Windows internal package
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: imhub
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imhub
+      REDIS_URL: redis://127.0.0.1:6379
+      JWT_SECRET: github-actions-isolated-test-secret-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE imhub_test'
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  package-windows:
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    environment: internal-test
+    env:
+      IM_HUB_SERVER_URL: ${{ vars.IM_HUB_SERVER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - shell: pwsh
+        run: if (-not $env:IM_HUB_SERVER_URL) { throw 'internal-test IM_HUB_SERVER_URL is missing' }
+      - run: pnpm exec vitest run packages/desktop/src/renderer/whatsapp-product-policy.test.ts packages/desktop/src/renderer/components/AddAccountDialog.product.test.tsx packages/desktop/src/renderer/components/NativeClient.test.ts packages/desktop/src/renderer/components/TranslationDock.test.ts packages/desktop/src/internal-release-config.test.ts packages/desktop/src/preload/index.test.ts packages/desktop/src/preload/whatsapp-web-health.test.ts packages/desktop/src/preload/whatsapp-web-send-action.test.ts packages/desktop/src/preload/whatsapp-web-send.test.ts packages/desktop/scripts/package-internal.test.mjs packages/desktop/scripts/windows-workflow.test.mjs
+      - run: pnpm --filter @im-hub/desktop package:internal:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: im-hub-windows-internal-unsigned
+          path: |
+            packages/desktop/release/*internal-unsigned*.exe
+            packages/desktop/release/*internal-unsigned*.manifest.json
+            packages/desktop/release/*internal-unsigned-third-party-licenses.json
+          retention-days: 7
+          if-no-files-found: error

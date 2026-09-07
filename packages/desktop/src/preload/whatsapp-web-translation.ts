@@ -46,10 +46,10 @@ export class WhatsAppWebTranslationAdapter<Row extends object, Marker> {
         this.dom.setError(marker, false)
         this.dom.setRetryHandler(marker, null)
       },
-      onSuccess: (item, translated) => {
+      onSuccess: (item, result) => {
         const marker = this.dom.marker(item.key, true)
         if (!marker) return
-        this.dom.setText(marker, translated)
+        this.dom.setText(marker, formatTranslation(result))
         this.dom.setError(marker, false)
         this.dom.setRetryHandler(marker, null)
         this.translatedRows.set(item.key, item.text)
@@ -94,4 +94,18 @@ export class WhatsAppWebTranslationAdapter<Row extends object, Marker> {
   stats(): NativeBubbleTranslationStats {
     return this.controller.stats()
   }
+}
+
+function formatTranslation(result: Extract<NativeTranslationTextResult, { status: 'translated' }>): string {
+  const actual = providerLabel(result.provider)
+  const notice = result.downgraded
+    ? `由 ${actual} 翻译（${providerLabel(result.requestedProvider)} 不可用）`
+    : `由 ${actual} 翻译`
+  return `${result.translated}\n· ${notice}`
+}
+
+function providerLabel(provider: Extract<NativeTranslationTextResult, { status: 'translated' }>['provider']): string {
+  if (provider === 'deepl') return 'DeepL'
+  if (provider === 'claude') return 'Claude'
+  return 'OpenAI'
 }

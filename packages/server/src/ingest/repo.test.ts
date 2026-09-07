@@ -488,7 +488,8 @@ describe('KyselyMessageRepo.insertMessage', () => {
       conversationId, editedAt: new Date('2026-08-24T01:00:00Z'),
     }))
     const base = {
-      messageId: first.id, targetLang: 'zh', provider: 'deepl', translatedText: '译文', detectedLang: 'en',
+      messageId: first.id, targetLang: 'zh', provider: 'deepl' as const,
+      translatedText: '译文', detectedLang: 'en',
     }
     expect(await repo.saveTranslationIfCurrent({ ...base, revision: 'initial' })).toBe(false)
     expect(await repo.saveTranslationIfCurrent({
@@ -500,6 +501,64 @@ describe('KyselyMessageRepo.insertMessage', () => {
       .select('body_lang').where('id', '=', first.id).executeTakeFirstOrThrow()
     expect(translation.translated_text).toBe('译文')
     expect(message.body_lang).toBe('en')
+  })
+
+  it('同一消息和语言按 provider 分别保存译文', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const message = await repo.insertMessage(msg({ conversationId }))
+    const shared = {
+      messageId: message.id,
+      targetLang: 'zh',
+      revision: 'initial',
+      detectedLang: 'en',
+    }
+
+    await repo.saveTranslationIfCurrent({
+      ...shared, provider: 'deepl', translatedText: 'DeepL result',
+    })
+    await repo.saveTranslationIfCurrent({
+      ...shared, provider: 'openai', translatedText: 'OpenAI result',
+    })
+
+    const translations = await db.selectFrom('message_translations')
+      .select(['provider', 'translated_text'])
+      .where('message_id', '=', message.id)
+      .where('target_lang', '=', 'zh')
+      .orderBy('provider')
+      .execute()
+    expect(translations).toEqual([
+      { provider: 'deepl', translated_text: 'DeepL result' },
+      { provider: 'openai', translated_text: 'OpenAI result' },
+    ])
+  })
+
+  it('发布消息快照只读取公司默认的 DeepL 译文', async () => {
+    const { id: conversationId } = await repo.upsertConversation({
+      accountId, platformConversationId: 'c1', contactExternalId: '777', contactDisplayName: null,
+    })
+    const message = await repo.insertMessage(msg({ conversationId }))
+    await db.updateTable('messages').set({ body_lang: 'en' }).where('id', '=', message.id).execute()
+    await db.insertInto('message_translations').values([
+      {
+        message_id: message.id,
+        target_lang: 'zh',
+        provider: 'openai',
+        translated_text: 'OpenAI result',
+      },
+      {
+        message_id: message.id,
+        target_lang: 'zh',
+        provider: 'deepl',
+        translated_text: 'DeepL result',
+      },
+    ]).execute()
+
+    let snapshot: Parameters<Parameters<typeof repo.withMessageForPublish>[1]>[0] | undefined
+    await repo.withMessageForPublish(message.id, current => { snapshot = current })
+
+    expect(snapshot?.translatedBody).toBe('DeepL result')
   })
 
   it('有 editVersion 后只接受更大的版本，不再由 editedAt 猜测先后', async () => {
@@ -534,7 +593,7 @@ describe('KyselyMessageRepo.insertMessage', () => {
     const translation = {
       messageId: first.id,
       targetLang: 'zh',
-      provider: 'deepl',
+      provider: 'deepl' as const,
       translatedText: '译文',
       detectedLang: 'en',
     }

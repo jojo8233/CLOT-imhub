@@ -83,6 +83,18 @@ describe('platform-scoped Zustand navigation', () => {
     })
   })
 
+  it('登出重置用户翻译 provider 快照，不让下一用户继承', () => {
+    useStore.getState().setTranslationPreference({
+      companyDefault: 'deepl', userDefault: 'claude', providers: [],
+    })
+    expect(useStore.getState()).toMatchObject({
+      translationPreference: { userDefault: 'claude' },
+    })
+
+    useStore.getState().reset()
+    expect(useStore.getState()).toMatchObject({ translationPreference: null })
+  })
+
   it('原生会话解析只接受当前 revision，迟到响应不能覆盖新会话', () => {
     useStore.getState().setAccounts(accounts)
     useStore.getState().setNativeContext('tg-1', {

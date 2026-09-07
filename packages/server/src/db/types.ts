@@ -7,6 +7,7 @@ import type {
   KeywordAlertSeverity,
   Platform,
   Role,
+  TranslationProviderName,
 } from '@im-hub/shared'
 import type { TelegramShadowEventType, TelegramShadowSource } from '../shadow/telegram.js'
 
@@ -32,6 +33,7 @@ export interface UsersTable {
   temporary_password_expires_at: Timestamp | null
   revision: Generated<number>
   updated_at: Timestamp
+  preferred_translation_provider: Generated<TranslationProviderName>
 }
 
 export interface TeamsTable {
@@ -153,7 +155,7 @@ export interface MessageIdAliasesTable {
 export interface MessageTranslationsTable {
   message_id: string
   target_lang: string
-  provider: string
+  provider: TranslationProviderName
   translated_text: string
   created_at: Generated<Timestamp>
 }

@@ -8,24 +8,35 @@ import {
   RESIZER_WIDTH,
   saveWidths,
   showsNativeTranslationDock,
-  usesCloudConversationWorkspace,
 } from '../layout.js'
+import { whatsAppProductSurface } from '../whatsapp-product-policy.js'
 import { CustomerPanel } from './CustomerPanel.js'
 import { NativeClient, signalOutboxStatusError } from './NativeClient.js'
 import { Resizer } from './Resizer.js'
 import { TranslationDock } from './TranslationDock.js'
-import { ChatWorkspace } from './ChatWorkspace.js'
+import { EmptyHint } from './ui.js'
 
 const DEFAULT_CUSTOMER_WIDTH = 310
 
 /** 单一会话工作区：原生客户端与固定翻译输入坞在中间，客户档案固定在右侧。 */
 export function NativeConversationWorkspace() {
   const activeAccountId = useStore(s => s.activeAccountId)
-  const cloudApiActive = useStore(s => usesCloudConversationWorkspace(
+  const activeProductSurface = useStore(s => whatsAppProductSurface(
     s.accounts.find(account => account.id === activeAccountId),
   ))
-  if (cloudApiActive) return <ChatWorkspace />
+  if (activeProductSurface === 'legacy_cloud') return <LegacyWhatsAppCloudWorkspace />
   return <NativeClientConversationWorkspace />
+}
+
+export function LegacyWhatsAppCloudWorkspace() {
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <EmptyHint>
+        旧 Cloud 账号（当前产品不支持连接）。<br />
+        owner 可在管理中心转移负责人或删除账号。
+      </EmptyHint>
+    </div>
+  )
 }
 
 function NativeClientConversationWorkspace() {

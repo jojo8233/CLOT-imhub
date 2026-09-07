@@ -110,7 +110,13 @@ function row(text: string): FakeRow {
 }
 
 function translated(text: string): NativeTranslationTextResult {
-  return { status: 'translated', translated: text }
+  return {
+    status: 'translated',
+    translated: text,
+    requestedProvider: 'deepl',
+    provider: 'deepl',
+    downgraded: false,
+  }
 }
 
 function createAdapter(rows: FakeRow[]) {
@@ -129,6 +135,30 @@ describe('WhatsAppWebTranslationAdapter', () => {
     vi.useRealTimers()
   })
 
+  it('正常结果显示实际 provider，降级结果额外显示原请求 provider', async () => {
+    const normal = row('first')
+    const downgraded = row('second')
+    const { adapter, coordinator } = createAdapter([normal, downgraded])
+
+    adapter.observe(normal, normal.text)
+    adapter.observe(downgraded, downgraded.text)
+    await vi.advanceTimersByTimeAsync(500)
+    coordinator.resolveNext([
+      {
+        status: 'translated', translated: '第一条', requestedProvider: 'claude',
+        provider: 'claude', downgraded: false,
+      } as NativeTranslationTextResult,
+      {
+        status: 'translated', translated: '第二条', requestedProvider: 'claude',
+        provider: 'deepl', downgraded: true,
+      } as NativeTranslationTextResult,
+    ])
+    await vi.runAllTicks()
+
+    expect(normal.marker?.textContent).toBe('第一条\n· 由 Claude 翻译')
+    expect(downgraded.marker?.textContent).toBe('第二条\n· 由 DeepL 翻译（Claude 不可用）')
+  })
+
   it('新行立即显示 pending，并在五百毫秒后显示译文', async () => {
     const first = row('hello')
     const { adapter, coordinator } = createAdapter([first])
@@ -139,7 +169,7 @@ describe('WhatsAppWebTranslationAdapter', () => {
     coordinator.resolveNext([translated('你好')])
     await vi.runAllTicks()
 
-    expect(first.marker?.textContent).toBe('你好')
+    expect(first.marker?.textContent).toBe('你好\n· 由 DeepL 翻译')
     expect(first.marker?.attributes.has('data-im-hub-translation-error')).toBe(false)
   })
 
@@ -179,7 +209,7 @@ describe('WhatsAppWebTranslationAdapter', () => {
     await vi.advanceTimersByTimeAsync(500)
     coordinator.resolveNext([translated('A 的译文')])
     await vi.runAllTicks()
-    expect(first.marker?.textContent).toBe('A 的译文')
+    expect(first.marker?.textContent).toBe('A 的译文\n· 由 DeepL 翻译')
 
     first.text = 'B'
     expect(adapter.observe(first, first.text)).toBe(true)
@@ -194,7 +224,7 @@ describe('WhatsAppWebTranslationAdapter', () => {
     await vi.advanceTimersByTimeAsync(500)
     coordinator.resolveNext([translated('A 的新译文')])
     await vi.runAllTicks()
-    expect(first.marker?.textContent).toBe('A 的新译文')
+    expect(first.marker?.textContent).toBe('A 的新译文\n· 由 DeepL 翻译')
   })
 
   it.each([
@@ -301,7 +331,7 @@ describe('WhatsAppWebTranslationAdapter', () => {
     }
     if (shouldResetWhatsAppTranslations(initialContext, metadataUpdate)) adapter.reset()
     expect(first.marker).toBe(successfulMarker)
-    expect(first.marker?.textContent).toBe('你好')
+    expect(first.marker?.textContent).toBe('你好\n· 由 DeepL 翻译')
     expect(coordinator.clears).toBe(0)
 
     const nextConversation = {

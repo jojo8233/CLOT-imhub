@@ -13,6 +13,16 @@ function observation(
   return { key, text, revision }
 }
 
+function translated(text: string): NativeTranslationTextResult {
+  return {
+    status: 'translated',
+    translated: text,
+    requestedProvider: 'deepl',
+    provider: 'deepl',
+    downgraded: false,
+  }
+}
+
 function createController(
   translate: (texts: readonly string[]) => Promise<NativeTranslationTextResult[]>,
   overrides: Partial<ConstructorParameters<typeof NativeBubbleTranslationController<string>>[0]> = {},
@@ -37,11 +47,29 @@ describe('NativeBubbleTranslationController', () => {
     vi.useRealTimers()
   })
 
-  it('立即进入 pending 并在五百毫秒后合并为一批', async () => {
-    const translate = vi.fn(async (texts: readonly string[]) => texts.map(text => ({
+  it('将 provider 元数据完整传给成功回调', async () => {
+    const result = {
       status: 'translated' as const,
-      translated: `译:${text}`,
-    })))
+      translated: '译文',
+      requestedProvider: 'claude' as const,
+      provider: 'deepl' as const,
+      downgraded: true,
+    }
+    const onSuccess = vi.fn()
+    const controller = createController(async () => [result as NativeTranslationTextResult], {
+      onSuccess,
+    })
+
+    controller.observe(observation('a'))
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(onSuccess).toHaveBeenCalledWith(observation('a'), result)
+  })
+
+  it('立即进入 pending 并在五百毫秒后合并为一批', async () => {
+    const translate = vi.fn(async (texts: readonly string[]) => (
+      texts.map(text => translated(`译:${text}`))
+    ))
     const pending: string[] = []
     const success: string[] = []
     const current = new Set(['a', 'b'])
@@ -49,7 +77,7 @@ describe('NativeBubbleTranslationController', () => {
       translate,
       isCurrent: item => current.has(item.key),
       onPending: item => pending.push(item.key),
-      onSuccess: (item, translated) => success.push(`${item.key}:${translated}`),
+      onSuccess: (item, result) => success.push(`${item.key}:${result.translated}`),
       onFailure: () => undefined,
       onStale: () => undefined,
     })
@@ -67,10 +95,7 @@ describe('NativeBubbleTranslationController', () => {
   it('六十一条拆成二十加一且最多三个活动批次', async () => {
     const releases: Array<() => void> = []
     const translate = vi.fn((texts: readonly string[]) => new Promise<NativeTranslationTextResult[]>(resolve => {
-      releases.push(() => resolve(texts.map(text => ({
-        status: 'translated' as const,
-        translated: `译:${text}`,
-      }))))
+      releases.push(() => resolve(texts.map(text => translated(`译:${text}`))))
     }))
     const controller = createController(translate)
     for (let index = 0; index < 61; index += 1) {
@@ -92,10 +117,7 @@ describe('NativeBubbleTranslationController', () => {
   it('活动批次结束不会跳过新观察的五百毫秒聚合窗口', async () => {
     const releases: Array<() => void> = []
     const translate = vi.fn((texts: readonly string[]) => new Promise<NativeTranslationTextResult[]>(resolve => {
-      releases.push(() => resolve(texts.map(text => ({
-        status: 'translated' as const,
-        translated: `译:${text}`,
-      }))))
+      releases.push(() => resolve(texts.map(text => translated(`译:${text}`))))
     }))
     const controller = createController(translate)
 
@@ -113,10 +135,9 @@ describe('NativeBubbleTranslationController', () => {
   })
 
   it('重复观察同一事实不重复进入 pending 或请求', async () => {
-    const translate = vi.fn(async (texts: readonly string[]) => texts.map(text => ({
-      status: 'translated' as const,
-      translated: `译:${text}`,
-    })))
+    const translate = vi.fn(async (texts: readonly string[]) => (
+      texts.map(text => translated(`译:${text}`))
+    ))
     const pending: string[] = []
     const controller = createController(translate, { onPending: item => pending.push(item.key) })
 
@@ -130,14 +151,11 @@ describe('NativeBubbleTranslationController', () => {
   it('正文变化后丢弃旧结果，只回填新事实', async () => {
     const releases: Array<() => void> = []
     const translate = vi.fn((texts: readonly string[]) => new Promise<NativeTranslationTextResult[]>(resolve => {
-      releases.push(() => resolve(texts.map(text => ({
-        status: 'translated' as const,
-        translated: `译:${text}`,
-      }))))
+      releases.push(() => resolve(texts.map(text => translated(`译:${text}`))))
     }))
     const success: string[] = []
     const controller = createController(translate, {
-      onSuccess: (item, translated) => success.push(`${item.text}:${translated}`),
+      onSuccess: (item, result) => success.push(`${item.text}:${result.translated}`),
     })
 
     controller.observe(observation('a', '旧正文'))
@@ -156,7 +174,7 @@ describe('NativeBubbleTranslationController', () => {
     const failures: string[] = []
     const successes: string[] = []
     const controller = createController(async () => [
-      { status: 'translated', translated: '译:a' },
+      translated('译:a'),
       { status: 'failed' },
     ], {
       onSuccess: item => successes.push(item.key),
@@ -187,7 +205,7 @@ describe('NativeBubbleTranslationController', () => {
     const current = new Set(['a'])
     const stale: string[] = []
     const failures: string[] = []
-    const controller = createController(async () => [{ status: 'translated', translated: '译:a' }], {
+    const controller = createController(async () => [translated('译:a')], {
       isCurrent: item => current.has(item.key),
       onStale: item => stale.push(item.key),
       onFailure: item => failures.push(item.key),
@@ -204,7 +222,7 @@ describe('NativeBubbleTranslationController', () => {
     let release: (() => void) | undefined
     const success: string[] = []
     const controller = createController(() => new Promise<NativeTranslationTextResult[]>(resolve => {
-      release = () => resolve([{ status: 'translated', translated: '译:a' }])
+      release = () => resolve([translated('译:a')])
     }), { onSuccess: item => success.push(item.key) })
 
     controller.observe(observation('a'))
@@ -220,7 +238,7 @@ describe('NativeBubbleTranslationController', () => {
   it('失败后 retry 同一观察只产生一个新请求', async () => {
     const translate = vi.fn()
       .mockResolvedValueOnce([{ status: 'failed' } satisfies NativeTranslationTextResult])
-      .mockResolvedValueOnce([{ status: 'translated', translated: '译:a' } satisfies NativeTranslationTextResult])
+      .mockResolvedValueOnce([translated('译:a')])
     const controller = createController(translate)
     const item = observation('a')
 

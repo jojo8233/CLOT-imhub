@@ -52,4 +52,29 @@ describe('OrganizationAdminAccounts', () => {
     expect(complete).toHaveBeenCalledOnce()
     expect(complete).toHaveBeenCalledWith('task-2')
   })
+
+  it('保留旧 Cloud 账号的管理入口但不提供连接或转换动作', () => {
+    const html = renderToStaticMarkup(<OrganizationAdminAccountsContent
+      items={[{
+        id: 'wa-cloud', platform: 'whatsapp', connectionMode: 'cloud_api',
+        displayName: 'Legacy WhatsApp', status: 'disconnected', ownerUserId: 'user-1',
+        teamId: null, cleanupState: 'not_required', pendingCleanupCount: 0,
+        manualCleanupTasks: [], revision: 1,
+      }]}
+      loading={false}
+      q=""
+      platform="all"
+      cleanupState="all"
+      onQueryChange={() => {}}
+      onPlatformChange={() => {}}
+      onCleanupStateChange={() => {}}
+      onRefresh={() => {}}
+      onAssign={() => {}}
+      onConfirmManualCleanup={() => {}}
+    />)
+    expect(html).toContain('旧 Cloud 账号（当前产品不支持连接）')
+    expect(html).toContain('转移负责人 / 团队')
+    expect(html).not.toContain('转换为 Web')
+    expect(html).not.toContain('重新连接')
+  })
 })

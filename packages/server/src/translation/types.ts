@@ -1,5 +1,6 @@
-export const PROVIDER_NAMES = ['deepl', 'openai', 'claude'] as const
-export type ProviderName = (typeof PROVIDER_NAMES)[number]
+import type { TranslationProviderName } from '@im-hub/shared'
+
+export type ProviderName = TranslationProviderName
 
 export interface TranslationOutput {
   text: string
@@ -13,9 +14,6 @@ export interface TranslationProvider {
 
 export class ProviderFailedError extends Error {
   constructor(readonly provider: ProviderName, reason: unknown) {
-    super(
-      `translation provider ${provider} failed: ${reason instanceof Error ? reason.message : String(reason)}`,
-      { cause: reason },
-    )
+    super(`translation provider ${provider} failed`, { cause: reason })
   }
 }

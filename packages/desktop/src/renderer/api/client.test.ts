@@ -7,6 +7,7 @@ import {
   onUnauthorized,
   shouldLogoutForSessionRevocation,
   UnauthorizedError,
+  websocketEndpoint,
 } from './client.js'
 
 function jsonResponse(body: unknown): Response {
@@ -35,6 +36,14 @@ function sessionFixture() {
   }
   return session
 }
+
+describe('desktop WebSocket endpoint', () => {
+  it('直接使用 preload 注入的 WSS origin，不从 HTTP 字符串替换协议', () => {
+    expect(websocketEndpoint('wss://imhub.example.test')).toBe(
+      'wss://imhub.example.test/ws',
+    )
+  })
+})
 
 describe('desktop auth session lifecycle', () => {
   afterEach(async () => {
@@ -261,6 +270,60 @@ describe('desktop API request headers', () => {
     expect(loginHeaders['Content-Type']).toBe('application/json')
     expect(grantHeaders['Content-Type']).toBeUndefined()
     expect(relinkHeaders['Content-Type']).toBeUndefined()
+  })
+
+  it('翻译 provider 偏好使用精确 GET/PATCH 路径与类型化请求体', async () => {
+    const preference = {
+      companyDefault: 'deepl' as const,
+      userDefault: 'claude' as const,
+      providers: [
+        { provider: 'deepl' as const, available: true },
+        { provider: 'claude' as const, available: true },
+        { provider: 'openai' as const, available: false },
+      ],
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'test-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Test' },
+      }))
+      .mockResolvedValueOnce(jsonResponse(preference))
+      .mockResolvedValueOnce(jsonResponse({ ...preference, userDefault: 'deepl' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.login('agent@example.test', 'synthetic-password')
+    await api.getTranslationPreference()
+    await api.setTranslationProvider('deepl')
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://localhost:4000/api/translation/providers')
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBeUndefined()
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBeUndefined()
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('http://localhost:4000/api/session/translation-provider')
+    expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('PATCH')
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ provider: 'deepl' })
+  })
+
+  it('翻译预览只在本次请求传送 provider', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'test-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Test' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        translated: 'hello', backTranslated: '你好', targetLang: 'en',
+        requestedProvider: 'openai', provider: 'openai', downgraded: false,
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.login('agent@example.test', 'synthetic-password')
+    await api.translatePreview('conversation-1', '你好', 'openai')
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://localhost:4000/api/messages/translate-preview')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      conversationId: 'conversation-1',
+      text: '你好',
+      provider: 'openai',
+    })
   })
 
   it('客户档案 GET 可取消，PUT 发送完整六字段和 expectedRevision', async () => {

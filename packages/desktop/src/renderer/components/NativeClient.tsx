@@ -21,8 +21,9 @@ import {
   registerNativeCommandTarget,
 } from '../native-bridge.js'
 import { nativeControlGrantIsUsable } from '../native-control-grant.js'
-import { useStore } from '../store.js'
+import { useStore, type NativeBridgeConnection } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
+import { whatsAppProductSurface, whatsAppWebAccount } from '../whatsapp-product-policy.js'
 import { EmptyHint, IconButton } from './ui.js'
 
 /**
@@ -81,6 +82,52 @@ export function nativeWebviewNeedsComposerFocus(
   return platform === 'whatsapp' && command.type === 'composer.send'
 }
 
+export function nativeBridgeCanAcceptCommand(
+  connection: NativeBridgeConnection | undefined,
+  guestBridgeFailed: boolean,
+): boolean {
+  return !guestBridgeFailed && connection === 'ready'
+}
+
+export function nativeBridgeUserMessage(
+  platform: string,
+  event: { code: string; message: string },
+): string {
+  if (platform === 'whatsapp' && event.code === 'whatsapp_dom_selector_unavailable') {
+    return 'WhatsApp 页面版本暂不兼容，请重新加载后重试'
+  }
+  if (platform === 'whatsapp' && event.code === 'whatsapp_translation_marker_hidden') {
+    return 'WhatsApp 译文暂时无法显示，请重新加载后重试'
+  }
+  if (platform === 'whatsapp') {
+    return 'WhatsApp 页面连接暂时不可用，请重新加载后重试'
+  }
+  return event.message
+}
+
+export function nativeBridgeConnectionAfterControlState(
+  controlState: NativeControlStateUpdate['state'],
+  guestBridgeFailed: boolean,
+): 'waiting' | 'ready' | 'failed' {
+  if (guestBridgeFailed || controlState === 'blocked') return 'failed'
+  return controlState === 'ready' ? 'ready' : 'waiting'
+}
+
+export function nativeBridgeConnectionAfterReportFailure(
+  retryable: boolean,
+  guestBridgeFailed: boolean,
+  currentConnection: NativeBridgeConnection,
+): NativeBridgeConnection {
+  if (!retryable || guestBridgeFailed) return 'failed'
+  return currentConnection
+}
+
+export function reloadNativeWebview(view: { reload(): void } | null): boolean {
+  if (!view) return false
+  view.reload()
+  return true
+}
+
 export function browserCompatibleUserAgent(userAgent: string): string {
   const platform = /\(([^)]+)\)/.exec(userAgent)?.[1]
   const chrome = /Chrome\/[\d.]+/.exec(userAgent)?.[0]
@@ -111,9 +158,7 @@ export function nativeAccountIdsToMount(
   if (!supportsWebview) return []
   return accounts
     .filter(account => nativeClientSupported(account.platform)
-      && (account.platform !== 'whatsapp'
-        || account.connection_mode === 'adapter'
-        || account.connection_mode === 'web_shell')
+      && (account.platform !== 'whatsapp' || whatsAppWebAccount(account))
       && nativeAccountControllable(account, user)
       && desktopMountAllowed(account))
     .map(account => account.id)
@@ -143,9 +188,7 @@ export function ownedLocalAccountIds(
   return accounts.filter(account => nativeAccountControllable(account, user)
     && ((capabilities.webview
       && nativeClientSupported(account.platform)
-      && (account.platform !== 'whatsapp'
-        || account.connection_mode === 'adapter'
-        || account.connection_mode === 'web_shell'))
+      && (account.platform !== 'whatsapp' || whatsAppWebAccount(account)))
       || (capabilities.signalDesktop
         && account.platform === 'signal'
         && account.connection_mode === 'native_desktop')))
@@ -309,13 +352,11 @@ export function NativeClient() {
         Signal Desktop 宿主桥接不可用。<br />请重新启动 im-hub 桌面开发进程。
       </EmptyHint>
     )
-  } else if (active.platform === 'whatsapp'
-    && active.connection_mode !== 'adapter'
-    && active.connection_mode !== 'web_shell') {
+  } else if (whatsAppProductSurface(active) === 'legacy_cloud') {
     overlay = (
       <EmptyHint>
-        这个账号不是 WhatsApp 官方网页壳，不会加载 web.whatsapp.com。<br />
-        Business Platform 需要单独完成 Cloud API 授权与 Webhook 配置。
+        旧 Cloud 账号（当前产品不支持连接）。<br />
+        该账号不会加载 WhatsApp Web，也不会打开 Cloud 会话工作区。
       </EmptyHint>
     )
   } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform)) {
@@ -916,6 +957,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     let provisionGeneration = 0
     let readyHandled = false
     let hasUsableGrant = false
+    let guestBridgeFailed = false
     let observedIdentity: string | null = null
     let originProbeTimer: ReturnType<typeof setInterval> | null = null
 
@@ -927,16 +969,20 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     const applyControlState = (control: NativeControlStateUpdate): void => {
       if (disposed || control.accountId !== accountId) return
       hasUsableGrant = nativeControlGrantIsUsable(control, Date.now())
-      if (control.state === 'ready') {
+      const connection = nativeBridgeConnectionAfterControlState(control.state, guestBridgeFailed)
+      if (connection === 'ready') {
         setControlError(null)
         useStore.getState().setNativeBridgeConnection(accountId, 'ready')
         return
       }
+      // bridge.error 是 guest 自身的健康状态；grant 刷新只能更新授权，不能假装
+      // 页面桥接已经恢复。只有下一次 bridge.ready 或页面重载可以解除这个 latch。
+      if (guestBridgeFailed) return
       const message = control.message ?? '账号控制尚未就绪'
       setControlError(control.state === 'blocked' ? message : null)
       useStore.getState().setNativeBridgeConnection(
         accountId,
-        control.state === 'blocked' ? 'failed' : 'waiting',
+        connection,
         message,
       )
     }
@@ -986,6 +1032,7 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
       setDetail('')
       setControlError(null)
       hasUsableGrant = false
+      guestBridgeFailed = false
       observedIdentity = null
       lastContextRevisionRef.current = -1
       useStore.getState().setNativeAccountIdentity(accountId, null)
@@ -1040,6 +1087,8 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     const handleEvent = (event: NativeGuestEvent): void => {
       if (disposed) return
       if (event.type === 'bridge.ready') {
+        guestBridgeFailed = false
+        setControlError(null)
         const connection = recoveredNativeBridgeConnection(platform, hasUsableGrant, observedIdentity)
         useStore.getState().setNativeBridgeConnection(accountId, connection, connection === 'waiting'
           ? `正在核对 ${PLATFORM_LABEL[platform] ?? platform} 登录身份`
@@ -1067,7 +1116,10 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
         return
       }
       if (event.type === 'bridge.error') {
-        useStore.getState().setNativeBridgeConnection(accountId, 'failed', event.message)
+        const message = nativeBridgeUserMessage(platform, event)
+        guestBridgeFailed = true
+        setControlError(message)
+        useStore.getState().setNativeBridgeConnection(accountId, 'failed', message)
         return
       }
       if (event.type === 'outbox.status') {
@@ -1152,11 +1204,21 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
           || status === 425
           || status === 429
           || status >= 500
-        useStore.getState().setNativeBridgeConnection(
-          accountId,
-          retryable ? 'ready' : 'failed',
-          retryable ? '消息回传失败，正在等待客户端重试' : '消息回传被服务端拒绝',
+        const currentConnection = useStore.getState()
+          .nativeBridgeByAccount[accountId]?.connection ?? 'failed'
+        const connection = nativeBridgeConnectionAfterReportFailure(
+          retryable,
+          guestBridgeFailed,
+          currentConnection,
         )
+        // 在途 report 不能覆盖更晚发生的 guest bridge.error 或其他失败状态。
+        if (!guestBridgeFailed && (!retryable || connection === 'ready')) {
+          useStore.getState().setNativeBridgeConnection(
+            accountId,
+            connection,
+            retryable ? '消息回传失败，正在等待客户端重试' : '消息回传被服务端拒绝',
+          )
+        }
         sendEventAck({
           protocolVersion: NATIVE_BRIDGE_PROTOCOL_VERSION,
           type: 'event.ack',
@@ -1175,6 +1237,12 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
       send: (_channel: string, command: unknown): Promise<void> => {
         const target = currentTarget()
         if (!target) return Promise.reject(new Error('原生客户端尚未登记'))
+        if (!nativeBridgeCanAcceptCommand(
+          useStore.getState().nativeBridgeByAccount[accountId]?.connection,
+          guestBridgeFailed,
+        )) {
+          return Promise.reject(new Error('原生客户端桥接尚未就绪'))
+        }
         const hostCommand = command as NativeHostCommand
         // TranslationDock 位于宿主 renderer；用户点击按钮后原生焦点也停在宿主。
         // 先聚焦当前 WhatsApp webview，再跨 IPC 交给主进程做第二次 focus 与授权校验。
@@ -1220,6 +1288,10 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
     el?.openDevTools?.()
   }
 
+  function reloadClient(): void {
+    reloadNativeWebview(ref.current as unknown as { reload(): void } | null)
+  }
+
   return (
     <div style={{
       position: 'absolute', inset: 0,
@@ -1248,9 +1320,11 @@ function WebviewPane({ accountId, platform, src, bridgeEnabled, userAgent, visib
           position: 'absolute', left: 16, right: 16, top: 12, zIndex: 3,
           padding: '9px 12px', borderRadius: theme.radius.md,
           background: theme.color.dangerSoft, color: theme.color.danger,
-          fontSize: theme.font.size.sm, pointerEvents: 'none',
+          fontSize: theme.font.size.sm, display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', gap: theme.space.sm,
         }}>
-          账号控制已阻断：{controlError}
+          <span>账号控制已阻断：{controlError}</span>
+          <button className="ih-btn" onClick={reloadClient}>重新加载</button>
         </div>
       )}
       {import.meta.env.DEV && (

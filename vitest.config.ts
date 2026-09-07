@@ -2,7 +2,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ['packages/*/src/**/*.test.{ts,tsx}'],
+    include: [
+      'packages/*/src/**/*.test.{ts,tsx}',
+      'packages/*/scripts/**/*.test.mjs',
+    ],
     environment: 'node',
     // repo.test.ts 会 truncate 真实数据库来保证每个用例从干净状态开始。
     // vitest 默认并行跑不同测试文件，一旦将来出现第二个连真库的测试文件，

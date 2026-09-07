@@ -9,6 +9,7 @@ import { api } from '../api/client.js'
 import { AccountController, type AccountControllerSnapshot } from '../organization-admin/account-controller.js'
 import { previewWithManualCleanupFallback } from '../organization-admin/manual-cleanup.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
+import { whatsAppLegacyCloudNotice } from '../whatsapp-product-policy.js'
 import { AdminConfirmationDialog } from './AdminConfirmationDialog.js'
 
 type PlatformFilter = Platform | 'all'
@@ -161,11 +162,16 @@ export function OrganizationAdminAccountsContent({
         <button className="ih-btn" onClick={onRefresh}>{loading ? '加载中…' : '刷新'}</button>
       </div>
       <div style={{ display: 'grid', gap: 10 }}>
-        {items.map(account => (
-          <article key={account.id} style={rowStyle}>
+        {items.map(account => {
+          const legacyNotice = whatsAppLegacyCloudNotice({
+            platform: account.platform,
+            connection_mode: account.connectionMode,
+          })
+          return <article key={account.id} style={rowStyle}>
             <div style={{ minWidth: 180 }}>
               <strong>{account.displayName}</strong>
               <div style={mutedStyle}>{PLATFORM_LABEL[account.platform] ?? platformName(account.platform)} · {account.connectionMode}</div>
+              {legacyNotice && <div style={legacyNoticeStyle}>{legacyNotice}</div>}
             </div>
             <span>{account.status}</span>
             <span>负责人：{account.ownerUserId}</span>
@@ -192,7 +198,7 @@ export function OrganizationAdminAccountsContent({
               </div>
             )}
           </article>
-        ))}
+        })}
       </div>
     </section>
   )
@@ -226,6 +232,12 @@ function cleanupLabel(value: AdminCleanupState): string {
 
 function platformName(platform: Platform): string {
   return platform[0]?.toUpperCase() + platform.slice(1)
+}
+
+const legacyNoticeStyle: React.CSSProperties = {
+  color: theme.color.gold,
+  fontSize: theme.font.size.xs,
+  marginTop: 4,
 }
 
 function cleanupBadgeStyle(state: AdminCleanupState): React.CSSProperties {

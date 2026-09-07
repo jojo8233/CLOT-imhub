@@ -1,5 +1,9 @@
 import { create } from 'zustand'
-import type { AuthChallengeKind } from '@im-hub/shared'
+import type {
+  AuthChallengeKind,
+  TranslationPreference,
+  TranslationProviderName,
+} from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
 import type { NativeComposerStateEvent, NativeConversationContext } from '@im-hub/shared'
 import {
@@ -57,6 +61,12 @@ export interface NativeDraftState {
   translatedText: string
   backTranslated: string | null
   targetLang: string | null
+  /** 只影响当前会话的本次翻译，不回写员工默认偏好。 */
+  selectedProvider: TranslationProviderName | null
+  /** 最后一次翻译结果的请求/实际 provider 元数据。 */
+  requestedProvider: TranslationProviderName | null
+  actualProvider: TranslationProviderName | null
+  downgraded: boolean
   status: NativeDraftStatus
   error: string | null
   /** 结果未知时与最终原生草稿绑定，重试必须沿用同一个逻辑发送标识。 */
@@ -71,7 +81,9 @@ export interface NativeDraftState {
 
 const EMPTY_DRAFT: NativeDraftState = {
   sourceText: '', translatedText: '', backTranslated: null,
-  targetLang: null, status: 'idle', error: null,
+  targetLang: null, selectedProvider: null,
+  requestedProvider: null, actualProvider: null, downgraded: false,
+  status: 'idle', error: null,
   sendAttemptId: null, sendAttemptDraft: null,
   sendAttemptFingerprint: null,
   sendAttemptContextRevision: null,
@@ -95,6 +107,8 @@ interface State {
   authDone: AuthDoneState | null
   /** 左侧功能中心是否展开。窗口窄的时候收起来给聊天区让位。 */
   panelOpen: boolean
+  /** 当前登录用户的服务端翻译偏好快照；只存内存。 */
+  translationPreference: TranslationPreference | null
   setAccounts(a: AccountRow[]): void
   setConversations(c: ConversationRow[]): void
   setMessages(m: MessageRow[]): void
@@ -105,6 +119,7 @@ interface State {
   setAuthDone(d: AuthDoneState): void
   clearAuth(): void
   togglePanel(): void
+  setTranslationPreference(preference: TranslationPreference | null): void
   applyTranslation(messageId: string, text: string, revision: string): void
   appendMessage(m: MessageRow): void
   updateMessage(messageId: string, body: string, editedAt: string, translatedBody: string | null): void
@@ -156,6 +171,7 @@ export const useStore = create<State>((set) => ({
   authChallenge: null,
   authDone: null,
   panelOpen: true,
+  translationPreference: null,
   setAccounts: (accounts) => set((s) => {
     // 登录后第一次拿到账号列表时直接打开首个实际有账号的平台；之后刷新列表则
     // 尊重用户当前选的平台，只修复被删除或失去权限的账号。
@@ -187,6 +203,7 @@ export const useStore = create<State>((set) => ({
     return { ...navigation, activeConversationId: null, messages: [] }
   }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  setTranslationPreference: (translationPreference) => set({ translationPreference }),
   setAuthChallenge: (authChallenge) => set({ authChallenge, authDone: null }),
   setAuthDone: (authDone) => set({ authDone, authChallenge: null }),
   clearAuth: () => set({ authChallenge: null, authDone: null }),
@@ -355,6 +372,9 @@ export const useStore = create<State>((set) => ({
           ...existing,
           translatedText: '',
           backTranslated: null,
+          requestedProvider: null,
+          actualProvider: null,
+          downgraded: false,
           status: 'idle',
           error: null,
           sendAttemptId: null,
@@ -370,6 +390,9 @@ export const useStore = create<State>((set) => ({
           ...existing,
           translatedText: '',
           backTranslated: null,
+          requestedProvider: null,
+          actualProvider: null,
+          downgraded: false,
           status: 'idle',
           error: null,
           sendAttemptId: null,
@@ -418,5 +441,6 @@ export const useStore = create<State>((set) => ({
     nativeDrafts: {},
     authChallenge: null,
     authDone: null,
+    translationPreference: null,
   }),
 }))

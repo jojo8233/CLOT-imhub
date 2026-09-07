@@ -36,6 +36,39 @@ const noCache = {
 const boom = () => Promise.reject(new ProviderFailedError('deepl', new Error('boom')))
 
 describe('TranslationGateway', () => {
+  it('reports only registered provider names', () => {
+    const gw = new TranslationGateway(
+      [stubProvider('deepl'), stubProvider('claude')],
+      noCache as never,
+      ['deepl', 'claude', 'openai'],
+    )
+    expect(gw.availableProviders()).toEqual(['deepl', 'claude'])
+  })
+
+  it('tries an explicit OpenAI request before the company fallback order', async () => {
+    const attempts: ProviderName[] = []
+    const provider = (name: ProviderName, succeeds: boolean): TranslationProvider => ({
+      name,
+      translate: vi.fn(async () => {
+        attempts.push(name)
+        if (!succeeds) throw new ProviderFailedError(name, new Error('synthetic failure'))
+        return { text: `${name}-out`, detectedLang: 'zh' }
+      }),
+    })
+    const gw = new TranslationGateway(
+      [provider('deepl', true), provider('claude', true), provider('openai', false)],
+      noCache as never,
+      ['deepl', 'claude', 'openai'],
+    )
+
+    const result = await gw.translate({
+      text: 'synthetic', from: 'auto', to: 'zh', config: { global: 'openai' },
+    })
+
+    expect(attempts).toEqual(['openai', 'deepl'])
+    expect(result).toMatchObject({ provider: 'deepl', downgradedFrom: ['openai'] })
+  })
+
   it('使用解析出的引擎翻译', async () => {
     const gw = new TranslationGateway(
       [stubProvider('deepl'), stubProvider('claude')],
@@ -79,6 +112,26 @@ describe('TranslationGateway', () => {
     )
     await expect(gw.translate({ text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' } }))
       .rejects.toThrow('all translation providers failed')
+  })
+
+  it('does not expose raw provider failures in logs or aggregate errors', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const marker = 'credential-marker-must-not-escape'
+    const gw = new TranslationGateway(
+      [stubProvider('deepl', () => Promise.reject(
+        new ProviderFailedError('deepl', new Error(marker)),
+      ))],
+      noCache as never,
+      ['deepl'],
+    )
+
+    const failure = await gw.translate({
+      text: 'synthetic', from: 'auto', to: 'en', config: { global: 'deepl' },
+    }).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).not.toContain(marker)
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(marker)
   })
 
   it('未注册的引擎不会被尝试', async () => {
@@ -159,7 +212,7 @@ describe('TranslationGateway', () => {
     expect(r.downgradedFrom).toEqual([])
   })
 
-  it('全部失败时错误信息带上每个引擎的根因', async () => {
+  it('全部失败时错误只列出 provider，不拼接上游正文', async () => {
     const gw = new TranslationGateway(
       [
         stubProvider('deepl', () => Promise.reject(new ProviderFailedError('deepl', new Error('http 429')))),
@@ -168,7 +221,10 @@ describe('TranslationGateway', () => {
       noCache as never,
       ['deepl', 'openai'],
     )
-    await expect(gw.translate({ text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' } }))
-      .rejects.toThrow(/deepl \(.*429.*\).*openai \(.*bad key.*\)/s)
+    const failure = await gw.translate({
+      text: '你好', from: 'auto', to: 'en', config: { global: 'deepl' },
+    }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toBe('all translation providers failed: deepl, openai')
   })
 })

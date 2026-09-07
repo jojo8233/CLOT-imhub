@@ -28,7 +28,8 @@ Zoom 仍属于产品范围，但延后到三个首期平台完成之后，不进
 - 多引擎翻译与发送前校对
 - 图片、文件、语音、贴纸、表情回应和回复引用等平台原生能力
 
-原生客户端只负责平台交互体验，不能绕过 im-hub 的权限、归档和告警边界。
+原生客户端只负责平台交互体验，不能绕过 im-hub 的权限、归档和告警边界；各平台只有明确接入中央
+消息协议的内容才进入归档与告警，WhatsApp Web 可见 DOM 不属于中央消息来源。
 
 ### 2.1 M4-3 关键词告警当前边界
 
@@ -39,8 +40,8 @@ M4-3 已实现公司内部、全公司范围的字面量关键词规则，仅由
 
 通知只存在于 Electron 应用内，macOS 与 Windows 使用同一 renderer 行为；没有正则、邮件、企业微信
 webhook、操作系统通知、声音、deep-link 跳转或 agent 申请/owner 审批流程。WhatsApp Web 可见 DOM
-不进入中央告警；配置并启用后的 WhatsApp Business Platform Cloud API Webhook 入站文字进入同一
-中央消息边界并参加匹配。
+不进入中央告警；Cloud API 后端保留但当前员工入口移除且默认关闭，只有未来经另行批准启用的
+Webhook 入站文字才会进入中央消息边界。
 
 ### 2.2 M4-4 公司内部组织管理当前边界
 
@@ -93,7 +94,7 @@ agent 调组和平台账号归属，并可执行首次强制改密、即时会�
 |---|---|---|---|
 | Telegram | 补丁版 `telegram-tt` + Electron webview | bridge/composer/outbox 与约定范围真实故障矩阵已完成；shadow 账本已接线，真实对账和切换门槛待完成 | M3 |
 | Signal | 补丁版 Signal Desktop，以独立 profile 多开 | `signal-cli` 适配器与统一会话 UI 作为首检点；真实关联/收发待验，原生交付路线尚未完成 | M5（与 M6 并行） |
-| WhatsApp | 官方 Web `web_shell` 与 Business Platform `cloud_api` 明确分离 | `web_shell` 已有隔离页面、可见 DOM 双语和发送桥接，但不形成中央 DOM 消息归档；`cloud_api` 授权/Webhook/纯文字收发代码与自动化已完成、默认关闭，尚无真实 Meta 配置或平台验收；配置启用后的 Webhook 入站文字会进入中央告警 | M6（与 M5 并行） |
+| WhatsApp | 员工只使用官方 Web `web_shell`；Business Platform `cloud_api` 作为禁用兼容后端保留 | `web_shell` 已有隔离页面、可见 DOM 双语、发送桥接和内部无签名包，但 DOM 不形成中央消息归档；员工界面无 Cloud 创建/授权入口，旧 Cloud 账号可管理但不可进入会话 | M6（与 M5 并行） |
 | Zoom | 后续单独评估 Team Chat 官方能力 | 只有平台类型预留 | M8 |
 
 `packages/server/src/adapters/` 的现有适配器路线暂时保留。只有当对应原生客户端的
@@ -125,8 +126,8 @@ agent 调组和平台账号归属，并可执行首次强制改密、即时会�
 | M3 | Telegram 多开、翻译、媒体、回传和存档完整闭环 |
 | M4 | 可检索客户档案库、公司内部关键词告警及 owner 组织管理中心已实现；真实发布灰度与 macOS/Windows 人工验收待完成 |
 | M5 | Signal 首检点与原生多开完整闭环；与 M6 并行推进 |
-| M6 | WhatsApp 官方 Web 隔离壳；另以 Business Platform Cloud API 完成统一消息闭环；与 M5 并行推进 |
-| M7 | 集成测试、安装包、更新、部署和正式交付 |
+| M6 | WhatsApp Web-only 员工入口、兼容旧 Cloud 账号、固定公司来源的 macOS/Windows 内部未签名包；与 M5 并行推进 |
+| M7 | 正式签名、更新、部署、供应链与生产交付 |
 | M8 | Zoom 未来接入 |
 
 开发时每个阶段使用独立 Milestone；每项可验收工作使用 Issue；代码在

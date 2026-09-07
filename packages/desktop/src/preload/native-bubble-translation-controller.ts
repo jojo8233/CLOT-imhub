@@ -1,4 +1,7 @@
-import type { NativeTranslationTextResult } from './native-translation-coordinator.js'
+import type {
+  NativeTranslationTextResult,
+  NativeTranslationTextSuccess,
+} from './native-translation-coordinator.js'
 
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_DEBOUNCE_MS = 500
@@ -14,7 +17,7 @@ export interface NativeBubbleTranslationPort<TKey> {
   translate(texts: readonly string[]): Promise<NativeTranslationTextResult[]>
   isCurrent(item: NativeBubbleTranslationObservation<TKey>): boolean
   onPending(item: NativeBubbleTranslationObservation<TKey>): void
-  onSuccess(item: NativeBubbleTranslationObservation<TKey>, translated: string): void
+  onSuccess(item: NativeBubbleTranslationObservation<TKey>, result: NativeTranslationTextSuccess): void
   onFailure(item: NativeBubbleTranslationObservation<TKey>): void
   onStale(item: NativeBubbleTranslationObservation<TKey>): void
 }
@@ -175,7 +178,7 @@ export class NativeBubbleTranslationController<TKey> {
 
       this.byKey.delete(entry.item.key)
       const result = results[index]
-      if (result?.status === 'translated') this.port.onSuccess(entry.item, result.translated)
+      if (result?.status === 'translated') this.port.onSuccess(entry.item, result)
       else this.port.onFailure(entry.item)
     }
   }

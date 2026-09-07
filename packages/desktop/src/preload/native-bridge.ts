@@ -5,6 +5,7 @@ import {
   type NativeHostCommand,
   type NativeTranslationBatchInput,
   type NativeTranslationBatchResult,
+  type TranslationProviderName,
 } from '@im-hub/shared'
 import {
   NATIVE_GUEST_EVENT_CHANNEL,
@@ -61,9 +62,15 @@ const bridgeApi = {
       return undefined
     }
   },
-  async detectLanguage(text: string): Promise<string | undefined> {
+  async detectLanguage(
+    text: string,
+    provider?: TranslationProviderName,
+  ): Promise<string | undefined> {
     try {
-      const result = await ipcRenderer.invoke(NATIVE_TRANSLATE_DETECT_CHANNEL, { text }) as {
+      const result = await ipcRenderer.invoke(NATIVE_TRANSLATE_DETECT_CHANNEL, {
+        text,
+        ...(provider === undefined ? {} : { provider }),
+      }) as {
         detectedLang?: string | null
       }
       return result.detectedLang ?? undefined

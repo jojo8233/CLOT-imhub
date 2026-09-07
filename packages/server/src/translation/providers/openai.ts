@@ -27,15 +27,26 @@ export class OpenAiProvider implements TranslationProvider {
       })
       const content = res.choices[0]?.message.content
       if (!content) throw new Error('openai returned no content')
-      const parsed = JSON.parse(content) as Partial<TranslationOutput>
-      if (typeof parsed.text !== 'string' || parsed.text.trim().length === 0) {
+      const parsed: unknown = JSON.parse(content)
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('openai returned malformed json')
+      }
+      const output = parsed as Record<string, unknown>
+      if (typeof output.text !== 'string' || output.text.trim().length === 0) {
+        throw new Error('openai returned malformed json')
+      }
+      if (output.detectedLang !== undefined
+        && output.detectedLang !== null
+        && (typeof output.detectedLang !== 'string' || output.detectedLang.trim().length === 0)) {
         throw new Error('openai returned malformed json')
       }
       return {
-        text: parsed.text,
+        text: output.text,
         // 模型没给且源语言是 auto 时，我们是真的不知道。'und' 是 ISO 639-2 的
         // "undetermined"，比把 'auto' 当语言码写进库诚实。
-        detectedLang: parsed.detectedLang ?? (from === 'auto' ? 'und' : from),
+        detectedLang: typeof output.detectedLang === 'string'
+          ? output.detectedLang
+          : (from === 'auto' ? 'und' : from),
       }
     } catch (reason) {
       throw new ProviderFailedError('openai', reason)

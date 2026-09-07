@@ -29,6 +29,13 @@ import {
   type SignalDesktopRect,
   type SignalDesktopStateUpdate,
 } from '../signal-desktop-ipc.js'
+import {
+  compiledInternalServerUrl,
+  compiledInternalWsUrl,
+  compiledReleaseChannel,
+  desktopServerUrl,
+  desktopWebSocketUrl,
+} from '../internal-release-config.js'
 
 interface SessionPayload {
   token: string
@@ -51,6 +58,12 @@ function onIpc<T>(channel: string, listener: (value: T) => void): () => void {
   return () => { ipcRenderer.removeListener(channel, handler) }
 }
 
+const serverUrl = desktopServerUrl(
+  compiledInternalServerUrl(),
+  process.env.IM_HUB_SERVER_URL,
+)
+const wsUrl = desktopWebSocketUrl(compiledInternalWsUrl(), serverUrl)
+
 /**
  * 可信渲染进程的普通业务仍直接跟服务端 HTTP/WS 通信；平台 guest 的控制与翻译
  * 则只能经 nativeControl 进入主进程边界。
@@ -60,7 +73,9 @@ function onIpc<T>(channel: string, listener: (value: T) => void): () => void {
  */
 contextBridge.exposeInMainWorld('imHub', {
   platform: process.platform,
-  serverUrl: process.env.IM_HUB_SERVER_URL ?? 'http://localhost:4000',
+  serverUrl,
+  wsUrl,
+  release: { channel: compiledReleaseChannel() },
   // 只给可信的外壳渲染进程。主进程在 will-attach-webview 里会再次覆盖并校验
   // preload，不能把页面传来的 preload 属性当成安全边界。
   nativeBridgePreload: pathToFileURL(join(import.meta.dirname, 'native-bridge.mjs')).toString(),

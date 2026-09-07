@@ -4,7 +4,6 @@ import {
   clampWidths,
   defaultWidths,
   showsNativeTranslationDock,
-  usesCloudConversationWorkspace,
   visiblePanels,
 } from './layout.js'
 
@@ -80,14 +79,5 @@ describe('showsNativeTranslationDock', () => {
     expect(showsNativeTranslationDock('telegram')).toBe(true)
     expect(showsNativeTranslationDock('signal')).toBe(true)
     expect(showsNativeTranslationDock('whatsapp')).toBe(true)
-  })
-})
-
-describe('usesCloudConversationWorkspace', () => {
-  it('只有 WhatsApp cloud_api 使用 im-hub 自有双语会话视图', () => {
-    expect(usesCloudConversationWorkspace({ platform: 'whatsapp', connection_mode: 'cloud_api' })).toBe(true)
-    expect(usesCloudConversationWorkspace({ platform: 'whatsapp', connection_mode: 'web_shell' })).toBe(false)
-    expect(usesCloudConversationWorkspace({ platform: 'signal', connection_mode: 'native_desktop' })).toBe(false)
-    expect(usesCloudConversationWorkspace(undefined)).toBe(false)
   })
 })

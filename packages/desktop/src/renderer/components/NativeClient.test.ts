@@ -1,19 +1,62 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AccountRow } from '../api/client.js'
 import {
   browserCompatibleUserAgent,
   createSingleFlight,
   nativeAccountControllable,
   nativeAccountIdsToMount,
+  nativeBridgeUserMessage,
+  nativeBridgeConnectionAfterControlState,
+  nativeBridgeCanAcceptCommand,
+  nativeBridgeConnectionAfterReportFailure,
   ownedLocalAccountIds,
   nativeWebviewAlreadyLoaded,
   nativeWebviewAtExpectedOrigin,
   nativeWebviewNeedsComposerFocus,
+  reloadNativeWebview,
   recoveredNativeBridgeConnection,
   signalDesktopAccountIdsToMount,
   signalInboundErrorIsNonfatal,
   signalOutboxStatusError,
 } from './NativeClient.js'
+
+describe('WhatsApp bridge failure presentation', () => {
+  it('redacts structural and unknown diagnostics from the user prompt', () => {
+    expect(nativeBridgeUserMessage('whatsapp', {
+      code: 'whatsapp_dom_selector_unavailable',
+      message: 'WhatsApp 页面结构已变化；安全诊断：{"selectors":999}',
+    })).toBe('WhatsApp 页面版本暂不兼容，请重新加载后重试')
+    expect(nativeBridgeUserMessage('whatsapp', {
+      code: 'whatsapp_translation_marker_hidden',
+      message: 'diagnostic payload',
+    })).toBe('WhatsApp 译文暂时无法显示，请重新加载后重试')
+    expect(nativeBridgeUserMessage('whatsapp', {
+      code: 'unexpected_bridge_diagnostic',
+      message: 'internal selector and payload details',
+    })).toBe('WhatsApp 页面连接暂时不可用，请重新加载后重试')
+  })
+
+  it('reloads only the explicitly selected webview', () => {
+    const reload = vi.fn()
+    expect(reloadNativeWebview({ reload })).toBe(true)
+    expect(reload).toHaveBeenCalledOnce()
+    expect(reloadNativeWebview(null)).toBe(false)
+  })
+
+  it('does not let a later grant refresh erase a guest bridge failure', () => {
+    expect(nativeBridgeConnectionAfterControlState('ready', true)).toBe('failed')
+    expect(nativeBridgeConnectionAfterControlState('ready', false)).toBe('ready')
+    expect(nativeBridgeConnectionAfterControlState('blocked', false)).toBe('failed')
+    expect(nativeBridgeConnectionAfterControlState('waiting', false)).toBe('waiting')
+  })
+
+  it('does not let a late retryable report result erase a guest bridge failure', () => {
+    expect(nativeBridgeConnectionAfterReportFailure(true, true, 'ready')).toBe('failed')
+    expect(nativeBridgeConnectionAfterReportFailure(true, false, 'failed')).toBe('failed')
+    expect(nativeBridgeConnectionAfterReportFailure(true, false, 'ready')).toBe('ready')
+    expect(nativeBridgeConnectionAfterReportFailure(false, false, 'ready')).toBe('failed')
+  })
+})
 
 describe('native account ownership gate', () => {
   const account = { owner_user_id: 'user-1' }
@@ -156,6 +199,14 @@ describe('native webview composer focus', () => {
     expect(nativeWebviewNeedsComposerFocus('whatsapp', { type: 'composer.get-draft' })).toBe(false)
     expect(nativeWebviewNeedsComposerFocus('telegram', { type: 'composer.set-draft' })).toBe(false)
     expect(nativeWebviewNeedsComposerFocus('signal', { type: 'composer.send' })).toBe(false)
+  })
+
+  it('refuses every guest command once the bridge is no longer ready', () => {
+    expect(nativeBridgeCanAcceptCommand('ready', false)).toBe(true)
+    expect(nativeBridgeCanAcceptCommand('ready', true)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand('waiting', false)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand('failed', false)).toBe(false)
+    expect(nativeBridgeCanAcceptCommand(undefined, false)).toBe(false)
   })
 })
 

@@ -43,6 +43,9 @@ import { AccountAdminService } from '../organization-admin/account-service.js'
 import { adminAccountRoutes } from './routes/admin-accounts.js'
 import { OwnerTransferService } from '../organization-admin/owner-transfer-service.js'
 import { adminOwnerTransferRoutes } from './routes/admin-owner-transfer.js'
+import {
+  translationPreferenceRoutes,
+} from './routes/translation-preferences.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -212,6 +215,12 @@ export async function buildServer(
   await app.register(customerProfileLibraryRoutes)
   await app.register(keywordRuleRoutes)
   await app.register(keywordAlertRoutes)
+  const translationPreferences = deps.translationPreferences
+  if (translationPreferences) {
+    await app.register(async instance => {
+      await translationPreferenceRoutes(instance, { service: translationPreferences })
+    })
+  }
   await app.register(async (instance) => { await messageRoutes(instance, deps) })
   await app.register(async (instance) => { await translateRoutes(instance, deps) })
   const telegramShadowRefresh = deps.telegramShadowRefresh

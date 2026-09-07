@@ -33,8 +33,17 @@ import type {
   NativeControlGrantResponse,
   Platform,
   Role,
+  TranslationPreference,
+  TranslationProviderName,
+  TranslationResultMeta,
   WsServerEvent,
 } from '@im-hub/shared'
+import {
+  compiledInternalServerUrl,
+  compiledInternalWsUrl,
+  compiledReleaseChannel,
+  resolveRendererTransportOrigins,
+} from '../../internal-release-config.js'
 
 interface SessionBridge {
   save(payload: { token: string; user: SessionUser }): Promise<boolean>
@@ -42,16 +51,23 @@ interface SessionBridge {
   clear(): Promise<void>
 }
 
-/**
- * preload 注入的配置。取不到时降级到默认值而不是抛异常——
- * 这一行跑在模块顶层，抛出去会让 React 连挂载都来不及，
- * 结果是一片白屏加零提示，排查起来极其痛苦。
- */
-const injected = (globalThis as { imHub?: { serverUrl?: string; session?: SessionBridge } }).imHub
-if (!injected?.serverUrl) {
-  console.error('[client] preload 未注入 window.imHub，降级使用 http://localhost:4000。检查 sandbox 与 preload 路径。')
+const injected = (globalThis as {
+  imHub?: { serverUrl?: string; wsUrl?: string; session?: SessionBridge }
+}).imHub
+const transportOrigins = resolveRendererTransportOrigins({
+  channel: compiledReleaseChannel(),
+  compiledServerUrl: compiledInternalServerUrl(),
+  compiledWsUrl: compiledInternalWsUrl(),
+  injectedServerUrl: injected?.serverUrl,
+  injectedWsUrl: injected?.wsUrl,
+  developmentServerUrl: import.meta.env.DEV ? 'http://localhost:4000' : null,
+  developmentWsUrl: import.meta.env.DEV ? 'ws://localhost:4000' : null,
+})
+if (!transportOrigins.serverUrl || !transportOrigins.wsUrl) {
+  console.error('[client] 桌面服务配置不可用，请重新安装正确的公司内部构建。')
 }
-const BASE = injected?.serverUrl ?? 'http://localhost:4000'
+const BASE = transportOrigins.serverUrl
+const WS_BASE = transportOrigins.wsUrl
 // 可能为 undefined（比如以后有非 Electron 的渲染宿主）。所有用法都做了空值兜底：
 // 拿不到就是"这次不持久化"，不是崩溃。
 const initialSessionBridge = injected?.session
@@ -104,6 +120,10 @@ export class HttpError extends Error {
     super(message)
     this.name = 'HttpError'
   }
+}
+
+export function websocketEndpoint(wsOrigin: string): string {
+  return `${wsOrigin}/ws`
 }
 
 // 外壳 token 只活在这个模块级变量里，绝不落 localStorage/sessionStorage，也不打印到
@@ -173,6 +193,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   // 请求发出时的会话归属不能在响应回来时重新猜。A 用户的迟到
   // 401 不得清掉期间已登录的 B 用户 token。
   const requestToken = token
+  if (!BASE) throw new NetworkError(new Error('desktop service configuration unavailable'))
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -472,6 +493,12 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
+  getTranslationPreference: () =>
+    request<TranslationPreference>('/api/translation/providers'),
+  setTranslationProvider: (provider: TranslationProviderName) =>
+    request<TranslationPreference>('/api/session/translation-provider', {
+      method: 'PATCH', body: JSON.stringify({ provider }),
+    }),
   getCustomerProfile: (conversationId: string, signal?: AbortSignal) =>
     request<CustomerProfile>(`/api/conversations/${conversationId}/customer-profile`, { signal }),
   updateCustomerProfile: (conversationId: string, update: CustomerProfileUpdate) =>
@@ -544,10 +571,25 @@ export const api = {
    * 只翻译，不发送。用来在发送前生成可编辑的预览 + 回译对照。
    * backTranslated 为 null 表示回译服务当次失败，translated/targetLang/provider 仍然可用。
    */
-  translatePreview: (conversationId: string, text: string) =>
-    request<{ translated: string; backTranslated: string | null; targetLang: string; provider: string }>(
+  translatePreview: (
+    conversationId: string,
+    text: string,
+    provider?: TranslationProviderName,
+  ) =>
+    request<{
+      translated: string
+      backTranslated: string | null
+      targetLang: string
+    } & TranslationResultMeta>(
       '/api/messages/translate-preview',
-      { method: 'POST', body: JSON.stringify({ conversationId, text }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          conversationId,
+          text,
+          ...(provider ? { provider } : {}),
+        }),
+      },
     ),
   /**
    * preTranslated: true 时 body 必须是员工在预览框里最终确认过的文本，服务端原样发出、
@@ -636,9 +678,10 @@ export const api = {
   connectWs(onEvent: (
     e: WsServerEvent,
     context: { sessionSuperseded: boolean },
-  ) => void): WebSocket {
+  ) => void): WebSocket | null {
+    if (!WS_BASE) return null
     const connectionToken = token
-    const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/ws`)
+    const ws = new WebSocket(websocketEndpoint(WS_BASE))
     ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: connectionToken }))
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data as string) as WsServerEvent | { type: 'auth_ok' }
