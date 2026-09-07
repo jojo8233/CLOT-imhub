@@ -33,6 +33,8 @@ import type {
   NativeControlGrantResponse,
   Platform,
   Role,
+  TranslationPreference,
+  TranslationProviderName,
   WsServerEvent,
 } from '@im-hub/shared'
 import {
@@ -490,6 +492,12 @@ export const api = {
   listAccounts: () => request<{ accounts: AccountRow[] }>('/api/accounts'),
   listConversations: () => request<{ conversations: ConversationRow[] }>('/api/conversations'),
   listMessages: (id: string) => request<{ messages: MessageRow[] }>(`/api/conversations/${id}/messages`),
+  getTranslationPreference: () =>
+    request<TranslationPreference>('/api/translation/providers'),
+  setTranslationProvider: (provider: TranslationProviderName) =>
+    request<TranslationPreference>('/api/session/translation-provider', {
+      method: 'PATCH', body: JSON.stringify({ provider }),
+    }),
   getCustomerProfile: (conversationId: string, signal?: AbortSignal) =>
     request<CustomerProfile>(`/api/conversations/${conversationId}/customer-profile`, { signal }),
   updateCustomerProfile: (conversationId: string, update: CustomerProfileUpdate) =>

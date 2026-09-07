@@ -9,6 +9,7 @@ interface Props {
   currentUserName: string | null
   onLogout(): void
   onChangePassword(): void
+  onTranslationSettings(): void
   onAddAccount(platform: ChatPlatform): void
   canAddAccount: boolean
   releaseChannel: DesktopReleaseChannel
@@ -18,6 +19,7 @@ export function AccountTabs({
   currentUserName,
   onLogout,
   onChangePassword,
+  onTranslationSettings,
   onAddAccount,
   canAddAccount,
   releaseChannel,
@@ -96,6 +98,7 @@ export function AccountTabs({
         currentUserName={currentUserName}
         onLogout={onLogout}
         onChangePassword={onChangePassword}
+        onTranslationSettings={onTranslationSettings}
       />
     </header>
   )
@@ -129,14 +132,15 @@ export function Brand({ releaseChannel }: { releaseChannel: DesktopReleaseChanne
   )
 }
 
-function CurrentUser({ currentUserName, onLogout, onChangePassword }: {
+function CurrentUser({ currentUserName, onLogout, onChangePassword, onTranslationSettings }: {
   currentUserName: string | null
   onLogout(): void
   onChangePassword(): void
+  onTranslationSettings(): void
 }) {
   return (
     <div style={{
-      width: 156, flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.sm,
+      width: 210, flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space.sm,
       padding: `0 ${theme.space.lg}px`, borderLeft: `1px solid ${theme.color.border}`,
     }}>
       <Avatar name={currentUserName} size={30} />
@@ -156,6 +160,15 @@ function CurrentUser({ currentUserName, onLogout, onChangePassword }: {
             }}
           >
             修改密码
+          </button>
+          <button
+            onClick={onTranslationSettings}
+            style={{
+              padding: 0, border: 'none', background: 'none',
+              fontSize: theme.font.size.xs, color: theme.color.textFaint,
+            }}
+          >
+            翻译设置
           </button>
           <button
             onClick={onLogout}

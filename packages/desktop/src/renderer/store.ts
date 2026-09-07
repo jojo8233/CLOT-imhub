@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AuthChallengeKind } from '@im-hub/shared'
+import type { AuthChallengeKind, TranslationPreference } from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
 import type { NativeComposerStateEvent, NativeConversationContext } from '@im-hub/shared'
 import {
@@ -95,6 +95,8 @@ interface State {
   authDone: AuthDoneState | null
   /** 左侧功能中心是否展开。窗口窄的时候收起来给聊天区让位。 */
   panelOpen: boolean
+  /** 当前登录用户的服务端翻译偏好快照；只存内存。 */
+  translationPreference: TranslationPreference | null
   setAccounts(a: AccountRow[]): void
   setConversations(c: ConversationRow[]): void
   setMessages(m: MessageRow[]): void
@@ -105,6 +107,7 @@ interface State {
   setAuthDone(d: AuthDoneState): void
   clearAuth(): void
   togglePanel(): void
+  setTranslationPreference(preference: TranslationPreference | null): void
   applyTranslation(messageId: string, text: string, revision: string): void
   appendMessage(m: MessageRow): void
   updateMessage(messageId: string, body: string, editedAt: string, translatedBody: string | null): void
@@ -156,6 +159,7 @@ export const useStore = create<State>((set) => ({
   authChallenge: null,
   authDone: null,
   panelOpen: true,
+  translationPreference: null,
   setAccounts: (accounts) => set((s) => {
     // 登录后第一次拿到账号列表时直接打开首个实际有账号的平台；之后刷新列表则
     // 尊重用户当前选的平台，只修复被删除或失去权限的账号。
@@ -187,6 +191,7 @@ export const useStore = create<State>((set) => ({
     return { ...navigation, activeConversationId: null, messages: [] }
   }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  setTranslationPreference: (translationPreference) => set({ translationPreference }),
   setAuthChallenge: (authChallenge) => set({ authChallenge, authDone: null }),
   setAuthDone: (authDone) => set({ authDone, authChallenge: null }),
   clearAuth: () => set({ authChallenge: null, authDone: null }),
@@ -418,5 +423,6 @@ export const useStore = create<State>((set) => ({
     nativeDrafts: {},
     authChallenge: null,
     authDone: null,
+    translationPreference: null,
   }),
 }))

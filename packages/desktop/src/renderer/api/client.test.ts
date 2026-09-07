@@ -272,6 +272,37 @@ describe('desktop API request headers', () => {
     expect(relinkHeaders['Content-Type']).toBeUndefined()
   })
 
+  it('翻译 provider 偏好使用精确 GET/PATCH 路径与类型化请求体', async () => {
+    const preference = {
+      companyDefault: 'deepl' as const,
+      userDefault: 'claude' as const,
+      providers: [
+        { provider: 'deepl' as const, available: true },
+        { provider: 'claude' as const, available: true },
+        { provider: 'openai' as const, available: false },
+      ],
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'test-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Test' },
+      }))
+      .mockResolvedValueOnce(jsonResponse(preference))
+      .mockResolvedValueOnce(jsonResponse({ ...preference, userDefault: 'deepl' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.login('agent@example.test', 'synthetic-password')
+    await api.getTranslationPreference()
+    await api.setTranslationProvider('deepl')
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://localhost:4000/api/translation/providers')
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBeUndefined()
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBeUndefined()
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('http://localhost:4000/api/session/translation-provider')
+    expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('PATCH')
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ provider: 'deepl' })
+  })
+
   it('客户档案 GET 可取消，PUT 发送完整六字段和 expectedRevision', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({

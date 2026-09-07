@@ -20,6 +20,7 @@ import { FunctionCenter, type ViewKey } from './components/FunctionCenter.js'
 import { LoginPage } from './components/LoginPage.js'
 import { InitialPasswordPage } from './components/InitialPasswordPage.js'
 import { ChangePasswordDialog } from './components/ChangePasswordDialog.js'
+import { TranslationProviderDialog } from './components/TranslationProviderDialog.js'
 import { CustomerProfileLibraryView } from './components/CustomerProfileLibraryView.js'
 import { KeywordAlertCenterView } from './components/KeywordAlertCenterView.js'
 import { OrganizationAdminView } from './components/OrganizationAdminView.js'
@@ -46,6 +47,8 @@ export function App() {
   const removeMessage = useStore(s => s.removeMessage)
   const setAccountStatus = useStore(s => s.setAccountStatus)
   const resetStore = useStore(s => s.reset)
+  const translationPreference = useStore(s => s.translationPreference)
+  const setTranslationPreference = useStore(s => s.setTranslationPreference)
   const activeId = useStore(s => s.activeConversationId)
   const activePlatform = useStore(s => s.activePlatform)
 
@@ -61,6 +64,9 @@ export function App() {
     displayName: string
   } | null>(null)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [translationSettingsOpen, setTranslationSettingsOpen] = useState(false)
+  const [translationSettingsLoading, setTranslationSettingsLoading] = useState(false)
+  const [translationSettingsLoadError, setTranslationSettingsLoadError] = useState<string | null>(null)
   // 整排的宽度。只用来决定功能中心要不要强制收成图标栏——
   // 三栏自己的宽度由 ChatWorkspace 量，两处各管各的，不互相牵连。
   const [rowWidth, setRowWidth] = useState(0)
@@ -192,9 +198,31 @@ export function App() {
     resetStore()
     setUser(null)
     setChangePasswordOpen(false)
+    setTranslationSettingsOpen(false)
+    setTranslationSettingsLoading(false)
+    setTranslationSettingsLoadError(null)
     setBootError(null)
     setAuthState('loggedOut')
   }, [resetKeywordAlertState, resetStore])
+
+  const openTranslationSettings = useCallback(() => {
+    setTranslationSettingsOpen(true)
+    setTranslationSettingsLoadError(null)
+    if (useStore.getState().translationPreference) return
+    const generation = authGenerationRef.current
+    setTranslationSettingsLoading(true)
+    void api.getTranslationPreference().then(preference => {
+      if (generation !== authGenerationRef.current) return
+      setTranslationPreference(preference)
+    }).catch((cause: unknown) => {
+      if (generation !== authGenerationRef.current || cause instanceof UnauthorizedError) return
+      setTranslationSettingsLoadError(cause instanceof NetworkError
+        ? '连不上服务端，请稍后重试'
+        : '无法读取翻译设置，请稍后重试')
+    }).finally(() => {
+      if (generation === authGenerationRef.current) setTranslationSettingsLoading(false)
+    })
+  }, [setTranslationPreference])
 
   // 任何请求收到 401（token 过期/失效）都会触发这个回调，不管是哪个组件发起的——
   // Composer 的翻译/发送、切会话时的拉消息，都不需要各自处理 UnauthorizedError。
@@ -287,6 +315,11 @@ export function App() {
       activeSessionUser = currentSessionUser
       setUser(currentSessionUser)
       refreshKeywordAlertCount(generation, currentSessionUser.role)
+      void api.getTranslationPreference().then(preference => {
+        if (generation === authGenerationRef.current) setTranslationPreference(preference)
+      }).catch(() => {
+        // 偏好读取失败不应阻断账号和会话启动；打开设置时可单独重试。
+      })
       const accounts = await api.listAccounts()
       if (generation !== authGenerationRef.current) return
       await syncOwnedLocalMounts(accounts.accounts, currentSessionUser, generation)
@@ -437,7 +470,7 @@ export function App() {
     setAccounts, setConversations, applyTranslation, setAccountStatus,
     appendMessage, updateMessage, removeMessage, refreshMessages,
     refreshKeywordAlertCount, resetKeywordAlertState, showKeywordAlertToast,
-    backToLogin, syncOwnedLocalMounts,
+    backToLogin, syncOwnedLocalMounts, setTranslationPreference,
   ])
   bootstrapRef.current = bootstrap
 
@@ -524,6 +557,7 @@ export function App() {
           releaseChannel={window.imHub?.release?.channel ?? 'development'}
           onLogout={() => void handleLogout()}
           onChangePassword={() => setChangePasswordOpen(true)}
+          onTranslationSettings={openTranslationSettings}
           canAddAccount={user?.role !== 'auditor'}
           onAddAccount={(platform) => {
             if (user?.role === 'auditor') return
@@ -645,6 +679,22 @@ export function App() {
           onClose={() => setChangePasswordOpen(false)}
         />
       )}
+      <TranslationProviderDialog
+        open={translationSettingsOpen}
+        value={translationPreference?.userDefault ?? 'deepl'}
+        providers={translationPreference?.providers ?? []}
+        loading={translationSettingsLoading}
+        loadError={translationSettingsLoadError}
+        onSave={async provider => {
+          const generation = authGenerationRef.current
+          const preference = await api.setTranslationProvider(provider)
+          if (generation !== authGenerationRef.current) {
+            throw new Error('session changed')
+          }
+          setTranslationPreference(preference)
+        }}
+        onClose={() => setTranslationSettingsOpen(false)}
+      />
     </div>
   )
 }
