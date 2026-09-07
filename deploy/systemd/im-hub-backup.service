@@ -1,0 +1,18 @@
+[Unit]
+Description=im-hub PostgreSQL backup
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/im-hub/current/deploy/compose.prod.yml
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory=/opt/im-hub/current
+ExecStart=/usr/bin/bash /opt/im-hub/current/deploy/scripts/backup-postgres.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/im-hub
+

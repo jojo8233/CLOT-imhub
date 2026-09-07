@@ -638,6 +638,30 @@ sudo bash deploy/scripts/rotate-production-secret.sh OPENAI_API_KEY
 60 秒内等待 `/health/ready`；失败时恢复旧配置并再次启动旧配置。命令只输出变量名和结果，不能用
 shell tracing、`env`、`printenv` 或容器 inspect 输出环境值来排障。
 
+### 5.9 PostgreSQL 日/周备份与恢复演练
+
+`deploy/scripts/backup-postgres.sh` 只允许 root 使用固定目录 `/var/backups/im-hub`。它通过 Compose
+容器本地连接执行 custom-format `pg_dump`，先写 mode-600 临时文件，再用 `pg_restore --list`
+验证并原子改名。日备份精确保留 7 份；每周日同时复制一份周备份并精确保留 4 份。清理只匹配
+`imhub-YYYYMMDDTHHMMSSZ.dump`，不会删除手工文件或其他目录：
+
+```bash
+cd /opt/im-hub/current
+sudo bash deploy/scripts/backup-postgres.sh
+```
+
+首次启用定时器前，选择刚生成的受管备份执行一次恢复演练：
+
+```bash
+sudo bash deploy/scripts/restore-postgres-smoke.sh \
+  /var/backups/im-hub/daily/imhub-YYYYMMDDTHHMMSSZ.dump
+```
+
+恢复目标固定为 `imhub_restore_smoke`，脚本拒绝其他数据库名及备份根目录以外的文件。它验证 migration、
+users 和 accounts 的非敏感计数后，无论成功或失败都删除该临时库。不要打开、解压、复制或输出 dump
+内容；演练通过后才能安装并启用 `deploy/systemd/im-hub-backup.service` 与 `.timer`。备份失败不能通过
+删除 PostgreSQL volume 或运行 migration down 重试。
+
 ---
 
 ## 6. 上线前必做
