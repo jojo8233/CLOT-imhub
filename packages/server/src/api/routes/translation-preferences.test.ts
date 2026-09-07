@@ -39,6 +39,10 @@ class MemoryPreferenceService {
     this.userDefault = provider
     return this.get()
   }
+
+  async resolve(_userId: string, override?: TranslationProviderName): Promise<TranslationProviderName> {
+    return override ?? this.userDefault
+  }
 }
 
 const actorRepo: ActorRepo = {

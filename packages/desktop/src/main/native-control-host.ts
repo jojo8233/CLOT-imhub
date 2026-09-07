@@ -3,6 +3,7 @@ import { ipcMain, session, webContents } from 'electron'
 import {
   NATIVE_BRIDGE_PROTOCOL_VERSION,
   NATIVE_CONTROL_AUTH_SCHEME,
+  TRANSLATION_PROVIDERS,
   type NativeControlGrantVerification,
   type NativeControlStateUpdate,
   type NativeGuestEvent,
@@ -236,12 +237,17 @@ export class NativeControlHost {
   private async detectLanguage(event: IpcMainInvokeEvent, value: unknown): Promise<unknown> {
     const guest = this.requireGuestSender(event)
     if (!record(value)
+      || !Object.keys(value).every(key => key === 'text' || key === 'provider')
       || typeof value.text !== 'string'
       || value.text.trim() === ''
-      || value.text.length > 4_000) {
+      || value.text.length > 4_000
+      || (value.provider !== undefined && !isTranslationProvider(value.provider))) {
       throw new NativeControlRegistryError('语言识别参数无效')
     }
-    return this.proxyRequest(guest, '/api/translate/detect', { text: value.text })
+    return this.proxyRequest(guest, '/api/translate/detect', {
+      text: value.text,
+      ...(value.provider === undefined ? {} : { provider: value.provider }),
+    })
   }
 
   private async proxyRequest(guest: GuestRegistration, path: string, body: unknown): Promise<unknown> {
@@ -419,6 +425,9 @@ function parseAccountId(value: unknown): string {
 
 function parseTranslationBatch(value: unknown): NativeTranslationBatchInput {
   if (!record(value)
+    || !Object.keys(value).every(key => (
+      key === 'texts' || key === 'targetLang' || key === 'sourceLang' || key === 'provider'
+    ))
     || !Array.isArray(value.texts)
     || value.texts.length < 1
     || value.texts.length > 50
@@ -429,10 +438,21 @@ function parseTranslationBatch(value: unknown): NativeTranslationBatchInput {
     || (value.sourceLang !== undefined
       && (typeof value.sourceLang !== 'string'
         || value.sourceLang.length < 2
-        || value.sourceLang.length > 12))) {
+        || value.sourceLang.length > 12))
+    || (value.provider !== undefined && !isTranslationProvider(value.provider))) {
     throw new NativeControlRegistryError('批量翻译参数无效')
   }
-  return value as unknown as NativeTranslationBatchInput
+  return {
+    texts: value.texts as string[],
+    targetLang: value.targetLang,
+    ...(value.sourceLang === undefined ? {} : { sourceLang: value.sourceLang }),
+    ...(value.provider === undefined ? {} : { provider: value.provider }),
+  } as NativeTranslationBatchInput
+}
+
+function isTranslationProvider(value: unknown): value is NativeTranslationBatchInput['provider'] {
+  return typeof value === 'string'
+    && TRANSLATION_PROVIDERS.some(provider => provider === value)
 }
 
 function jsonSizeAllowed(value: unknown): boolean {

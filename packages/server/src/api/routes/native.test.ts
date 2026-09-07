@@ -2,7 +2,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Kysely, PostgresDialect } from 'kysely'
 import pg from 'pg'
-import { NATIVE_BRIDGE_PROTOCOL_VERSION, type Role } from '@im-hub/shared'
+import {
+  NATIVE_BRIDGE_PROTOCOL_VERSION,
+  type Role,
+  type TranslationProviderName,
+} from '@im-hub/shared'
 import { signNativeControlGrant } from '../../auth/native-control-grant.js'
 import type { Database } from '../../db/types.js'
 import type { MessagePublicationSnapshot } from '../../ingest/repo.js'
@@ -59,6 +63,10 @@ const publish = vi.fn()
 const translate = vi.fn().mockResolvedValue({
   text: '你好', detectedLang: 'en', provider: 'deepl', cached: false, downgradedFrom: [],
 })
+const resolveTranslationProvider = vi.fn<(
+  userId: string,
+  override?: TranslationProviderName,
+) => Promise<TranslationProviderName>>().mockResolvedValue('deepl')
 
 function actorRepo(): ActorRepo {
   const roles = new Map<string, Role>([
@@ -95,6 +103,7 @@ beforeEach(async () => {
   })
   publish.mockClear()
   translate.mockClear()
+  resolveTranslationProvider.mockReset().mockResolvedValue('deepl')
 
   await db.deleteFrom('message_translations').execute()
   await db.deleteFrom('message_reactions').execute()
@@ -142,6 +151,11 @@ beforeEach(async () => {
   app = await buildServer({
     adapters: {} as never,
     gateway: { translate } as never,
+    translationPreferences: {
+      get: vi.fn() as never,
+      set: vi.fn() as never,
+      resolve: resolveTranslationProvider,
+    },
     native: {
       ingestor: { ingestDetailed } as never,
       repo: {
@@ -443,6 +457,45 @@ describe('native bridge routes', () => {
       }],
     })
     expect(translate).toHaveBeenCalledOnce()
+  })
+
+  it('NativeGrant 只用已验证的 owner 解析显式 provider，并返回降级元数据', async () => {
+    resolveTranslationProvider.mockResolvedValueOnce('openai')
+    translate.mockResolvedValueOnce({
+      text: '你好', detectedLang: 'en', provider: 'deepl', cached: false,
+      downgradedFrom: ['openai'],
+    })
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/translate/batch', headers: nativeAuth(),
+      payload: { texts: ['hello'], targetLang: 'zh', provider: 'openai' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(resolveTranslationProvider).toHaveBeenCalledWith(agentId, 'openai')
+    expect(translate).toHaveBeenCalledWith(expect.objectContaining({
+      config: { global: 'openai' },
+    }))
+    expect(response.json()).toMatchObject({
+      results: [{
+        translated: '你好',
+        requestedProvider: 'openai',
+        provider: 'deepl',
+        downgraded: true,
+        failed: false,
+      }],
+    })
+  })
+
+  it('NativeGrant 翻译不接受 body 伪造用户身份', async () => {
+    const response = await app.inject({
+      method: 'POST', url: '/api/translate/batch', headers: nativeAuth(),
+      payload: { texts: ['hello'], targetLang: 'zh', userId: managerId },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(resolveTranslationProvider).not.toHaveBeenCalled()
+    expect(translate).not.toHaveBeenCalled()
   })
 
   it('账号归属人可以把平台会话解析成内部 UUID', async () => {

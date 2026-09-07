@@ -33,7 +33,70 @@ function gateway(overrides: Partial<NativeTranslationGatewayPort> = {}): NativeT
   }
 }
 
+function translated(translatedText: string): NativeTranslationTextResult {
+  return {
+    status: 'translated',
+    translated: translatedText,
+    requestedProvider: 'deepl',
+    provider: 'deepl',
+    downgraded: false,
+  }
+}
+
 describe('NativeTranslationCoordinator', () => {
+  it('显式 provider 穿透到请求并保留实际降级元数据', async () => {
+    const translateBatch = vi.fn(async () => [{
+      translated: '译文',
+      detectedLang: 'en',
+      requestedProvider: 'claude' as const,
+      provider: 'deepl' as const,
+      downgraded: true,
+      failed: false as const,
+    }])
+    const coordinator = new NativeTranslationCoordinator(gateway({ translateBatch }))
+
+    const translateMany = coordinator.translateMany.bind(coordinator) as (
+      texts: readonly string[],
+      provider?: 'deepl' | 'claude' | 'openai',
+    ) => Promise<NativeTranslationTextResult[]>
+    await expect(translateMany(['hello'], 'claude')).resolves.toEqual([{
+      status: 'translated',
+      translated: '译文',
+      requestedProvider: 'claude',
+      provider: 'deepl',
+      downgraded: true,
+    }])
+    expect(translateBatch).toHaveBeenCalledWith(expect.objectContaining({ provider: 'claude' }))
+  })
+
+  it('显式 provider 分离缓存键，未显式选择时只合并进行中请求', async () => {
+    const translateBatch = vi.fn(async (input: NativeTranslationBatchInput) => (
+      input.texts.map(text => ({
+        translated: `${input.provider ?? 'saved'}:${text}`,
+        detectedLang: 'en',
+        requestedProvider: input.provider ?? 'deepl',
+        provider: input.provider ?? 'deepl',
+        downgraded: false,
+        failed: false as const,
+      }))
+    ))
+    const coordinator = new NativeTranslationCoordinator(gateway({ translateBatch }))
+    const translateMany = coordinator.translateMany.bind(coordinator) as (
+      texts: readonly string[],
+      provider?: 'deepl' | 'claude' | 'openai',
+    ) => Promise<NativeTranslationTextResult[]>
+
+    await translateMany(['same'], 'claude')
+    await translateMany(['same'], 'openai')
+    await translateMany(['saved'])
+    await translateMany(['saved'])
+
+    expect(translateBatch).toHaveBeenCalledTimes(4)
+    expect(translateBatch.mock.calls.map(([input]) => input.provider)).toEqual([
+      'claude', 'openai', undefined, undefined,
+    ])
+  })
+
   it('按目标语言分组批量翻译并恢复输入顺序', async () => {
     const translateBatch = vi.fn(async (input: NativeTranslationBatchInput) => input.texts.map(text => (
       result(`${input.targetLang}:${text}`, input.sourceLang ?? 'und')
@@ -45,9 +108,9 @@ describe('NativeTranslationCoordinator', () => {
     const coordinator = new NativeTranslationCoordinator(port)
 
     await expect(coordinator.translateMany(['中一', 'west', '中二'])).resolves.toEqual([
-      { status: 'translated', translated: 'en:中一' },
-      { status: 'translated', translated: 'zh:west' },
-      { status: 'translated', translated: 'en:中二' },
+      translated('en:中一'),
+      translated('zh:west'),
+      translated('en:中二'),
     ] satisfies NativeTranslationTextResult[])
     expect(translateBatch).toHaveBeenCalledTimes(2)
     expect(translateBatch).toHaveBeenCalledWith({
@@ -76,6 +139,9 @@ describe('NativeTranslationCoordinator', () => {
     expect(translated).toEqual(texts.map(text => ({
       status: 'translated',
       translated: `译:${text}`,
+      requestedProvider: 'deepl',
+      provider: 'deepl',
+      downgraded: false,
     })))
   })
 
@@ -89,14 +155,14 @@ describe('NativeTranslationCoordinator', () => {
     const port = gateway({ translateBatch })
     const coordinator = new NativeTranslationCoordinator(port)
 
-    await expect(coordinator.translateMany(['one', 'two', 'three'])).resolves.toEqual([
-      { status: 'translated', translated: '成功一' },
+    await expect(coordinator.translateMany(['one', 'two', 'three'], 'deepl')).resolves.toEqual([
+      translated('成功一'),
       { status: 'failed' },
       { status: 'failed' },
     ])
-    await expect(coordinator.translateMany(['one', 'two'])).resolves.toEqual([
-      { status: 'translated', translated: '成功一' },
-      { status: 'translated', translated: '恢复' },
+    await expect(coordinator.translateMany(['one', 'two'], 'deepl')).resolves.toEqual([
+      translated('成功一'),
+      translated('恢复'),
     ])
     expect(port.detectLanguage).toHaveBeenCalledTimes(4)
   })
@@ -106,8 +172,8 @@ describe('NativeTranslationCoordinator', () => {
     const coordinator = new NativeTranslationCoordinator(port)
 
     await expect(coordinator.translateMany(['same', 'same'])).resolves.toEqual([
-      { status: 'translated', translated: '译文' },
-      { status: 'translated', translated: '译文' },
+      translated('译文'),
+      translated('译文'),
     ])
     expect(port.detectLanguage).toHaveBeenCalledTimes(1)
     expect(port.translateBatch).toHaveBeenCalledTimes(1)
@@ -121,8 +187,8 @@ describe('NativeTranslationCoordinator', () => {
     })
     const coordinator = new NativeTranslationCoordinator(port, { maxCacheEntries: 2 })
 
-    await coordinator.translateMany(['first', 'second', 'third'])
-    await coordinator.translate('first')
+    await coordinator.translateMany(['first', 'second', 'third'], 'deepl')
+    await coordinator.translate('first', 'deepl')
     expect(port.translateBatch).toHaveBeenCalledTimes(2)
   })
 
@@ -140,9 +206,9 @@ describe('NativeTranslationCoordinator', () => {
     const port = gateway({ translateBatch })
     const coordinator = new NativeTranslationCoordinator(port, { maxCacheEntries: 1 })
 
-    const initial = coordinator.translateMany(['first', 'second'])
+    const initial = coordinator.translateMany(['first', 'second'], 'deepl')
     await vi.waitFor(() => expect(translateBatch).toHaveBeenCalledTimes(1))
-    const repeated = coordinator.translate('first')
+    const repeated = coordinator.translate('first', 'deepl')
     releaseFirst([result('译:first', 'en'), result('译:second', 'en')])
 
     await Promise.all([initial, repeated])
@@ -192,8 +258,8 @@ describe('NativeTranslationCoordinator', () => {
     const coordinator = new NativeTranslationCoordinator(port)
 
     await expect(coordinator.translateMany(['你好', 'hello'])).resolves.toEqual([
-      { status: 'translated', translated: '译:你好' },
-      { status: 'translated', translated: '译:hello' },
+      translated('译:你好'),
+      translated('译:hello'),
     ])
     expect(translateBatch).toHaveBeenNthCalledWith(1, {
       texts: ['你好'],
@@ -250,9 +316,9 @@ describe('NativeTranslationCoordinator', () => {
     const port = gateway()
     const coordinator = new NativeTranslationCoordinator(port)
 
-    await coordinator.translate('hello')
+    await coordinator.translate('hello', 'deepl')
     coordinator.clear()
-    await coordinator.translate('hello')
+    await coordinator.translate('hello', 'deepl')
     expect(port.translateBatch).toHaveBeenCalledTimes(2)
   })
 })

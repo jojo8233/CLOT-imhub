@@ -13,6 +13,7 @@ const updateBody = z.object({
 export interface TranslationPreferenceRouteService {
   get(userId: string): Promise<TranslationPreference>
   set(userId: string, provider: TranslationProviderName): Promise<TranslationPreference>
+  resolve(userId: string, override?: TranslationProviderName): Promise<TranslationProviderName>
 }
 
 export interface TranslationPreferenceRouteDeps {

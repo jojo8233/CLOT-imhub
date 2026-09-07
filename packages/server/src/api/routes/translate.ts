@@ -1,7 +1,12 @@
-import type { FastifyInstance } from 'fastify'
+import {
+  TRANSLATION_PROVIDERS,
+  type TranslationProviderName,
+} from '@im-hub/shared'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { config } from '../../config.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
+import type { TranslationPreferenceRouteService } from './translation-preferences.js'
 import { authorizeNativeControl, isNativeControlAuthorization } from '../native-control.js'
 
 /**
@@ -19,30 +24,49 @@ const batchBody = z.object({
   targetLang: z.string().min(2).max(12),
   /** 不传就让引擎自己识别。已知源语言时传进来能省一次检测、也更准 */
   sourceLang: z.string().min(2).max(12).optional(),
-})
+  provider: z.enum(TRANSLATION_PROVIDERS).optional(),
+}).strict()
 
 const detectBody = z.object({
   text: z.string().trim().min(1).max(4000),
-})
+  provider: z.enum(TRANSLATION_PROVIDERS).optional(),
+}).strict()
 
 export interface TranslateRouteDeps {
   gateway: TranslationGateway
+  translationPreferences?: TranslationPreferenceRouteService
+}
+
+async function authorizedUserId(req: FastifyRequest): Promise<string> {
+  if (!isNativeControlAuthorization(req.headers.authorization)) return req.actor.userId
+  return (await authorizeNativeControl(req.headers.authorization)).userId
+}
+
+async function resolveProvider(
+  deps: TranslateRouteDeps,
+  userId: string,
+  override?: TranslationProviderName,
+): Promise<TranslationProviderName> {
+  if (!deps.translationPreferences) return config.DEFAULT_TRANSLATION_PROVIDER
+  return override === undefined
+    ? deps.translationPreferences.resolve(userId)
+    : deps.translationPreferences.resolve(userId, override)
 }
 
 export async function translateRoutes(app: FastifyInstance, deps: TranslateRouteDeps): Promise<void> {
   app.post('/api/translate/batch', async (req, reply) => {
-    if (isNativeControlAuthorization(req.headers.authorization)) {
-      try {
-        await authorizeNativeControl(req.headers.authorization)
-      } catch {
-        return reply.code(401).send({ error: 'native control unavailable' })
-      }
+    let userId: string
+    try {
+      userId = await authorizedUserId(req)
+    } catch {
+      return reply.code(401).send({ error: 'native control unavailable' })
     }
     const parsed = batchBody.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? '参数不合法' })
     }
-    const { texts, targetLang, sourceLang } = parsed.data
+    const { texts, targetLang, sourceLang, provider } = parsed.data
+    const requestedProvider = await resolveProvider(deps, userId, provider)
 
     // 逐条并发，而不是拼成一大段发出去再切开：拼接方案在任何一条包含换行或
     // 分隔符时都会错位，而错位的译文会安静地配到错误的消息上——比整批失败糟得多。
@@ -52,7 +76,6 @@ export async function translateRoutes(app: FastifyInstance, deps: TranslateRoute
         return { translated: '', detectedLang: 'und', provider: 'none', failed: false }
       }
       try {
-        const requestedProvider = config.DEFAULT_TRANSLATION_PROVIDER
         const r = await deps.gateway.translate({
           text,
           from: sourceLang ?? 'auto',
@@ -67,10 +90,10 @@ export async function translateRoutes(app: FastifyInstance, deps: TranslateRoute
           downgraded: r.provider !== requestedProvider,
           failed: false,
         }
-      } catch (err) {
+      } catch {
         // 单条失败不拖垮整批：客户端一次要 20 条，一条挂掉就让 20 条全没有
         // 是很差的体验。失败的那条标出来，客户端可以显示原文并稍后重试。
-        console.error('[translate-batch] 单条翻译失败:', err instanceof Error ? err.message : err)
+        console.error('[translate-batch] 单条翻译失败')
         return { translated: '', detectedLang: 'und', provider: 'none', failed: true }
       }
     }))
@@ -89,26 +112,26 @@ export async function translateRoutes(app: FastifyInstance, deps: TranslateRoute
    * 命中缓存时不产生任何外部调用，所以同一个会话反复问也不费额度。
    */
   app.post('/api/translate/detect', async (req, reply) => {
-    if (isNativeControlAuthorization(req.headers.authorization)) {
-      try {
-        await authorizeNativeControl(req.headers.authorization)
-      } catch {
-        return reply.code(401).send({ error: 'native control unavailable' })
-      }
+    let userId: string
+    try {
+      userId = await authorizedUserId(req)
+    } catch {
+      return reply.code(401).send({ error: 'native control unavailable' })
     }
     const parsed = detectBody.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: '参数不合法' })
 
     try {
+      const requestedProvider = await resolveProvider(deps, userId, parsed.data.provider)
       const r = await deps.gateway.translate({
         text: parsed.data.text,
         from: 'auto',
         to: 'en',
-        config: { global: config.DEFAULT_TRANSLATION_PROVIDER },
+        config: { global: requestedProvider },
       })
       return { detectedLang: r.detectedLang }
-    } catch (err) {
-      console.error('[translate-detect] 识别失败:', err instanceof Error ? err.message : err)
+    } catch {
+      console.error('[translate-detect] 识别失败')
       // 识别不出来不是错误，是"不知道"。调用方据此退回默认目标语言
       return { detectedLang: null }
     }

@@ -7,6 +7,7 @@ import type {
   NativeHostCommand,
   NativeTranslationBatchInput,
   NativeTranslationBatchResult,
+  TranslationProviderName,
   DesktopInstallationSyncResult,
   AuthenticatedUser,
 } from '@im-hub/shared'
@@ -70,7 +71,7 @@ declare global {
       emit(event: NativeGuestEvent): void
       onCommand(listener: (command: NativeHostCommand) => void): void
       translateBatch(input: NativeTranslationBatchInput): Promise<NativeTranslationBatchResult[] | undefined>
-      detectLanguage(text: string): Promise<string | undefined>
+      detectLanguage(text: string, provider?: TranslationProviderName): Promise<string | undefined>
     }
   }
   namespace JSX {

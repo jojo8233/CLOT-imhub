@@ -3,13 +3,19 @@ import {
   normalizeTranslationLanguage,
   type NativeTranslationBatchInput,
   type NativeTranslationBatchResult,
+  type TranslationProviderName,
+  type TranslationResultMeta,
 } from '@im-hub/shared'
 
 const DEFAULT_MAX_CACHE_ENTRIES = 500
 const MAX_BATCH_SIZE = 20
+type SuccessfulBatchResult = Extract<
+  NativeTranslationBatchResult,
+  { requestedProvider: TranslationProviderName }
+>
 
 export interface NativeTranslationGatewayPort {
-  detectLanguage(text: string): Promise<string | undefined>
+  detectLanguage(text: string, provider?: TranslationProviderName): Promise<string | undefined>
   translateBatch(
     input: NativeTranslationBatchInput,
   ): Promise<NativeTranslationBatchResult[] | undefined>
@@ -20,14 +26,21 @@ export interface NativeTranslationCoordinatorOptions {
   resolveTargetLanguage?(sourceLang: string | undefined): string
 }
 
+export interface NativeTranslationTextSuccess extends TranslationResultMeta {
+  status: 'translated'
+  translated: string
+}
+
 export type NativeTranslationTextResult =
-  | { status: 'translated'; translated: string }
+  | NativeTranslationTextSuccess
   | { status: 'failed' }
 
 interface PendingText {
+  key: string
   text: string
-  operation: Promise<string>
-  resolve(translated: string): void
+  provider: TranslationProviderName | undefined
+  operation: Promise<NativeTranslationTextSuccess>
+  resolve(result: NativeTranslationTextSuccess): void
   reject(error: Error): void
 }
 
@@ -38,11 +51,6 @@ interface TranslationWorkItem {
   targetLang: string
 }
 
-interface InternalTranslationResult {
-  translated: string
-  detectedLang: string | undefined
-}
-
 /**
  * 原生客户端共用的无界面翻译编排器。
  *
@@ -50,8 +58,8 @@ interface InternalTranslationResult {
  * 同文请求去重、缓存和失败清理，避免把 Telegram/Signal/WhatsApp 的 UI 假装成同一套。
  */
 export class NativeTranslationCoordinator {
-  private readonly cache = new Map<string, Promise<string>>()
-  private readonly inFlight = new Map<string, Promise<string>>()
+  private readonly cache = new Map<string, Promise<NativeTranslationTextSuccess>>()
+  private readonly inFlight = new Map<string, Promise<NativeTranslationTextSuccess>>()
   private readonly maxCacheEntries: number
   private readonly resolveTargetLanguage: (sourceLang: string | undefined) => string
 
@@ -70,52 +78,56 @@ export class NativeTranslationCoordinator {
     this.resolveTargetLanguage = options.resolveTargetLanguage ?? bilingualTranslationTarget
   }
 
-  async translate(text: string): Promise<string> {
+  async translate(text: string, provider?: TranslationProviderName): Promise<string> {
     if (!text.trim()) throw new Error('translation text is blank')
-    const result = (await this.translateMany([text]))[0]
+    const result = (await this.translateMany([text], provider))[0]
     if (!result || result.status === 'failed') throw new Error('translation unavailable')
     return result.translated
   }
 
-  async translateMany(texts: readonly string[]): Promise<NativeTranslationTextResult[]> {
+  async translateMany(
+    texts: readonly string[],
+    provider?: TranslationProviderName,
+  ): Promise<NativeTranslationTextResult[]> {
     const pending: PendingText[] = []
     const operations = texts.map(text => {
       if (!text.trim()) return Promise.resolve<NativeTranslationTextResult>({ status: 'failed' })
-      const cached = this.cache.get(text)
+      const key = this.translationKey(text, provider)
+      const cached = provider === undefined ? undefined : this.cache.get(key)
       if (cached) {
         return cached.then(
-          translated => ({ status: 'translated', translated }) as const,
+          result => result,
           () => ({ status: 'failed' }) as const,
         )
       }
-      const inFlight = this.inFlight.get(text)
+      const inFlight = this.inFlight.get(key)
       if (inFlight) {
         return inFlight.then(
-          translated => ({ status: 'translated', translated }) as const,
+          result => result,
           () => ({ status: 'failed' }) as const,
         )
       }
 
-      let resolveOperation: (translated: string) => void = () => undefined
+      let resolveOperation: (result: NativeTranslationTextSuccess) => void = () => undefined
       let rejectOperation: (error: Error) => void = () => undefined
-      const base = new Promise<string>((resolve, reject) => {
+      const base = new Promise<NativeTranslationTextSuccess>((resolve, reject) => {
         resolveOperation = resolve
         rejectOperation = reject
       })
-      let operation: Promise<string>
+      let operation: Promise<NativeTranslationTextSuccess>
       operation = base.catch((error: unknown) => {
-        if (this.inFlight.get(text) === operation) this.inFlight.delete(text)
+        if (this.inFlight.get(key) === operation) this.inFlight.delete(key)
         throw error
       })
-      this.rememberInFlight(text, operation)
-      pending.push({ text, operation, resolve: resolveOperation, reject: rejectOperation })
+      this.rememberInFlight(key, operation)
+      pending.push({ key, text, provider, operation, resolve: resolveOperation, reject: rejectOperation })
       return operation.then(
-        translated => ({ status: 'translated', translated }) as const,
+        result => result,
         () => ({ status: 'failed' }) as const,
       )
     })
 
-    if (pending.length > 0) await this.resolvePendingBatch(pending)
+    if (pending.length > 0) await this.resolvePendingBatch(pending, provider)
     return Promise.all(operations)
   }
 
@@ -124,16 +136,20 @@ export class NativeTranslationCoordinator {
     this.inFlight.clear()
   }
 
-  private remember(text: string, operation: Promise<string>): void {
+  private remember(key: string, operation: Promise<NativeTranslationTextSuccess>): void {
     if (this.cache.size >= this.maxCacheEntries) {
       const oldest = this.cache.keys().next().value
       if (typeof oldest === 'string') this.cache.delete(oldest)
     }
-    this.cache.set(text, operation)
+    this.cache.set(key, operation)
   }
 
-  private rememberInFlight(text: string, operation: Promise<string>): void {
-    this.inFlight.set(text, operation)
+  private rememberInFlight(key: string, operation: Promise<NativeTranslationTextSuccess>): void {
+    this.inFlight.set(key, operation)
+  }
+
+  private translationKey(text: string, provider: TranslationProviderName | undefined): string {
+    return JSON.stringify([provider ?? null, text])
   }
 
   private targetLanguage(sourceLang: string | undefined): string {
@@ -142,10 +158,13 @@ export class NativeTranslationCoordinator {
     return targetLang
   }
 
-  private async resolvePendingBatch(pending: PendingText[]): Promise<void> {
+  private async resolvePendingBatch(
+    pending: PendingText[],
+    provider: TranslationProviderName | undefined,
+  ): Promise<void> {
     const detectedLanguages = await Promise.all(pending.map(async ({ text }) => {
       try {
-        return this.normalizeLanguage(await this.gateway.detectLanguage(text))
+        return this.normalizeLanguage(await this.gateway.detectLanguage(text, provider))
       } catch {
         return undefined
       }
@@ -165,13 +184,14 @@ export class NativeTranslationCoordinator {
       }
     }
 
-    await this.requestGroups(workItems, pending, true)
+    await this.requestGroups(workItems, pending, true, provider)
   }
 
   private async requestGroups(
     items: TranslationWorkItem[],
     pending: PendingText[],
     allowCorrection: boolean,
+    provider: TranslationProviderName | undefined,
   ): Promise<void> {
     const groups = new Map<string, TranslationWorkItem[]>()
     for (const item of items) {
@@ -193,6 +213,7 @@ export class NativeTranslationCoordinator {
             texts: chunk.map(item => item.text),
             targetLang: chunk[0]?.targetLang ?? '',
             ...(chunk[0]?.sourceLang ? { sourceLang: chunk[0].sourceLang } : {}),
+            ...(provider === undefined ? {} : { provider }),
           }
           results = await this.gateway.translateBatch(input)
         } catch {
@@ -207,17 +228,14 @@ export class NativeTranslationCoordinator {
             continue
           }
 
-          const internalResult: InternalTranslationResult = {
-            translated: result.translated,
-            detectedLang: this.normalizeLanguage(result.detectedLang),
-          }
-          if (allowCorrection && !item.sourceLang && internalResult.detectedLang) {
+          const detectedLang = this.normalizeLanguage(result.detectedLang)
+          if (allowCorrection && !item.sourceLang && detectedLang) {
             try {
-              const correctedTarget = this.targetLanguage(internalResult.detectedLang)
+              const correctedTarget = this.targetLanguage(detectedLang)
               if (this.languageKey(correctedTarget) !== this.languageKey(item.targetLang)) {
                 corrections.push({
                   ...item,
-                  sourceLang: internalResult.detectedLang,
+                  sourceLang: detectedLang,
                   targetLang: correctedTarget,
                 })
                 continue
@@ -227,12 +245,18 @@ export class NativeTranslationCoordinator {
               continue
             }
           }
-          this.resolvePending(item, pending, internalResult.translated)
+          this.resolvePending(item, pending, {
+            status: 'translated',
+            translated: result.translated,
+            requestedProvider: result.requestedProvider,
+            provider: result.provider,
+            downgraded: result.downgraded,
+          })
         }
       }
     }
 
-    if (corrections.length > 0) await this.requestGroups(corrections, pending, false)
+    if (corrections.length > 0) await this.requestGroups(corrections, pending, false, provider)
   }
 
   private languageKey(language: string): string {
@@ -247,26 +271,38 @@ export class NativeTranslationCoordinator {
     }
   }
 
-  private isSuccessfulResult(result: NativeTranslationBatchResult | undefined): result is NativeTranslationBatchResult {
+  private isSuccessfulResult(
+    result: NativeTranslationBatchResult | undefined,
+  ): result is SuccessfulBatchResult {
     if (!result) return false
-    return !result.failed && typeof result.translated === 'string' && Boolean(result.translated.trim())
+    return !result.failed
+      && result.provider !== 'none'
+      && 'requestedProvider' in result
+      && typeof result.translated === 'string'
+      && Boolean(result.translated.trim())
   }
 
-  private resolvePending(item: TranslationWorkItem, pending: PendingText[], translated: string): void {
+  private resolvePending(
+    item: TranslationWorkItem,
+    pending: PendingText[],
+    result: NativeTranslationTextSuccess,
+  ): void {
     const pendingText = pending[item.index]
     if (!pendingText) return
-    if (this.inFlight.get(pendingText.text) === pendingText.operation) {
-      this.inFlight.delete(pendingText.text)
-      this.remember(pendingText.text, Promise.resolve(translated))
+    if (this.inFlight.get(pendingText.key) === pendingText.operation) {
+      this.inFlight.delete(pendingText.key)
+      if (pendingText.provider !== undefined) {
+        this.remember(pendingText.key, Promise.resolve(result))
+      }
     }
-    pendingText.resolve(translated)
+    pendingText.resolve(result)
   }
 
   private rejectPending(item: TranslationWorkItem, pending: PendingText[]): void {
     const pendingText = pending[item.index]
     if (!pendingText) return
-    if (this.inFlight.get(pendingText.text) === pendingText.operation) {
-      this.inFlight.delete(pendingText.text)
+    if (this.inFlight.get(pendingText.key) === pendingText.operation) {
+      this.inFlight.delete(pendingText.key)
     }
     pendingText.reject(new Error('translation unavailable'))
   }

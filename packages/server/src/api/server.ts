@@ -45,7 +45,6 @@ import { OwnerTransferService } from '../organization-admin/owner-transfer-servi
 import { adminOwnerTransferRoutes } from './routes/admin-owner-transfer.js'
 import {
   translationPreferenceRoutes,
-  type TranslationPreferenceRouteService,
 } from './routes/translation-preferences.js'
 
 declare module 'fastify' {
@@ -82,7 +81,6 @@ export interface BuildServerOptions {
 }
 
 export interface BuildServerDeps extends MessageRouteDeps {
-  translationPreferences?: TranslationPreferenceRouteService
   native?: NativeRouteDeps
   telegramShadowRefresh?: TelegramShadowRefreshRouteDeps
   whatsappCloudRoutes?: WhatsAppCloudRouteDeps

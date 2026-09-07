@@ -6,6 +6,7 @@ import {
   type NativeHostCommand,
   type NativeTranslationBatchInput,
   type NativeTranslationBatchResult,
+  type TranslationProviderName,
 } from '@im-hub/shared'
 import {
   acknowledgeWhatsAppAttempt,
@@ -51,7 +52,7 @@ interface WhatsAppBridgeApi {
   emit(event: NativeGuestEvent): void
   onCommand(listener: (command: NativeHostCommand) => void): void
   translateBatch(input: NativeTranslationBatchInput): Promise<NativeTranslationBatchResult[] | undefined>
-  detectLanguage(text: string): Promise<string | undefined>
+  detectLanguage(text: string, provider?: TranslationProviderName): Promise<string | undefined>
   insertText(text: string): void
 }
 

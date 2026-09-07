@@ -1,9 +1,14 @@
+import {
+  TRANSLATION_PROVIDERS,
+  type TranslationProviderName,
+} from '@im-hub/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { config } from '../../config.js'
 import type { ScopedDb } from '../../rbac/scoped-db.js'
 import type { AdapterManager } from '../../adapters/manager.js'
 import type { TranslationGateway } from '../../translation/gateway.js'
+import type { TranslationPreferenceRouteService } from './translation-preferences.js'
 import { resolveTargetLang } from '../../translation/target-lang.js'
 import { bilingualTranslationTarget } from '../../translation/incoming-target.js'
 import { WhatsAppGraphError } from '../../whatsapp-cloud/graph-client.js'
@@ -21,17 +26,31 @@ const sendBody = z.object({
   targetLang: z.string().min(2).optional(),
   /** Cloud API 重试必须沿用同一 id；其他平台暂时忽略。 */
   attemptId: z.string().uuid().optional(),
-})
+  provider: z.enum(TRANSLATION_PROVIDERS).optional(),
+}).strict()
 
 const previewBody = z.object({
   conversationId: z.string().uuid(),
   text: z.string().trim().min(1, '消息内容不能为空白'),
-})
+  provider: z.enum(TRANSLATION_PROVIDERS).optional(),
+}).strict()
 
 export interface MessageRouteDeps {
   adapters: AdapterManager
   gateway: TranslationGateway
+  translationPreferences?: TranslationPreferenceRouteService
   whatsappCloud?: Pick<WhatsAppCloudService, 'sendText'>
+}
+
+async function resolveProvider(
+  deps: MessageRouteDeps,
+  userId: string,
+  override?: TranslationProviderName,
+): Promise<TranslationProviderName> {
+  if (!deps.translationPreferences) return config.DEFAULT_TRANSLATION_PROVIDER
+  return override === undefined
+    ? deps.translationPreferences.resolve(userId)
+    : deps.translationPreferences.resolve(userId, override)
 }
 
 /** 在 scope 内查一个会话，查不到就是无权访问。所有会话相关操作都先过它。 */
@@ -82,6 +101,7 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
     const { id } = req.params as { id: string }
     const conv = await findVisibleConversation(req.scoped, id)
     if (!conv) return reply.code(404).send({ error: 'not found' })
+    const requestedProvider = await resolveProvider(deps, req.actor.userId)
 
     // 复用同一条 scoped 查询继续 join messages：既避免了裸 db 的二次未过滤查询，
     // 也不需要额外一次往返——上面的 findVisibleConversation 只用来产出 404。
@@ -89,10 +109,12 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
       .innerJoin('messages', 'messages.conversation_id', 'conversations.id')
       .leftJoin('message_translations as translation_en', join => join
         .onRef('translation_en.message_id', '=', 'messages.id')
-        .on('translation_en.target_lang', '=', 'en'))
+        .on('translation_en.target_lang', '=', 'en')
+        .on('translation_en.provider', '=', requestedProvider))
       .leftJoin('message_translations as translation_zh', join => join
         .onRef('translation_zh.message_id', '=', 'messages.id')
-        .on('translation_zh.target_lang', '=', 'zh'))
+        .on('translation_zh.target_lang', '=', 'zh')
+        .on('translation_zh.provider', '=', requestedProvider))
       .select([
         'messages.id as id', 'messages.platform_message_id as platform_message_id',
         'messages.direction as direction', 'messages.body as body',
@@ -137,12 +159,17 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
     const targetLang = await resolveConversationTargetLang(
       req.scoped, parsed.data.conversationId, conv.target_lang,
     )
+    const requestedProvider = await resolveProvider(
+      deps,
+      req.actor.userId,
+      parsed.data.provider,
+    )
 
     const translated = await deps.gateway.translate({
       text: parsed.data.text,
       from: 'auto',
       to: targetLang,
-      config: { global: config.DEFAULT_TRANSLATION_PROVIDER },
+      config: { global: requestedProvider },
     })
 
     let backTranslated: string | null = null
@@ -151,14 +178,21 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
         text: translated.text,
         from: targetLang,
         to: 'zh',
-        config: { global: config.DEFAULT_TRANSLATION_PROVIDER },
+        config: { global: requestedProvider },
       })
       backTranslated = back.text
-    } catch (err) {
-      req.log.warn({ err }, '[translate-preview] 回译失败，预览仍继续，只是不带回译对照')
+    } catch {
+      req.log.warn({ provider: requestedProvider }, '[translate-preview] 回译失败，预览仍继续，只是不带回译对照')
     }
 
-    return { translated: translated.text, backTranslated, targetLang, provider: translated.provider }
+    return {
+      translated: translated.text,
+      backTranslated,
+      targetLang,
+      requestedProvider,
+      provider: translated.provider,
+      downgraded: translated.provider !== requestedProvider,
+    }
   })
 
   /**
@@ -180,17 +214,19 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
     if (!conv) return reply.code(404).send({ error: 'not found' })
 
     let sentText = parsed.data.body
-    let provider: string | undefined
+    let requestedProvider: TranslationProviderName | undefined
+    let provider: TranslationProviderName | undefined
 
     if (!parsed.data.preTranslated) {
       const targetLang = parsed.data.targetLang
         ?? await resolveConversationTargetLang(req.scoped, parsed.data.conversationId, conv.target_lang)
+      requestedProvider = await resolveProvider(deps, req.actor.userId, parsed.data.provider)
 
       const translated = await deps.gateway.translate({
         text: parsed.data.body,
         from: 'auto',
         to: targetLang,
-        config: { global: config.DEFAULT_TRANSLATION_PROVIDER },
+        config: { global: requestedProvider },
       })
       sentText = translated.text
       provider = translated.provider
@@ -238,6 +274,14 @@ export async function messageRoutes(app: FastifyInstance, deps: MessageRouteDeps
       )
     }
 
-    return { platformMessageId, sentText, provider }
+    return {
+      platformMessageId,
+      sentText,
+      requestedProvider,
+      provider,
+      downgraded: requestedProvider === undefined || provider === undefined
+        ? undefined
+        : provider !== requestedProvider,
+    }
   })
 }
