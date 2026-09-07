@@ -31,8 +31,11 @@ chmod 700 "$fake_bin/git"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "image=%s docker %s\\n" "${IMHUB_APP_IMAGE:-none}" "$*" >> "$IMHUB_RELEASE_CALL_LOG"' \
+  'if [[ "$*" == *" stop caddy app"* ]] && [[ "${IMHUB_DOCKER_STOP_FAIL:-false}" = true ]]; then exit 1; fi' \
+  'if [[ "$*" == *" kill caddy app"* ]] && [[ "${IMHUB_DOCKER_KILL_FAIL:-false}" = true ]]; then exit 1; fi' \
   'if [[ "$*" == *"exec -T app node -e"* ]] && [[ "${IMHUB_APP_IMAGE:-}" == "${IMHUB_DOCKER_FAIL_IMAGE:-never}" ]]; then exit 1; fi' \
   'if [[ "$*" == *"preflight:production"* ]] && [[ "${IMHUB_APP_IMAGE:-}" == "${IMHUB_DOCKER_FAIL_PREFLIGHT_IMAGE:-never}" ]]; then exit 1; fi' \
+  'if [[ "$*" == *" up -d app caddy"* ]] || [[ "$*" == *" up -d --no-deps --force-recreate app"* ]]; then printf "%s\\n" "$IMHUB_APP_IMAGE" > "$IMHUB_TEST_RUNNING_IMAGE_FILE"; fi' \
   'if [[ "$*" == *" ps -q app"* ]]; then printf "%s\\n" synthetic-app-container; exit 0; fi' \
   'if [[ "$1 $2" == "inspect --format" ]]; then cat "$IMHUB_TEST_RUNNING_IMAGE_FILE"; exit 0; fi' \
   'exit 0' > "$fake_bin/docker"
@@ -171,6 +174,26 @@ test ! -e "$state_root/state"
 test ! -e "$release_link"
 grep -q 'docker compose .* stop caddy app' "$call_log"
 
+rm -f "$state_root/state" "$release_link"
+: > "$call_log"
+if env "${release_env[@]}" IMHUB_DOCKER_FAIL_IMAGE="im-hub-server:$release_sha" \
+  IMHUB_DOCKER_STOP_FAIL=true IMHUB_DOCKER_KILL_FAIL=true \
+  bash "$deploy_script" "$release_sha" > "$test_root/first-deploy-stop-failure.log" 2>&1; then
+  echo 'first deploy reported recovery after stop and kill failed' >&2
+  exit 1
+fi
+test ! -e "$state_root/state"
+test ! -e "$release_link"
+grep -q 'docker compose .* stop caddy app' "$call_log"
+grep -q 'docker compose .* kill caddy app' "$call_log"
+grep -q 'could not stop app and Caddy; immediate operator action required' \
+  "$test_root/first-deploy-stop-failure.log"
+if grep -q 'stopped app and Caddy; release state was not created' \
+  "$test_root/first-deploy-stop-failure.log"; then
+  echo 'first deploy falsely reported successful recovery' >&2
+  exit 1
+fi
+
 : > "$call_log"
 if env "${release_env[@]}" IMHUB_FLOCK_FAIL=true bash "$deploy_script" "$release_sha" \
   > "$test_root/locked.log" 2>&1; then
@@ -189,5 +212,11 @@ fi
 
 grep -q 'ConditionPathExists=/opt/im-hub/current/deploy/compose.prod.yml' \
   "$repo_root/deploy/systemd/im-hub-backup.service"
+
+if rg -n 'node -e .*renameSync|renameSync.*release_link' \
+  "$deploy_script" "$rollback_script" >/dev/null; then
+  echo 'release link updates depend on host Node.js' >&2
+  exit 1
+fi
 
 echo 'release policy tests passed'

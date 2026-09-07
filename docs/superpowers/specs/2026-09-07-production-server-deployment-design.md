@@ -199,7 +199,8 @@ provider 时按实际 provider 保存，不能用后来一次翻译静默覆盖�
 部署程序在服务器本地生成 PostgreSQL、Redis、JWT 等随机秘密。DeepL 旧密钥、Claude/OpenAI 新
 密钥、Telegram 新 `API_ID/API_HASH` 由管理员在自己的 SSH 会话中使用无回显交互式工具录入。
 Codex 执行和日志不读取这些值。密钥轮换时先写新受限配置、验证新容器健康，再撤销旧密钥；不能
-直接编辑正在使用的容器文件系统。
+直接编辑正在使用的容器文件系统。轮换与发布/回滚共用发布操作锁，并在锁内重新核对 manifest 与
+实际 app 镜像，避免在发布切换镜像期间用旧镜像重建容器。
 
 首期部署需要管理员在安全渠道自行准备：三家翻译服务商的生产凭据、Telegram 生产应用凭据、
 Cloudflare DNS/SSL 设置权限，以及首个 owner email。具体值均不提交到仓库。
@@ -225,9 +226,10 @@ Cloudflare DNS/SSL 设置权限，以及首个 owner email。具体值均不提�
 
 应用失败可切回上一版镜像；数据库 migration 不做盲目自动 down。若新代码已写入不可向后兼容的
 数据，则停止回退并按发布前备份走显式恢复决策。发布脚本不能用 `docker compose down -v`，也不能
-删除数据卷作为“重试”。发布/回滚共用互斥锁，并在变更前核对 manifest 与实际 app 镜像一致；新镜像
-readiness、preflight 或提交状态失败时自动重建并验证 recorded current，首次发布失败则停止 app/Caddy
-保持失败关闭。
+删除数据卷作为“重试”。发布、回滚与密钥轮换共用互斥锁，并在变更前核对 manifest 与实际 app 镜像
+一致；新镜像 readiness、preflight 或提交状态失败时自动重建并验证 recorded current，首次发布失败
+则停止 app/Caddy 保持失败关闭；正常停止失败时再强制终止，二者都无法确认时明确升级为需立即人工
+处置。
 
 ## 11. Telegram、Signal 与 WhatsApp 放量边界
 

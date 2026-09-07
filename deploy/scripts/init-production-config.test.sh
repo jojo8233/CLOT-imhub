@@ -102,11 +102,23 @@ printf '%s\n' \
   'exit 0' > "$fake_bin/docker"
 chmod 700 "$fake_bin/docker"
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'test "${IMHUB_FLOCK_FAIL:-false}" != true' > "$fake_bin/flock"
+chmod 700 "$fake_bin/flock"
+
+state_root="$test_root/release-state"
+mkdir -p "$state_root"
+printf '%s\n%s\n' \
+  'current=0123456789abcdef0123456789abcdef01234567' \
+  'previous=' > "$state_root/state"
+
 rotation_log="$test_root/rotation.log"
 docker_log="$test_root/docker.log"
 new_deepl="$test_root/new-deepl"
 write_input "$new_deepl" 'synthetic-new-deepl-secret'
 PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
+  IMHUB_RELEASE_STATE_ROOT="$state_root" \
   IMHUB_TEST_INPUT_FILE="$new_deepl" IMHUB_DOCKER_TEST_LOG="$docker_log" \
   bash "$rotator" DEEPL_API_KEY --test-input > "$rotation_log" 2>&1
 
@@ -117,6 +129,7 @@ if grep -q 'synthetic-new-deepl-secret' "$rotation_log" "$docker_log"; then
 fi
 
 if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
+  IMHUB_RELEASE_STATE_ROOT="$state_root" \
   IMHUB_TEST_INPUT_FILE="$new_deepl" IMHUB_DOCKER_TEST_LOG="$docker_log" \
   bash "$rotator" JWT_SECRET --test-input > "$test_root/disallowed.log" 2>&1; then
   echo 'rotation accepted a disallowed variable' >&2
@@ -127,6 +140,7 @@ before_rollback_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')
 new_openai="$test_root/new-openai"
 write_input "$new_openai" 'synthetic-new-openai-secret'
 if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
+  IMHUB_RELEASE_STATE_ROOT="$state_root" \
   IMHUB_TEST_INPUT_FILE="$new_openai" IMHUB_DOCKER_TEST_LOG="$docker_log" \
   IMHUB_DOCKER_READY=false IMHUB_ROTATION_ATTEMPTS=1 IMHUB_ROTATION_SLEEP_SECONDS=0 \
   bash "$rotator" OPENAI_API_KEY --test-input \
@@ -136,6 +150,19 @@ if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
 fi
 after_rollback_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
 test "$before_rollback_hash" = "$after_rollback_hash"
+
+: > "$docker_log"
+if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
+  IMHUB_RELEASE_STATE_ROOT="$state_root" IMHUB_FLOCK_FAIL=true \
+  IMHUB_TEST_INPUT_FILE="$new_deepl" IMHUB_DOCKER_TEST_LOG="$docker_log" \
+  bash "$rotator" DEEPL_API_KEY --test-input > "$test_root/rotation-locked.log" 2>&1; then
+  echo 'rotation ignored an active release lock' >&2
+  exit 1
+fi
+if grep -q 'force-recreate app' "$docker_log"; then
+  echo 'rotation restarted the application without the release lock' >&2
+  exit 1
+fi
 
 if find "$config_root" -maxdepth 1 -name '*.rollback.*' -print -quit | grep -q .; then
   echo 'rotation left a rollback copy behind' >&2

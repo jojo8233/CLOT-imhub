@@ -93,6 +93,17 @@ wait_ready() {
   return 1
 }
 
+assert_running_image() {
+  local expected_image="$1"
+  local app_container=''
+  local running_image=''
+
+  app_container="$(compose_with_image "$expected_image" ps -q app)"
+  test -n "$app_container" || return 1
+  running_image="$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null)"
+  test "$running_image" = "$expected_image"
+}
+
 restart_and_wait() {
   local image="$1"
   compose_with_image "$image" up -d --no-deps --force-recreate app >/dev/null 2>&1 || return 1
@@ -108,8 +119,11 @@ atomic_link() {
   fi
   link_tmp_dir="$(mktemp -d "$parent/.im-hub-current.XXXXXX")"
   ln -s "$target" "$link_tmp_dir/current" || return 1
-  node -e "require('node:fs').renameSync(process.argv[1], process.argv[2])" \
-    "$link_tmp_dir/current" "$release_link" || return 1
+  if "$test_mode"; then
+    mv -fh "$link_tmp_dir/current" "$release_link" || return 1
+  else
+    mv -Tf "$link_tmp_dir/current" "$release_link" || return 1
+  fi
   rmdir "$link_tmp_dir" || return 1
   link_tmp_dir=''
 }
@@ -171,16 +185,16 @@ current_image="im-hub-server:$current_sha"
 target_image="im-hub-server:$target_sha"
 docker image inspect "$current_image" >/dev/null 2>&1 || fail 'recorded current image is unavailable'
 docker image inspect "$target_image" >/dev/null 2>&1 || fail 'recorded previous image is unavailable'
-app_container="$(compose_with_image "$current_image" ps -q app)"
-test -n "$app_container" || fail 'running application container is unavailable'
-running_image="$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null)"
-test "$running_image" = "$current_image" || fail 'running application image does not match release state'
+assert_running_image "$current_image" || fail 'running application image does not match release state'
 
 printf 'warning: rollback changes only the application image; database schema is not rolled back\n' >&2
 rollback_started=true
 restart_and_wait "$target_image" || fail 'rollback image did not become ready'
+assert_running_image "$target_image" || fail 'activated application image does not match rollback target'
+trap '' HUP INT QUIT TERM
 atomic_link "$releases_root/$target_sha" || fail 'current release link update failed'
 write_state "$target_sha" "$current_sha"
 operation_committed=true
+trap - HUP INT QUIT TERM
 rollback_started=false
 printf 'rolled back application image to %s; schema unchanged\n' "$target_sha"

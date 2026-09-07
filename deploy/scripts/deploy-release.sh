@@ -109,6 +109,17 @@ wait_ready() {
   return 1
 }
 
+assert_running_image() {
+  local expected_image="$1"
+  local app_container=''
+  local running_image=''
+
+  app_container="$(compose_with_image "$expected_image" ps -q app)"
+  test -n "$app_container" || return 1
+  running_image="$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null)"
+  test "$running_image" = "$expected_image"
+}
+
 atomic_link() {
   local target="$1"
   local parent=''
@@ -118,8 +129,11 @@ atomic_link() {
   fi
   link_tmp_dir="$(mktemp -d "$parent/.im-hub-current.XXXXXX")"
   ln -s "$target" "$link_tmp_dir/current" || return 1
-  node -e "require('node:fs').renameSync(process.argv[1], process.argv[2])" \
-    "$link_tmp_dir/current" "$release_link" || return 1
+  if "$test_mode"; then
+    mv -fh "$link_tmp_dir/current" "$release_link" || return 1
+  else
+    mv -Tf "$link_tmp_dir/current" "$release_link" || return 1
+  fi
   rmdir "$link_tmp_dir" || return 1
   link_tmp_dir=''
 }
@@ -141,7 +155,11 @@ recover_current() {
   local current_image=''
 
   if test -z "$current_sha"; then
-    compose_with_image "im-hub-server:$release_sha" stop caddy app >/dev/null 2>&1 || true
+    if ! compose_with_image "im-hub-server:$release_sha" stop caddy app >/dev/null 2>&1 \
+      && ! compose_with_image "im-hub-server:$release_sha" kill caddy app >/dev/null 2>&1; then
+      printf 'failed first release could not stop app and Caddy; immediate operator action required\n' >&2
+      return 1
+    fi
     if test -L "$release_link"; then
       rm -f "$release_link"
     fi
@@ -189,10 +207,7 @@ if test -n "$current_sha"; then
   test "$(readlink "$release_link")" = "$releases_root/$current_sha" \
     || fail 'current release link does not match release state'
   docker image inspect "$current_image" >/dev/null 2>&1 || fail 'recorded current image is unavailable'
-  app_container="$(compose_with_image "$current_image" ps -q app)"
-  test -n "$app_container" || fail 'running application container is unavailable'
-  running_image="$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null)"
-  test "$running_image" = "$current_image" || fail 'running application image does not match release state'
+  assert_running_image "$current_image" || fail 'running application image does not match release state'
 elif test -e "$release_link" || test -L "$release_link"; then
   fail 'current release link exists without release state'
 fi
@@ -208,8 +223,11 @@ compose_with_image "$release_image" up -d app caddy
 wait_ready "$release_image" || fail 'application readiness failed'
 compose_with_image "$release_image" exec -T app pnpm --filter @im-hub/server preflight:production \
   || fail 'production preflight failed'
+assert_running_image "$release_image" || fail 'activated application image does not match release target'
+trap '' HUP INT QUIT TERM
 atomic_link "$repo_root" || fail 'current release link update failed'
 write_state "$release_sha" "$current_sha"
 operation_committed=true
+trap - HUP INT QUIT TERM
 activation_started=false
 printf 'deployed release %s; readiness and production preflight passed\n' "$release_sha"

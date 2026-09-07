@@ -303,7 +303,8 @@ Write via temporary files then `chmod 600`, `chown root:root`, and atomic rename
 `TELEGRAM_API_ID`, or `TELEGRAM_API_HASH`; it reads the replacement without echo, atomically updates only that key
 in `/etc/im-hub/app.env`, restarts only the app, and requires readiness before deleting its mode-600 rollback copy.
 If readiness fails it restores the old file and restarts the old configuration. The script prints the variable name and
-status only, never old/new values.
+status only, never old/new values. It holds the same release-operation lock as deploy/rollback and revalidates the
+recorded and running app image under that lock before changing configuration.
 
 - [ ] **Step 5: Verify non-disclosure and syntax**
 
@@ -408,7 +409,7 @@ git cat-file -e "${release_sha}^{commit}"
 test -z "$(git status --porcelain)"
 ```
 
-Record and verify the current image before building. Hold a shared release lock, run backup, build the exact checked-out commit, run the one-shot migrate service, start app/Caddy, poll `/health/ready` with a bounded timeout, run production preflight inside the app network, then atomically update the current link and current/previous manifest. From the first app replacement onward, any failed activation restores and verifies recorded current; a failed first release stops app/Caddy. No secret values enter command output.
+Record and verify the current image before building. Hold a shared release lock, run backup, build the exact checked-out commit, run the one-shot migrate service, start app/Caddy, poll `/health/ready` with a bounded timeout, run production preflight inside the app network, recheck the activated image, then atomically update the current link and current/previous manifest without requiring host Node.js. From the first app replacement onward, any failed activation restores and verifies recorded current; a failed first release stops app/Caddy, falls back to forced termination if needed, and reports an urgent operator action if neither can be confirmed. No secret values enter command output.
 
 - [ ] **Step 4: Implement bounded application rollback**
 

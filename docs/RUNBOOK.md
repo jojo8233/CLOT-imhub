@@ -639,8 +639,10 @@ sudo bash deploy/scripts/rotate-production-secret.sh OPENAI_API_KEY
 ```
 
 新值仍通过无回显提示读取，不进入 argv。脚本保留 mode-600 临时回滚副本，只重建 app 容器并在
-60 秒内等待 `/health/ready`；失败时恢复旧配置并再次启动旧配置。命令只输出变量名和结果，不能用
-shell tracing、`env`、`printenv` 或容器 inspect 输出环境值来排障。
+60 秒内等待 `/health/ready`；失败时恢复旧配置并再次启动旧配置。轮换在修改配置前取得与发布/回滚
+相同的 `/var/lib/im-hub/releases/operation.lock`，并在锁内重新核对 manifest 与实际 app 镜像；锁被
+占用或二者不一致时拒绝修改和重启。命令只输出变量名和结果，不能用 shell tracing、`env`、
+`printenv` 或容器 inspect 输出环境值来排障。
 
 Caddy 访问日志删除完整 `request.uri`，只把不含 query 的 path 写入 `request_path`；Authorization、
 Cookie 等敏感 header 继续使用 Caddy 默认脱敏。不能为了排障改回完整 URI、请求/响应正文或凭据日志。
@@ -719,8 +721,9 @@ sudo bash deploy/scripts/rollback-release.sh fedcba0987654321fedcba0987654321fed
 
 发布过程中从第一次替换 app 起，readiness、preflight、状态或链接更新任一步失败都会尝试强制重建并
 验证 recorded current 镜像，状态 manifest 保持不变；首次发布没有 recorded current 时则停止 app 和
-Caddy，保持失败关闭。若自动恢复也失败，停止一切新发布并从宿主本机检查容器，不得手工把 manifest
-改成未验证镜像。
+Caddy，若正常停止失败则尝试强制终止；只有确认两者已停止才报告失败关闭。停止与强制终止都失败时
+会明确要求立即人工处置，不会宣称恢复成功。若自动恢复也失败，停止一切新发布并从宿主本机检查
+容器，不得手工把 manifest 改成未验证镜像。
 
 ### 5.11 Cloudflare、TLS 与源站防火墙切换
 

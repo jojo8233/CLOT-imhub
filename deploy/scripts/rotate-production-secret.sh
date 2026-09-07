@@ -2,7 +2,9 @@
 set -euo pipefail
 
 config_root="${IMHUB_CONFIG_ROOT:-/etc/im-hub}"
+state_root="${IMHUB_RELEASE_STATE_ROOT:-/var/lib/im-hub/releases}"
 compose_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/compose.prod.yml"
+state_file="$state_root/state"
 variable="${1:-}"
 test_input=false
 lock_dir=''
@@ -45,6 +47,7 @@ esac
 
 if "$test_input"; then
   test "$config_root" != '/etc/im-hub' || fail 'test input cannot target /etc/im-hub'
+  test "$state_root" != '/var/lib/im-hub/releases' || fail 'test input requires a disposable release state root'
   test -n "${IMHUB_TEST_INPUT_FILE:-}" || fail 'test input file is required'
   test -f "$IMHUB_TEST_INPUT_FILE" || fail 'test input file is unavailable'
   readiness_attempts="${IMHUB_ROTATION_ATTEMPTS:-1}"
@@ -53,6 +56,7 @@ if "$test_input"; then
   [[ "$readiness_sleep_seconds" =~ ^[0-9]+$ ]] || fail 'test readiness delay is invalid'
 else
   test "$config_root" = '/etc/im-hub' || fail 'production config root must be /etc/im-hub'
+  test "$state_root" = '/var/lib/im-hub/releases' || fail 'production release state root is fixed'
   test "$(id -u)" -eq 0 || fail 'run as root'
   test -t 0 || fail 'interactive terminal required'
 fi
@@ -65,11 +69,6 @@ compose() {
   IMHUB_REDIS_ENV_FILE="$config_root/redis.env" \
   docker compose -f "$compose_file" "$@"
 }
-
-app_container="$(compose ps -q app 2>/dev/null)"
-test -n "$app_container" || fail 'application container is not running'
-current_image="$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null)"
-test -n "$current_image" || fail 'application image cannot be determined'
 
 if "$test_input"; then
   exec 3< "$IMHUB_TEST_INPUT_FILE"
@@ -98,6 +97,24 @@ case "$variable" in
     ;;
   *) valid_secret_token "$replacement" || fail 'replacement is invalid' ;;
 esac
+
+command -v flock >/dev/null 2>&1 || fail 'flock is unavailable'
+test -d "$state_root" || fail 'release state is unavailable'
+exec 9> "$state_root/operation.lock"
+flock -n 9 || fail 'another release operation is active'
+
+test -f "$state_file" || fail 'release state is unavailable'
+test "$(wc -l < "$state_file" | tr -d ' ')" = '2' || fail 'release state is invalid'
+IFS= read -r current_line < "$state_file" || true
+previous_line="$(sed -n '2p' "$state_file")"
+[[ "$current_line" =~ ^current=([0-9a-f]{40})$ ]] || fail 'recorded current release is invalid'
+current_image="im-hub-server:${BASH_REMATCH[1]}"
+[[ "$previous_line" =~ ^previous=([0-9a-f]{40})?$ ]] || fail 'recorded previous release is invalid'
+
+app_container="$(compose ps -q app 2>/dev/null)"
+test -n "$app_container" || fail 'application container is not running'
+running_image="$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null)"
+test "$running_image" = "$current_image" || fail 'running application image does not match release state'
 
 umask 077
 lock_dir="$config_root/.rotate.lock"
