@@ -46,6 +46,10 @@ describe('parseConfig production boundary', () => {
   it.each([
     '',
     '127.0.0.1',
+    '0.0.0.0/0',
+    '172.30.0.0/24',
+    '::/0',
+    '2001:db8::/64',
     '172.30.0.2/33',
     '172.30.0.2/32,172.30.0.3/32',
   ])('rejects unsafe production trusted proxy CIDRs %j', (trustedProxyCidrs) => {

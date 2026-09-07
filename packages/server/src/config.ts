@@ -22,6 +22,13 @@ function parseTrustedProxyCidrs(value: string, ctx: z.RefinementCtx): string[] {
   return [...new Set(entries)]
 }
 
+function isSingleHostCidr(value: string): boolean {
+  const [address, prefix, extra] = value.split('/')
+  if (extra !== undefined || address === undefined || prefix === undefined) return false
+  const version = isIP(address)
+  return (version === 4 && prefix === '32') || (version === 6 && prefix === '128')
+}
+
 const schema = z.object({
   APP_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PUBLIC_ORIGIN: z.string().default(''),
@@ -91,11 +98,14 @@ const schema = z.object({
       })
     }
 
-    if (value.TRUSTED_PROXY_CIDRS.length !== 1) {
+    const trustedProxyCidr = value.TRUSTED_PROXY_CIDRS[0]
+    if (value.TRUSTED_PROXY_CIDRS.length !== 1
+      || trustedProxyCidr === undefined
+      || !isSingleHostCidr(trustedProxyCidr)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['TRUSTED_PROXY_CIDRS'],
-        message: 'TRUSTED_PROXY_CIDRS 在生产环境必须只包含直接 Caddy 代理的 CIDR',
+        message: 'TRUSTED_PROXY_CIDRS 在生产环境必须是直接 Caddy 代理的单个 /32 或 /128 CIDR',
       })
     }
 
