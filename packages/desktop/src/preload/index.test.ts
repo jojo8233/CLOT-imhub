@@ -19,7 +19,9 @@ vi.mock('electron', () => ({
   },
 }))
 
+vi.stubEnv('IM_HUB_SERVER_URL', undefined)
 await import('./index.js')
+vi.unstubAllEnvs()
 
 describe('trusted preload desktop installation bridge', () => {
   it('向可信渲染进程注入开发期 HTTP、WS 与发行渠道', () => {
