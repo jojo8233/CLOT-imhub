@@ -363,21 +363,28 @@ P0 代码已经全部就绪并测试通过，但**真实的 Telegram 收发消�
    TELEGRAM_API_HASH=你的api_hash
    ```
 
-### 5.2 翻译引擎：DeepL / OpenAI / Anthropic（三选一即可，P0 有自动降级）
+### 5.2 翻译引擎：DeepL / OpenAI / Anthropic（至少配置一个）
 
-三选一就够用；配多个的话系统会按 `TranslationGateway` 里的降级顺序（`deepl -> claude -> openai`，见 `packages/server/src/index.ts`）自动 failover。
+三选一就能运行；多配几个可在首选引擎临时失败时自动降级。服务端会先尝试
+本次请求的引擎，然后按 `deepl -> claude -> openai` 的固定后备顺序尝试其余已配置引擎。
 
 - **DeepL**（有免费额度，最省事）：注册 https://www.deepl.com/pro-api ，选 Free 计划，拿到 key 填 `DEEPL_API_KEY`。免费版走 `DEEPL_ENDPOINT=https://api-free.deepl.com/v2/translate`（`.env.example` 默认已经是这个）；如果升级成付费账号，要把 endpoint 换成 `https://api.deepl.com/v2/translate`。
 - **OpenAI**：https://platform.openai.com/api-keys 建一个 key，填 `OPENAI_API_KEY`。
 - **Anthropic (Claude)**：https://console.anthropic.com/settings/keys 建一个 key，填 `ANTHROPIC_API_KEY`。
 
-**填完 key 之后，`DEFAULT_TRANSLATION_PROVIDER` 必须指向你实际填了 key 的那个引擎**，否则系统会尝试调用一个没配 key 的 provider 然后翻译失败。比如你只填了 `ANTHROPIC_API_KEY`，就要把：
+`DEFAULT_TRANSLATION_PROVIDER` 是公司默认值，只接受 `deepl` / `claude` / `openai`。建议它指向
+已填 key 的引擎；比如只配了 `ANTHROPIC_API_KEY`，就设为：
 
 ```
 DEFAULT_TRANSLATION_PROVIDER=claude
 ```
 
-`DEFAULT_TRANSLATION_PROVIDER` 只接受三个值：`deepl` / `openai` / `claude`（见 `config.ts` 的 zod schema）。
+引擎选择与降级行为：
+
+- 员工可在桌面应用的「翻译设置」中保存自己的默认引擎；设置保存在公司服务端，不会写入本机 `localStorage`。
+- 回复语言旁的「本次翻译」只覆盖当前操作，不会改动个人默认。未配 key 的引擎显示为不可用。
+- 翻译结果会标明实际使用的 DeepL / Claude / OpenAI。如果首选引擎失败而发生降级，应用内会显示简短降级提示，不显示上游错误原文。
+- `DEEPL_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 只能存在服务端 `.env`；不得注入 renderer、Telegram/Signal/WhatsApp 客户端或 webview。
 
 ### 5.3 拿到凭据之后怎么验证真实链路
 
@@ -400,8 +407,10 @@ Telegram：
 
 翻译：
 
-- [ ] 填好至少一个引擎的 key，且 `DEFAULT_TRANSLATION_PROVIDER` 指向它
+- [ ] 填好至少一个引擎的 key，并让 `DEFAULT_TRANSLATION_PROVIDER` 优先指向已配置引擎
 - [ ] 重启 `pnpm dev:server`
+- [ ] 打开「翻译设置」，确认只有已配 key 的引擎可选；保存个人默认后重新登录仍能读取
+- [ ] 在回复语言旁改一次「本次翻译」，确认请求使用新选择，但个人默认不变
 - [ ] 收到一条外语消息后，观察 BullMQ worker 日志里有没有报错
 - [ ] 确认 `message_translations` 表里出现了对应记录（`select * from message_translations order by created_at desc limit 5;`）
 - [ ] 客户端界面上"翻译中…"变成实际译文
@@ -411,7 +420,7 @@ Telegram：
 - [ ] WhatsApp `web_shell` 登录后，当前可见的既有及新纯文字气泡按中英文方向显示译文；滚动加载后也会补译，选择器失效必须出现可见错误
 - [ ] WhatsApp 翻译坞只在新出站 DOM `data-id` 确认后显示成功；制造结果未知时相同 attempt 不得重复点击发送
 - [ ] WhatsApp 旧 `cloud_api` 账号只显示不可连接占位，仍可由 owner 在管理中心转移或删除；当前员工添加入口不得出现 Cloud 授权
-- [ ] 故意填一个错误的 key 测一下降级：确认失败后系统按 `deepl -> claude -> openai` 顺序换下一个引擎重试，而不是直接报错卡死
+- [ ] 用测试 key 制造首选引擎失败：确认系统改用后备引擎，界面显示实际 provider 和简短降级提示，且不显示上游错误原文
 
 ### 5.4 客户档案库（M4-1/M4-2）
 
