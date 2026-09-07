@@ -17,6 +17,8 @@ function loadComposeWithExampleEnv(): JsonObject {
     'deploy/compose.prod.yml',
     '--env-file',
     'deploy/env/compose.env.example',
+    '--profile',
+    'tools',
     'config',
     '--format',
     'json',
@@ -76,5 +78,14 @@ describe('production container runtime', () => {
     expect(object(object(services.app).environment).WHATSAPP_CLOUD_ENABLED).toBe('false')
     expect(rendered).not.toContain('imhub_dev')
     expect(rendered).not.toContain('change-me-in-production')
+  })
+
+  it('pins every production service to the reviewed x86_64 target', () => {
+    const runtime = loadComposeWithExampleEnv()
+    const services = object(runtime.services)
+
+    for (const service of ['app', 'migrate', 'caddy', 'postgres', 'redis']) {
+      expect(object(services[service]).platform).toBe('linux/amd64')
+    }
   })
 })

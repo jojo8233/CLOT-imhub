@@ -2,6 +2,7 @@ name: im-hub
 
 x-app-common: &app-common
   image: ${IMHUB_APP_IMAGE:-im-hub-server:unreleased}
+  platform: linux/amd64
   env_file:
     - ${IMHUB_APP_ENV_FILE:-/etc/im-hub/app.env}
   environment:
@@ -16,6 +17,7 @@ x-app-common: &app-common
 services:
   postgres:
     image: postgres:16
+    platform: linux/amd64
     env_file:
       - ${IMHUB_POSTGRES_ENV_FILE:-/etc/im-hub/postgres.env}
     networks:
@@ -36,6 +38,7 @@ services:
 
   redis:
     image: redis:7
+    platform: linux/amd64
     env_file:
       - ${IMHUB_REDIS_ENV_FILE:-/etc/im-hub/redis.env}
     command:
@@ -106,6 +109,7 @@ services:
 
   caddy:
     image: caddy:2
+    platform: linux/amd64
     depends_on:
       app:
         condition: service_healthy
@@ -143,4 +147,3 @@ volumes:
   caddy_data:
   caddy_config:
   caddy_logs:
-

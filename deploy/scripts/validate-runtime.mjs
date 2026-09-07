@@ -33,6 +33,8 @@ run('docker', [
   'deploy/compose.prod.yml',
   '--env-file',
   'deploy/env/compose.env.example',
+  '--profile',
+  'tools',
   'config',
   '--quiet',
 ], 'compose validation')
@@ -43,6 +45,8 @@ const rendered = run('docker', [
   'deploy/compose.prod.yml',
   '--env-file',
   'deploy/env/compose.env.example',
+  '--profile',
+  'tools',
   'config',
   '--format',
   'json',

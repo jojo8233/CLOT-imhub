@@ -607,8 +607,9 @@ macOS/Windows 独立安装包不会用 `file://` 页面直接请求生产 API，
 ### 5.8 生产容器配置初始化与单项轮换
 
 生产容器定义位于 `deploy/compose.prod.yml`。只有 Caddy 发布 80/443；应用、PostgreSQL 和 Redis
-不发布宿主端口。提交前可用合成示例验证 Compose 网络、持久卷、Redis AOF、固定代理 CIDR 和
-Caddy 语法，验证器不会把渲染后的环境值写到标准输出：
+不发布宿主端口。所有服务固定为 `linux/amd64`，与已确认的 Ubuntu x86_64 生产主机一致。提交前可用
+合成示例验证 Compose 网络、持久卷、Redis AOF、固定代理 CIDR 和 Caddy 语法，验证器不会把渲染后
+的环境值写到标准输出：
 
 ```bash
 node deploy/scripts/validate-runtime.mjs --examples
