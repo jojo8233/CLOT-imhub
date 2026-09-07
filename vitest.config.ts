@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       'packages/*/src/**/*.test.{ts,tsx}',
       'packages/*/scripts/**/*.test.mjs',
+      'deploy/scripts/**/*.test.ts',
     ],
     environment: 'node',
     // repo.test.ts 会 truncate 真实数据库来保证每个用例从干净状态开始。

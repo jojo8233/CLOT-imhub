@@ -1,0 +1,146 @@
+name: im-hub
+
+x-app-common: &app-common
+  image: ${IMHUB_APP_IMAGE:-im-hub-server:unreleased}
+  env_file:
+    - ${IMHUB_APP_ENV_FILE:-/etc/im-hub/app.env}
+  environment:
+    TRUSTED_PROXY_CIDRS: 172.30.0.2/32
+    WHATSAPP_CLOUD_ENABLED: 'false'
+  networks:
+    - data
+  volumes:
+    - tdlib_data:/var/lib/im-hub/tdlib
+    - signal_data:/var/lib/im-hub/signal
+
+services:
+  postgres:
+    image: postgres:16
+    env_file:
+      - ${IMHUB_POSTGRES_ENV_FILE:-/etc/im-hub/postgres.env}
+    networks:
+      - data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: 20m
+        max-file: '10'
+
+  redis:
+    image: redis:7
+    env_file:
+      - ${IMHUB_REDIS_ENV_FILE:-/etc/im-hub/redis.env}
+    command:
+      - /bin/sh
+      - -eu
+      - -c
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
+    networks:
+      - data
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: 20m
+        max-file: '10'
+
+  migrate:
+    <<: *app-common
+    command: ['pnpm', '--filter', '@im-hub/server', 'migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: 'no'
+    profiles:
+      - tools
+
+  app:
+    <<: *app-common
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    networks:
+      - edge
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    logging:
+      options:
+        max-size: 20m
+        max-file: '10'
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: 172.30.0.2
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/cloudflare-trusted-proxies.caddy:/etc/caddy/cloudflare-trusted-proxies.caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: 20m
+        max-file: '10'
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  data:
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  tdlib_data:
+  signal_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+
