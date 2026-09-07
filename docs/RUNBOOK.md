@@ -604,6 +604,40 @@ macOS/Windows 独立安装包不会用 `file://` 页面直接请求生产 API，
 “IP + 规范化邮箱的 SHA-256”计数，IPv6 按 `/64` 聚合。限流 Redis 故障时鉴权入口返回不含内部
 错误的 503，不会无界放行。不要在排障时临时放宽代理信任或绕过限流。
 
+### 5.8 生产容器配置初始化与单项轮换
+
+生产容器定义位于 `deploy/compose.prod.yml`。只有 Caddy 发布 80/443；应用、PostgreSQL 和 Redis
+不发布宿主端口。提交前可用合成示例验证 Compose 网络、持久卷、Redis AOF、固定代理 CIDR 和
+Caddy 语法，验证器不会把渲染后的环境值写到标准输出：
+
+```bash
+node deploy/scripts/validate-runtime.mjs --examples
+pnpm exec vitest run deploy/scripts/validate-runtime.test.ts
+```
+
+首次部署时，管理员必须在自己的交互式 SSH 终端运行：
+
+```bash
+cd /opt/im-hub/current
+sudo bash deploy/scripts/init-production-config.sh
+```
+
+脚本通过无回显提示读取三家翻译服务商和 Telegram 配置，在服务器本地生成独立 PostgreSQL、Redis
+和 JWT 随机值，并原子创建 `/etc/im-hub/app.env`、`postgres.env`、`redis.env`。目录权限为 700，
+文件为 root 所有且权限 600。任一目标文件已存在时脚本会拒绝覆盖；不能通过删除现有配置来重复
+“初始化”，应先判断是轮换还是灾难恢复。
+
+允许单项轮换的名称只有 `DEEPL_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、
+`TELEGRAM_API_ID` 和 `TELEGRAM_API_HASH`：
+
+```bash
+sudo bash deploy/scripts/rotate-production-secret.sh OPENAI_API_KEY
+```
+
+新值仍通过无回显提示读取，不进入 argv。脚本保留 mode-600 临时回滚副本，只重建 app 容器并在
+60 秒内等待 `/health/ready`；失败时恢复旧配置并再次启动旧配置。命令只输出变量名和结果，不能用
+shell tracing、`env`、`printenv` 或容器 inspect 输出环境值来排障。
+
 ---
 
 ## 6. 上线前必做
