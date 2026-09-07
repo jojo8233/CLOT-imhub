@@ -11,6 +11,7 @@ config_root="${IMHUB_CONFIG_ROOT:-/etc/im-hub}"
 compose_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/compose.prod.yml"
 restore_database='imhub_restore_smoke'
 created=false
+verified=false
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -25,11 +26,20 @@ compose() {
 }
 
 cleanup() {
+  local status=$?
+  trap - EXIT
   if "$created"; then
-    compose exec -T postgres sh -eu -c \
+    if ! compose exec -T postgres sh -eu -c \
       'exec dropdb --if-exists --username "$POSTGRES_USER" imhub_restore_smoke' \
-      >/dev/null 2>&1 || true
+      >/dev/null 2>&1; then
+      printf 'restore smoke cleanup failed\n' >&2
+      exit 1
+    fi
   fi
+  if "$verified" && test "$status" -eq 0; then
+    printf 'restore smoke passed; schema and table counts verified\n'
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -79,5 +89,4 @@ while IFS= read -r count; do
   verified_lines=$((verified_lines + 1))
 done <<< "$verification"
 test "$verified_lines" -eq 3 || fail 'restore verification returned incomplete counts'
-
-printf 'restore smoke passed; schema and table counts verified\n'
+verified=true

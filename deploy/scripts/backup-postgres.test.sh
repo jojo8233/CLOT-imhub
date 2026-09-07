@@ -22,7 +22,8 @@ printf '%s\n' \
   'printf "%s\\n" "$*" >> "$IMHUB_DOCKER_TEST_LOG"' \
   'if [[ "$*" == *"pg_dump --format=custom"* ]]; then printf "%s\\n" "synthetic-dump-contents"; exit 0; fi' \
   'if [[ "$*" == *"pg_restore --list"* ]]; then cat >/dev/null; exit 0; fi' \
-  'if [[ "$*" == *"pg_restore --exit-on-error"* ]]; then cat >/dev/null; [[ "${IMHUB_DOCKER_RESTORE_FAIL:-false}" != true ]]; exit; fi' \
+  'if [[ "$*" == *"pg_restore --exit-on-error"* ]]; then input="$(cat)"; [[ "$input" == "synthetic-dump-contents" ]] || exit 1; [[ "${IMHUB_DOCKER_RESTORE_FAIL:-false}" != true ]]; exit; fi' \
+  'if [[ "$*" == *"dropdb "* ]]; then [[ "${IMHUB_DOCKER_DROP_FAIL:-false}" != true ]]; exit; fi' \
   'if [[ "$*" == *"psql "* ]]; then printf "17\\n0\\n0\\n"; exit 0; fi' \
   'exit 0' > "$fake_bin/docker"
 chmod 700 "$fake_bin/docker"
@@ -83,12 +84,16 @@ PATH="$fake_bin:$PATH" IMHUB_BACKUP_ROOT="$backup_root" IMHUB_BACKUP_TEST_MODE=1
   IMHUB_DOCKER_TEST_LOG="$docker_log" bash "$restore_script" "$latest_dump" \
   > "$restore_log" 2>&1
 
-grep -q 'createdb.*imhub_restore_smoke' "$docker_log"
-grep -q 'dropdb.*imhub_restore_smoke' "$docker_log"
-if ! grep -q 'pg_restore.*--username.*POSTGRES_USER.*--dbname imhub_restore_smoke' "$docker_log"; then
-  echo 'restore did not select the configured PostgreSQL role' >&2
-  exit 1
-fi
+for command_pattern in \
+  'createdb.*--username.*POSTGRES_USER.*imhub_restore_smoke' \
+  'pg_restore.*--username.*POSTGRES_USER.*--dbname imhub_restore_smoke' \
+  'psql.*--username.*POSTGRES_USER.*--dbname imhub_restore_smoke' \
+  'dropdb.*--username.*POSTGRES_USER.*imhub_restore_smoke'; do
+  if ! grep -q "$command_pattern" "$docker_log"; then
+    echo 'restore command did not select the configured PostgreSQL role' >&2
+    exit 1
+  fi
+done
 if grep -q 'synthetic-dump-contents' "$restore_log" "$docker_log"; then
   echo 'restore disclosed dump contents' >&2
   exit 1
@@ -110,5 +115,18 @@ if PATH="$fake_bin:$PATH" IMHUB_BACKUP_ROOT="$backup_root" IMHUB_BACKUP_TEST_MOD
 fi
 grep -q 'createdb.*imhub_restore_smoke' "$failure_docker_log"
 grep -q 'dropdb.*imhub_restore_smoke' "$failure_docker_log"
+
+drop_failure_docker_log="$test_root/drop-failure-docker.log"
+if PATH="$fake_bin:$PATH" IMHUB_BACKUP_ROOT="$backup_root" IMHUB_BACKUP_TEST_MODE=1 \
+  IMHUB_DOCKER_DROP_FAIL=true IMHUB_DOCKER_TEST_LOG="$drop_failure_docker_log" \
+  bash "$restore_script" "$latest_dump" > "$test_root/failed-drop.log" 2>&1; then
+  echo 'restore ignored a cleanup failure' >&2
+  exit 1
+fi
+grep -q 'restore smoke cleanup failed' "$test_root/failed-drop.log"
+if grep -q 'restore smoke passed' "$test_root/failed-drop.log"; then
+  echo 'restore reported success before cleanup completed' >&2
+  exit 1
+fi
 
 echo 'backup and restore tests passed'
