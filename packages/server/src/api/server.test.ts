@@ -8,7 +8,7 @@ import type { MessageRouteDeps } from './routes/messages.js'
 // 缺变量会直接抛错崩掉整个测试文件。测试环境不一定有 .env，这里先兜底填上，
 // 且必须在任何触达 config.js 的 import 执行之前完成，所以下面用动态 import 而不是静态 import。
 // 强制指向测试库：这些测试会写真库，绝不能落到开发库上
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET ??= 'server-test-secret-server-test-secret-32'
 

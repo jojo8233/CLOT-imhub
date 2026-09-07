@@ -8,7 +8,7 @@ import { testDatabaseUrl } from '../../db/test-db.js'
 import type { ActorRepo } from '../actor.js'
 import type { MessageRouteDeps } from './messages.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET ??= 'accounts-route-test-secret-32chars'
 

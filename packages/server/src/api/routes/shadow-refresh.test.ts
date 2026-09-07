@@ -11,7 +11,7 @@ import {
 } from '../../shadow/coverage.js'
 import type { ActorRepo } from '../actor.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET ??= 'shadow-refresh-route-test-secret-32chars'
 

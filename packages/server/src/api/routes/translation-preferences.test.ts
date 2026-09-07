@@ -7,7 +7,7 @@ import type {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { ActorRepo } from '../actor.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET ??= 'translation-preferences-route-test-secret'
 

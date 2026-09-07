@@ -1,7 +1,7 @@
 # im-hub 公司生产服务器部署设计
 
 日期：2026-09-07
-状态：设计已确认，应用就绪实施计划已完成；容器与远端发布计划待执行
+状态：设计已确认，应用就绪与容器运行时实施完成；远端发布计划待执行
 
 ## 1. 背景与目标
 
@@ -91,8 +91,8 @@ pnpm dev` 方式运行生产代码。运行镜像使用与仓库约束一致的 
 1. 上线前确认域名 A 记录直连服务器且 80/443 可达，Cloudflare 暂设 DNS-only；
 2. Caddy 为精确主机名签发并自动续期公开证书，仅将该主机反向代理到应用；
 3. HTTPS 和 WSS 冒烟通过后开启 Cloudflare 代理，切换并验证 `Full (strict)`；
-4. Caddy 设置合理的请求体上限、安全响应头和访问日志轮转，不在日志中记录 Authorization、正文、
-   query 凭据或上游敏感响应；
+4. Caddy 设置合理的请求体上限、安全响应头和访问日志轮转；访问日志删除完整 URI，只保留不含 query
+   的 path，不记录 Authorization、正文、query 凭据或上游敏感响应；
 5. 主机防火墙仅保留 SSH、HTTP、HTTPS。Cloudflare 代理稳定后，Web 入站限制为 Cloudflare 官方
    地址范围，并以可审计的更新流程维护地址清单；
 6. Caddy 只在请求确实来自可信 Cloudflare 地址时接收并规范化客户端地址头；`edge` 网络为 Caddy
@@ -177,11 +177,13 @@ provider 时按实际 provider 保存，不能用后来一次翻译静默覆盖�
 - 生产 PostgreSQL 使用随机生成的独立密码；Redis 使用随机密码并仅限 data 网络访问；JWT 使用
   独立高强度随机密钥。三者不复用开发值。
 - 首次部署对空库运行所有 migration，不运行 `seed.ts`。migration 必须保持可重复检测和向前执行，
-  已提交 migration 不改写。
+  已提交 migration 不改写。migration、只读预检和首个 owner 引导均使用同一精确 SHA 镜像；owner
+  引导是 tools profile 的交互式、仅 data 网络、无会话卷容器，生产主机不直接安装 Node/pnpm。
 - PostgreSQL、Redis、TDLib、Caddy 使用独立持久化卷。容器重建不能清除数据库、队列、证书或
   Telegram 登录态。
-- 每日生成一次压缩 PostgreSQL 逻辑备份，保留最近 7 份日备份和 4 份周备份；文件及目录仅 root/
-  备份进程可读，备份命令和日志不暴露数据库密码或业务正文。
+- 每日生成一次压缩 PostgreSQL 逻辑备份，保留最近 7 份日备份和 4 份周备份；日/周文件都先写同目录
+  临时文件、验证 custom-format 可读后原子改名。文件及目录仅 root/备份进程可读，备份命令和日志不
+  暴露数据库密码或业务正文。
 - 上线前执行一次“备份 → 独立临时库恢复 → migration/关键表计数校验”的恢复演练。校验只读取
   结构、计数和非敏感状态，不输出消息正文、客户身份或账号凭据。
 - Vultr Automatic Backups 作为整机与 TDLib 会话兜底。由于首期没有独立对象存储，本机数据库备份
@@ -197,7 +199,9 @@ provider 时按实际 provider 保存，不能用后来一次翻译静默覆盖�
 部署程序在服务器本地生成 PostgreSQL、Redis、JWT 等随机秘密。DeepL 旧密钥、Claude/OpenAI 新
 密钥、Telegram 新 `API_ID/API_HASH` 由管理员在自己的 SSH 会话中使用无回显交互式工具录入。
 Codex 执行和日志不读取这些值。密钥轮换时先写新受限配置、验证新容器健康，再撤销旧密钥；不能
-直接编辑正在使用的容器文件系统。
+直接编辑正在使用的容器文件系统。轮换与发布/回滚共用发布操作锁，并在锁内重新核对 manifest 与
+实际 app 镜像，避免在发布切换镜像期间用旧镜像重建容器。轮换失败或被终止时，恢复动作必须同时
+还原受限配置、重建旧 app 并验证 readiness；不能只恢复磁盘文件而留下仍使用新配置的运行容器。
 
 首期部署需要管理员在安全渠道自行准备：三家翻译服务商的生产凭据、Telegram 生产应用凭据、
 Cloudflare DNS/SSL 设置权限，以及首个 owner email。具体值均不提交到仓库。
@@ -218,11 +222,15 @@ Cloudflare DNS/SSL 设置权限，以及首个 owner email。具体值均不提�
 4. 运行 migration；
 5. 启动新容器并通过本机、Caddy、Cloudflare 三层健康检查；
 6. 完成 owner、权限、翻译和一个 Telegram 账号冒烟后再放量；
-7. 保留上一版镜像和发布清单。
+7. 保留上一版镜像和原子发布 manifest；成功后 `/opt/im-hub/current` 原子指向当前 release，供稳定
+   systemd 备份入口使用。
 
 应用失败可切回上一版镜像；数据库 migration 不做盲目自动 down。若新代码已写入不可向后兼容的
 数据，则停止回退并按发布前备份走显式恢复决策。发布脚本不能用 `docker compose down -v`，也不能
-删除数据卷作为“重试”。
+删除数据卷作为“重试”。发布、回滚与密钥轮换共用互斥锁，并在变更前核对 manifest 与实际 app 镜像
+一致；新镜像 readiness、preflight 或提交状态失败时自动重建并验证 recorded current，首次发布失败
+则停止 app/Caddy 保持失败关闭；正常停止失败时再强制终止，二者都无法确认时明确升级为需立即人工
+处置。
 
 ## 11. Telegram、Signal 与 WhatsApp 放量边界
 

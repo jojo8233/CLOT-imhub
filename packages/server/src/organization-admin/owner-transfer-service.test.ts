@@ -15,7 +15,7 @@ import { DeviceService } from './device-service.js'
 import { AdminOperationTokenService } from './operation-token.js'
 import { OwnerTransferService } from './owner-transfer-service.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 
 const db = new Kysely<Database>({
   dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: testDatabaseUrl() }) }),

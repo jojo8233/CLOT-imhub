@@ -13,7 +13,7 @@ import { OrganizationReadRepo } from '../../organization-admin/read-repo.js'
 import { TeamAdminService } from '../../organization-admin/team-service.js'
 import { UserAdminService } from '../../organization-admin/user-service.js'
 
-process.env.DATABASE_URL = 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
+process.env.DATABASE_URL ??= 'postgres://imhub:imhub_dev@localhost:5432/imhub_test'
 process.env.REDIS_URL ??= 'redis://localhost:6379'
 process.env.JWT_SECRET = 'admin-teams-route-test-secret-32-characters'
 
