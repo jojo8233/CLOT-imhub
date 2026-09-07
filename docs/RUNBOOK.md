@@ -662,6 +662,31 @@ users 和 accounts 的非敏感计数后，无论成功或失败都删除该临�
 内容；演练通过后才能安装并启用 `deploy/systemd/im-hub-backup.service` 与 `.timer`。备份失败不能通过
 删除 PostgreSQL volume 或运行 migration down 重试。
 
+### 5.10 精确 SHA 发布与应用回滚
+
+服务器上的每个 release checkout 必须位于 SHA 命名目录，HEAD 与准备发布的 40 位小写 Git SHA
+完全一致且工作树干净。发布脚本按“构建镜像 → 启动并等待数据服务 → migration 前备份 → migration
+→ app/Caddy → readiness → production preflight → 原子记录 current/previous”的顺序执行：
+
+```bash
+cd /opt/im-hub/releases/0123456789abcdef0123456789abcdef01234567
+sudo bash deploy/scripts/deploy-release.sh 0123456789abcdef0123456789abcdef01234567
+```
+
+镜像固定标记为 `im-hub-server:<SHA>`，状态只写入 root 受限的 `/var/lib/im-hub/releases/current` 和
+`previous`。脚本拒绝分支名、缩写 SHA、非当前 checkout、脏工作树和缺失备份程序；不得用 `latest`
+代替精确 SHA。
+
+只有明确记录在 `previous` 的镜像可以回滚：
+
+```bash
+sudo bash deploy/scripts/rollback-release.sh fedcba0987654321fedcba0987654321fedcba09
+```
+
+回滚只重建 app 容器并要求 readiness，不运行 migration down，也不删除或重建任何 volume。目标镜像
+不能就绪时脚本会尝试恢复当前镜像并保持 release 状态不变。数据库 schema 不随镜像回退；如果旧代码
+不能读取新 schema，应停止回滚，根据 migration 兼容性和发布前备份做显式恢复决策。
+
 ---
 
 ## 6. 上线前必做
