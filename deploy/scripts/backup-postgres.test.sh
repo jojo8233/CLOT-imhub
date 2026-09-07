@@ -85,6 +85,10 @@ PATH="$fake_bin:$PATH" IMHUB_BACKUP_ROOT="$backup_root" IMHUB_BACKUP_TEST_MODE=1
 
 grep -q 'createdb.*imhub_restore_smoke' "$docker_log"
 grep -q 'dropdb.*imhub_restore_smoke' "$docker_log"
+if ! grep -q 'pg_restore.*--username.*POSTGRES_USER.*--dbname imhub_restore_smoke' "$docker_log"; then
+  echo 'restore did not select the configured PostgreSQL role' >&2
+  exit 1
+fi
 if grep -q 'synthetic-dump-contents' "$restore_log" "$docker_log"; then
   echo 'restore disclosed dump contents' >&2
   exit 1

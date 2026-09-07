@@ -62,8 +62,8 @@ if ! compose exec -T postgres sh -eu -c \
 fi
 created=true
 
-if ! compose exec -T postgres pg_restore \
-  --exit-on-error --no-owner --no-privileges --dbname="$restore_database" \
+if ! compose exec -T postgres sh -eu -c \
+  'exec pg_restore --exit-on-error --no-owner --no-privileges --username "$POSTGRES_USER" --dbname imhub_restore_smoke' \
   < "$dump_file" >/dev/null; then
   fail 'restore smoke failed'
 fi
