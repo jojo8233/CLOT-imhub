@@ -95,8 +95,9 @@ pnpm dev` 方式运行生产代码。运行镜像使用与仓库约束一致的 
    的 path，不记录 Authorization、正文、query 凭据或上游敏感响应；
 5. 主机防火墙仅保留 SSH、HTTP、HTTPS。Cloudflare 代理稳定后，Web 入站限制为 Cloudflare 官方
    地址范围，并以可审计的更新流程维护地址清单；
-6. Caddy 只在请求确实来自可信 Cloudflare 地址时接收并规范化客户端地址头；`edge` 网络为 Caddy
-   固定地址，应用以精确 `/32` CIDR 只信任该直接代理。Fastify 5.12+ 已禁用不验证直接对端的数字
+6. Caddy 只在请求确实来自可信 Cloudflare 地址时接收并规范化客户端地址头；`edge` 网络显式保留
+   Caddy `172.30.0.2` 与 app `172.30.0.3`，避免 app 的动态地址分配抢占代理地址。应用以精确 `/32`
+   CIDR 只信任该直接代理。Fastify 5.12+ 已禁用不验证直接对端的数字
    hop-count 信任，不能退回 `trustProxy: 1/true`，也不能让公网请求伪造 `X-Forwarded-For` 绕过限速；
 7. SSH 先创建非 root 的部署管理员、复制并验证现有公钥登录，再关闭密码登录和 root 远程登录。
    每一步都先验证新通路，避免把管理员锁在服务器外。
