@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+exec 7>&2
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 compose_file="$repo_root/deploy/compose.prod.yml"
@@ -119,10 +120,8 @@ atomic_link() {
   fi
   link_tmp_dir="$(mktemp -d "$parent/.im-hub-current.XXXXXX")"
   ln -s "$target" "$link_tmp_dir/current" || return 1
-  if "$test_mode"; then
+  if ! mv -Tf "$link_tmp_dir/current" "$release_link" 2>/dev/null; then
     mv -fh "$link_tmp_dir/current" "$release_link" || return 1
-  else
-    mv -Tf "$link_tmp_dir/current" "$release_link" || return 1
   fi
   rmdir "$link_tmp_dir" || return 1
   link_tmp_dir=''
@@ -159,19 +158,28 @@ cleanup_link_tmp() {
 cleanup() {
   local status="$?"
   set +e
+  trap '' HUP INT QUIT TERM
   test -z "$state_tmp" || rm -f "$state_tmp"
   cleanup_link_tmp
   if test "$status" -ne 0 && "$rollback_started" && ! "$operation_committed"; then
     if recover_current; then
-      printf 'failed rollback restored recorded current image; release state unchanged\n' >&2
+      printf 'failed rollback restored recorded current image; release state unchanged\n' >&7
     else
-      printf 'failed rollback could not restore recorded current image\n' >&2
+      printf 'failed rollback could not restore recorded current image\n' >&7
     fi
   fi
   cleanup_link_tmp
   exit "$status"
 }
 trap cleanup EXIT
+
+install_signal_traps() {
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 131' QUIT
+  trap 'exit 143' TERM
+}
+install_signal_traps
 
 read_state
 test "$target_sha" = "$previous_sha" || fail 'rollback target is not the recorded previous release'
@@ -195,6 +203,6 @@ trap '' HUP INT QUIT TERM
 atomic_link "$releases_root/$target_sha" || fail 'current release link update failed'
 write_state "$target_sha" "$current_sha"
 operation_committed=true
-trap - HUP INT QUIT TERM
+install_signal_traps
 rollback_started=false
 printf 'rolled back application image to %s; schema unchanged\n' "$target_sha"

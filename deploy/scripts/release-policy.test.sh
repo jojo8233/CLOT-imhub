@@ -35,7 +35,7 @@ printf '%s\n' \
   'if [[ "$*" == *" kill caddy app"* ]] && [[ "${IMHUB_DOCKER_KILL_FAIL:-false}" = true ]]; then exit 1; fi' \
   'if [[ "$*" == *"exec -T app node -e"* ]] && [[ "${IMHUB_APP_IMAGE:-}" == "${IMHUB_DOCKER_FAIL_IMAGE:-never}" ]]; then exit 1; fi' \
   'if [[ "$*" == *"preflight:production"* ]] && [[ "${IMHUB_APP_IMAGE:-}" == "${IMHUB_DOCKER_FAIL_PREFLIGHT_IMAGE:-never}" ]]; then exit 1; fi' \
-  'if [[ "$*" == *" up -d app caddy"* ]] || [[ "$*" == *" up -d --no-deps --force-recreate app"* ]]; then printf "%s\\n" "$IMHUB_APP_IMAGE" > "$IMHUB_TEST_RUNNING_IMAGE_FILE"; fi' \
+  'if { [[ "$*" == *" up -d app caddy"* ]] || [[ "$*" == *" up -d --no-deps --force-recreate app"* ]]; } && [[ "$IMHUB_APP_IMAGE" != "${IMHUB_DOCKER_STALE_IMAGE:-never}" ]]; then printf "%s\\n" "$IMHUB_APP_IMAGE" > "$IMHUB_TEST_RUNNING_IMAGE_FILE"; fi' \
   'if [[ "$*" == *" ps -q app"* ]]; then printf "%s\\n" synthetic-app-container; exit 0; fi' \
   'if [[ "$1 $2" == "inspect --format" ]]; then cat "$IMHUB_TEST_RUNNING_IMAGE_FILE"; exit 0; fi' \
   'exit 0' > "$fake_bin/docker"
@@ -140,6 +140,18 @@ test "$(sed -n 's/^current=//p' "$state_root/state")" = "$release_sha"
 test "$(sed -n 's/^previous=//p' "$state_root/state")" = "$previous_sha"
 test "$(readlink "$release_link")" = "$releases_root/$release_sha"
 
+printf 'current=%s\nprevious=%s\n' "$release_sha" "$previous_sha" > "$state_root/state"
+printf 'im-hub-server:%s\n' "$release_sha" > "$running_image_file"
+ln -sfn "$releases_root/$release_sha" "$release_link"
+if env "${release_env[@]}" IMHUB_DOCKER_STALE_IMAGE="im-hub-server:$previous_sha" \
+  bash "$rollback_script" "$previous_sha" > "$test_root/rollback-image-mismatch.log" 2>&1; then
+  echo 'rollback committed an application image mismatch' >&2
+  exit 1
+fi
+test "$(sed -n 's/^current=//p' "$state_root/state")" = "$release_sha"
+test "$(sed -n 's/^previous=//p' "$state_root/state")" = "$previous_sha"
+test "$(readlink "$release_link")" = "$releases_root/$release_sha"
+
 assert_failed_deploy_restores_current() {
   local failure_variable="$1"
   local failure_log="$2"
@@ -162,6 +174,18 @@ assert_failed_deploy_restores_current() {
 
 assert_failed_deploy_restores_current IMHUB_DOCKER_FAIL_IMAGE "$test_root/deploy-readiness-failure.log"
 assert_failed_deploy_restores_current IMHUB_DOCKER_FAIL_PREFLIGHT_IMAGE "$test_root/deploy-preflight-failure.log"
+
+printf 'current=%s\nprevious=%s\n' "$previous_sha" "$older_sha" > "$state_root/state"
+printf 'im-hub-server:%s\n' "$previous_sha" > "$running_image_file"
+ln -sfn "$releases_root/$previous_sha" "$release_link"
+if env "${release_env[@]}" IMHUB_DOCKER_STALE_IMAGE="im-hub-server:$release_sha" \
+  bash "$deploy_script" "$release_sha" > "$test_root/deploy-image-mismatch.log" 2>&1; then
+  echo 'deploy committed an application image mismatch' >&2
+  exit 1
+fi
+test "$(sed -n 's/^current=//p' "$state_root/state")" = "$previous_sha"
+test "$(sed -n 's/^previous=//p' "$state_root/state")" = "$older_sha"
+test "$(readlink "$release_link")" = "$releases_root/$previous_sha"
 
 rm -f "$state_root/state" "$release_link"
 : > "$call_log"
@@ -213,7 +237,7 @@ fi
 grep -q 'ConditionPathExists=/opt/im-hub/current/deploy/compose.prod.yml' \
   "$repo_root/deploy/systemd/im-hub-backup.service"
 
-if rg -n 'node -e .*renameSync|renameSync.*release_link' \
+if grep -En 'node -e .*renameSync|renameSync.*release_link' \
   "$deploy_script" "$rollback_script" >/dev/null; then
   echo 'release link updates depend on host Node.js' >&2
   exit 1

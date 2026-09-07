@@ -98,6 +98,7 @@ printf '%s\n' \
   'printf "%s\\n" "$*" >> "$IMHUB_DOCKER_TEST_LOG"' \
   'if [[ "$*" == *"compose -f "*" ps -q app"* ]]; then printf "%s\\n" app-container; fi' \
   'if [[ "$*" == "inspect --format {{.Config.Image}} app-container" ]]; then printf "%s\\n" "im-hub-server:0123456789abcdef0123456789abcdef01234567"; fi' \
+  'if [[ "$*" == *"compose -f "*" exec -T app"* ]] && [[ "${IMHUB_DOCKER_SIGNAL_ON_READY:-false}" = true ]] && [[ ! -e "$IMHUB_DOCKER_SIGNAL_MARKER" ]]; then touch "$IMHUB_DOCKER_SIGNAL_MARKER"; kill -TERM "$PPID"; exit 1; fi' \
   'if [[ "$*" == *"compose -f "*" exec -T app"* ]] && [[ "${IMHUB_DOCKER_READY:-true}" != true ]]; then exit 1; fi' \
   'exit 0' > "$fake_bin/docker"
 chmod 700 "$fake_bin/docker"
@@ -150,6 +151,30 @@ if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
 fi
 after_rollback_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
 test "$before_rollback_hash" = "$after_rollback_hash"
+grep -q 'previous config could not be restored and verified; immediate operator action required' \
+  "$test_root/rollback.log"
+
+before_signal_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+signal_input="$test_root/signal-input"
+signal_marker="$test_root/signal-marker"
+signal_docker_log="$test_root/signal-docker.log"
+write_input "$signal_input" 'synthetic-signal-deepl-secret'
+if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \
+  IMHUB_RELEASE_STATE_ROOT="$state_root" IMHUB_DOCKER_SIGNAL_ON_READY=true \
+  IMHUB_DOCKER_SIGNAL_MARKER="$signal_marker" IMHUB_TEST_INPUT_FILE="$signal_input" \
+  IMHUB_DOCKER_TEST_LOG="$signal_docker_log" \
+  bash "$rotator" DEEPL_API_KEY --test-input > "$test_root/signal.log" 2>&1; then
+  echo 'rotation ignored a termination signal' >&2
+  exit 1
+fi
+after_signal_hash="$(shasum -a 256 "$config_root/app.env" | awk '{print $1}')"
+test "$before_signal_hash" = "$after_signal_hash"
+test "$(grep -c 'force-recreate app' "$signal_docker_log")" -eq 2
+if ! grep -q 'interrupted rotation restored and verified previous config' "$test_root/signal.log"; then
+  sed -n '1,20p' "$test_root/signal.log" >&2
+  echo 'rotation did not report verified interrupted recovery' >&2
+  exit 1
+fi
 
 : > "$docker_log"
 if PATH="$fake_bin:$PATH" IMHUB_CONFIG_ROOT="$config_root" \

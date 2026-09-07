@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+exec 7>&2
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 compose_file="$repo_root/deploy/compose.prod.yml"
@@ -129,10 +130,8 @@ atomic_link() {
   fi
   link_tmp_dir="$(mktemp -d "$parent/.im-hub-current.XXXXXX")"
   ln -s "$target" "$link_tmp_dir/current" || return 1
-  if "$test_mode"; then
+  if ! mv -Tf "$link_tmp_dir/current" "$release_link" 2>/dev/null; then
     mv -fh "$link_tmp_dir/current" "$release_link" || return 1
-  else
-    mv -Tf "$link_tmp_dir/current" "$release_link" || return 1
   fi
   rmdir "$link_tmp_dir" || return 1
   link_tmp_dir=''
@@ -157,13 +156,13 @@ recover_current() {
   if test -z "$current_sha"; then
     if ! compose_with_image "im-hub-server:$release_sha" stop caddy app >/dev/null 2>&1 \
       && ! compose_with_image "im-hub-server:$release_sha" kill caddy app >/dev/null 2>&1; then
-      printf 'failed first release could not stop app and Caddy; immediate operator action required\n' >&2
+      printf 'failed first release could not stop app and Caddy; immediate operator action required\n' >&7
       return 1
     fi
     if test -L "$release_link"; then
       rm -f "$release_link"
     fi
-    printf 'failed first release stopped app and Caddy; release state was not created\n' >&2
+    printf 'failed first release stopped app and Caddy; release state was not created\n' >&7
     return 0
   fi
 
@@ -172,10 +171,10 @@ recover_current() {
     || ! wait_ready "$current_image" \
     || ! compose_with_image "$current_image" up -d caddy >/dev/null 2>&1 \
     || ! atomic_link "$releases_root/$current_sha"; then
-    printf 'failed release could not restore recorded current image\n' >&2
+    printf 'failed release could not restore recorded current image\n' >&7
     return 1
   fi
-  printf 'failed release restored recorded current image; release state unchanged\n' >&2
+  printf 'failed release restored recorded current image; release state unchanged\n' >&7
 }
 
 cleanup_link_tmp() {
@@ -189,6 +188,7 @@ cleanup_link_tmp() {
 cleanup() {
   local status="$?"
   set +e
+  trap '' HUP INT QUIT TERM
   test -z "$state_tmp" || rm -f "$state_tmp"
   cleanup_link_tmp
   if test "$status" -ne 0 && "$activation_started" && ! "$operation_committed"; then
@@ -198,6 +198,14 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+
+install_signal_traps() {
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 131' QUIT
+  trap 'exit 143' TERM
+}
+install_signal_traps
 
 read_state
 if test -n "$current_sha"; then
@@ -228,6 +236,6 @@ trap '' HUP INT QUIT TERM
 atomic_link "$repo_root" || fail 'current release link update failed'
 write_state "$release_sha" "$current_sha"
 operation_committed=true
-trap - HUP INT QUIT TERM
+install_signal_traps
 activation_started=false
 printf 'deployed release %s; readiness and production preflight passed\n' "$release_sha"

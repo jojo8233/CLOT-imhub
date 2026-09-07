@@ -304,7 +304,8 @@ Write via temporary files then `chmod 600`, `chown root:root`, and atomic rename
 in `/etc/im-hub/app.env`, restarts only the app, and requires readiness before deleting its mode-600 rollback copy.
 If readiness fails it restores the old file and restarts the old configuration. The script prints the variable name and
 status only, never old/new values. It holds the same release-operation lock as deploy/rollback and revalidates the
-recorded and running app image under that lock before changing configuration.
+recorded and running app image under that lock before changing configuration. Failure or termination after activation
+must restore the old file, recreate the app with it, and verify readiness; failed recovery emits an urgent operator alert.
 
 - [ ] **Step 5: Verify non-disclosure and syntax**
 

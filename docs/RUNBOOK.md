@@ -641,8 +641,10 @@ sudo bash deploy/scripts/rotate-production-secret.sh OPENAI_API_KEY
 新值仍通过无回显提示读取，不进入 argv。脚本保留 mode-600 临时回滚副本，只重建 app 容器并在
 60 秒内等待 `/health/ready`；失败时恢复旧配置并再次启动旧配置。轮换在修改配置前取得与发布/回滚
 相同的 `/var/lib/im-hub/releases/operation.lock`，并在锁内重新核对 manifest 与实际 app 镜像；锁被
-占用或二者不一致时拒绝修改和重启。命令只输出变量名和结果，不能用 shell tracing、`env`、
-`printenv` 或容器 inspect 输出环境值来排障。
+占用或二者不一致时拒绝修改和重启。新 app 激活后若命令失败或被终止，EXIT 恢复必须同时还原配置
+文件、强制重建旧 app 并重新验证 readiness；旧配置无法恢复并就绪时会明确要求立即人工处置，不能
+把“文件已还原”当作服务恢复。命令只输出变量名和结果，不能用 shell tracing、`env`、`printenv`
+或容器 inspect 输出环境值来排障。
 
 Caddy 访问日志删除完整 `request.uri`，只把不含 query 的 path 写入 `request_path`；Authorization、
 Cookie 等敏感 header 继续使用 Caddy 默认脱敏。不能为了排障改回完整 URI、请求/响应正文或凭据日志。

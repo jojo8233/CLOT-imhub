@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+exec 7>&2
 
 config_root="${IMHUB_CONFIG_ROOT:-/etc/im-hub}"
 state_root="${IMHUB_RELEASE_STATE_ROOT:-/var/lib/im-hub/releases}"
@@ -12,6 +13,8 @@ tmp_file=''
 backup_file=''
 replacement=''
 rollback_required=false
+activation_started=false
+operation_committed=false
 readiness_attempts=60
 readiness_sleep_seconds=1
 
@@ -20,16 +23,55 @@ fail() {
   exit 1
 }
 
-cleanup() {
-  test -z "$tmp_file" || rm -f "$tmp_file"
-  if "$rollback_required" && test -n "$backup_file" && test -f "$backup_file"; then
-    mv -f "$backup_file" "$config_root/app.env"
+restore_previous_config() {
+  local restart_required=false
+
+  test -n "$backup_file" && test -f "$backup_file" || return 1
+  if "$activation_started"; then
+    restart_required=true
   fi
-  test -z "$backup_file" || rm -f "$backup_file"
+  mv -f "$backup_file" "$config_root/app.env" || return 1
+  backup_file=''
+  rollback_required=false
+
+  if "$restart_required"; then
+    if restart_and_wait; then
+      activation_started=false
+    else
+      return 1
+    fi
+  fi
+}
+
+cleanup() {
+  local status="$?"
+  set +e
+  trap '' HUP INT QUIT TERM
+  test -z "$tmp_file" || rm -f "$tmp_file"
+  if "$rollback_required" && ! "$operation_committed"; then
+    if restore_previous_config; then
+      printf 'interrupted rotation restored and verified previous config for %s\n' "$variable" >&7
+    else
+      printf 'interrupted rotation could not restore and verify previous config for %s; immediate operator action required\n' \
+        "$variable" >&7
+    fi
+  fi
+  if ! "$rollback_required"; then
+    test -z "$backup_file" || rm -f "$backup_file"
+  fi
   test -z "$lock_dir" || rmdir "$lock_dir" 2>/dev/null || true
   unset replacement
+  exit "$status"
 }
 trap cleanup EXIT
+
+install_signal_traps() {
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 131' QUIT
+  trap 'exit 143' TERM
+}
+install_signal_traps
 
 case "$#" in
   1) ;;
@@ -145,6 +187,7 @@ mv "$tmp_file" "$config_root/app.env"
 tmp_file=''
 
 restart_and_wait() {
+  activation_started=true
   IMHUB_APP_IMAGE="$current_image" compose up -d --no-deps --force-recreate app >/dev/null 2>&1 || return 1
   for ((attempt = 0; attempt < readiness_attempts; attempt += 1)); do
     if IMHUB_APP_IMAGE="$current_image" compose exec -T app node -e \
@@ -160,14 +203,17 @@ restart_and_wait() {
 }
 
 if ! restart_and_wait; then
-  mv -f "$backup_file" "$config_root/app.env"
-  backup_file=''
-  rollback_required=false
-  restart_and_wait || true
-  fail "rotation failed for $variable; previous config restored"
+  if restore_previous_config; then
+    fail "rotation failed for $variable; previous config restored and verified"
+  fi
+  fail "rotation failed for $variable; previous config could not be restored and verified; immediate operator action required"
 fi
 
+trap '' HUP INT QUIT TERM
 rm -f "$backup_file"
 backup_file=''
 rollback_required=false
+operation_committed=true
+install_signal_traps
+activation_started=false
 printf 'rotated %s and verified readiness\n' "$variable"
