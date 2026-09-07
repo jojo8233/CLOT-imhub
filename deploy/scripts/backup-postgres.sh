@@ -77,7 +77,16 @@ weekly_file=''
 if "$weekly"; then
   weekly_file="$weekly_dir/imhub-$timestamp.dump"
   test ! -e "$weekly_file" || fail 'weekly backup timestamp already exists'
-  cp "$final_file" "$weekly_file"
+  tmp_file="$(mktemp "$weekly_dir/.imhub-$timestamp.XXXXXX")"
+  chmod 600 "$tmp_file"
+  if ! cp "$final_file" "$tmp_file"; then
+    fail 'weekly backup copy failed'
+  fi
+  if ! compose exec -T postgres pg_restore --list < "$tmp_file" >/dev/null; then
+    fail 'weekly backup validation failed'
+  fi
+  mv "$tmp_file" "$weekly_file"
+  tmp_file=''
   chmod 600 "$weekly_file"
 fi
 

@@ -19,6 +19,12 @@ printf '%s\n' \
   'exit 0' > "$fake_bin/docker"
 chmod 700 "$fake_bin/docker"
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if test "${IMHUB_CP_FAIL:-false}" = true; then printf partial > "$2"; exit 1; fi' \
+  'exec /bin/cp "$@"' > "$fake_bin/cp"
+chmod 700 "$fake_bin/cp"
+
 backup_root="$test_root/backups"
 daily="$backup_root/daily"
 weekly="$backup_root/weekly"
@@ -49,6 +55,18 @@ test "$mode" = '600'
 
 if grep -q 'synthetic-dump-contents' "$backup_log" "$docker_log"; then
   echo 'backup disclosed dump contents' >&2
+  exit 1
+fi
+
+failed_backup_root="$test_root/failed-backups"
+if PATH="$fake_bin:$PATH" IMHUB_BACKUP_ROOT="$failed_backup_root" IMHUB_BACKUP_TEST_MODE=1 \
+  IMHUB_BACKUP_FORCE_WEEKLY=1 IMHUB_CP_FAIL=true IMHUB_DOCKER_TEST_LOG="$docker_log" \
+  bash "$backup_script" > "$test_root/failed-weekly.log" 2>&1; then
+  echo 'backup accepted a failed weekly copy' >&2
+  exit 1
+fi
+if find "$failed_backup_root/weekly" -type f -print -quit | grep -q .; then
+  echo 'backup left a partial weekly artifact' >&2
   exit 1
 fi
 

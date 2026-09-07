@@ -65,11 +65,31 @@ services:
   migrate:
     <<: *app-common
     command: ['pnpm', '--filter', '@im-hub/server', 'migrate']
+    volumes: []
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: 'no'
+    profiles:
+      - tools
+
+  bootstrap-owner:
+    <<: *app-common
+    command: ['pnpm', '--filter', '@im-hub/server', 'bootstrap-owner']
+    volumes: []
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     restart: 'no'
     profiles:
       - tools

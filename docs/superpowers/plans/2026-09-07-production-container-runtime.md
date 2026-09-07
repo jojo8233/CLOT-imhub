@@ -122,7 +122,7 @@ git commit -m "build: package the production server image"
 - Create: `deploy/scripts/validate-runtime.test.ts`
 
 **Interfaces:**
-- Produces: services `caddy`, `app`, `migrate`, `postgres`, `redis` and networks `edge`, `data`.
+- Produces: services `caddy`, `app`, `migrate`, `bootstrap-owner`, `postgres`, `redis` and networks `edge`, `data`.
 - Produces: Caddy active health target `/health/ready` and automatic HTTPS for the exact company host.
 - Consumes: Task 1 image and app plan health endpoints.
 
@@ -222,14 +222,16 @@ imhub.jojo2333.net {
       roll_keep 10
       roll_keep_for 168h
     }
-    format json
+    format filter {
+      request>uri delete
+    }
   }
 }
 ```
 
 The trusted-proxy snippet uses Cloudflare's official IPv4/IPv6 CIDRs plus `trusted_proxies_strict`; Caddy's standard
-reverse proxy handles WebSocket upgrades. Access logs do not include request/response bodies or authorization
-headers. Cross-check the syntax against Caddy's official
+reverse proxy handles WebSocket upgrades. Access logs delete the full request URI, append only the query-free path,
+and do not include request/response bodies or authorization headers. Cross-check the syntax against Caddy's official
 [`trusted_proxies` documentation](https://caddyserver.com/docs/caddyfile/options#trusted-proxies) and
 [`reverse_proxy` health options](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#active-health-checks).
 
@@ -377,7 +379,7 @@ git commit -m "ops: back up and restore the production database"
 - Modify: `docs/RUNBOOK.md`
 
 **Interfaces:**
-- Produces: release tags `im-hub-server:$RELEASE_SHA` where `RELEASE_SHA` is validated as 40 lowercase hex, and root-only release state files under `/var/lib/im-hub/releases`.
+- Produces: release tags `im-hub-server:$RELEASE_SHA` where `RELEASE_SHA` is validated as 40 lowercase hex, a root-only atomic state manifest under `/var/lib/im-hub/releases`, and an atomic `/opt/im-hub/current` release link.
 - Consumes: backup script, migrate service, production preflight and readiness endpoint.
 - Produces: rollback changes application image only and never runs migration down.
 
@@ -406,7 +408,7 @@ git cat-file -e "${release_sha}^{commit}"
 test -z "$(git status --porcelain)"
 ```
 
-Record the previous image tag before building. Run backup, build the exact checked-out commit, run the one-shot migrate service, start app/Caddy, poll `/health/ready` with a bounded timeout, run production preflight inside the app network, then atomically write the current/previous SHA files. No secret values enter command output.
+Record and verify the current image before building. Hold a shared release lock, run backup, build the exact checked-out commit, run the one-shot migrate service, start app/Caddy, poll `/health/ready` with a bounded timeout, run production preflight inside the app network, then atomically update the current link and current/previous manifest. From the first app replacement onward, any failed activation restores and verifies recorded current; a failed first release stops app/Caddy. No secret values enter command output.
 
 - [ ] **Step 4: Implement bounded application rollback**
 

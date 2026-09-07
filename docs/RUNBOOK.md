@@ -570,34 +570,35 @@ macOS/Windows 独立安装包不会用 `file://` 页面直接请求生产 API，
 默认值；登录态仍只经 `safeStorage` bridge 持久化，不依赖 `localStorage`。布局跨启动持久化后续应
 复用受控主进程存储 bridge，不能为保留 Web Storage 而重新允许 `Origin: null`。
 
-首次部署按以下顺序执行：
+首次部署按以下顺序执行；生产主机不需要安装 Node.js/pnpm，也不要 `source` 生产环境文件到宿主
+shell：
 
-1. 加载生产环境文件后运行 migration：
-
-   ```bash
-   set -a; source /etc/im-hub/app.env; set +a
-   pnpm db:migrate
-   ```
-
-2. 运行只读生产预检：
-
-   ```bash
-   pnpm --filter @im-hub/server preflight:production
-   ```
-
-   输出只包含固定检查名及 `ok`/`missing`。任一项为 `missing` 时退出码非零；脚本不会打印连接串、
-   密钥、上游响应或数据库错误正文，也不会写 schema、用户或账号数据。
-3. 仅当 `users` 表为空时，在交互式 TTY 中创建首个 owner：
+1. 在精确 SHA release checkout 内运行第 5.10 节发布命令。该命令用同一不可变镜像执行 migration，
+   启动 app/Caddy，检查 readiness，并在容器内运行只读 `preflight:production`。预检输出只包含固定
+   检查名及 `ok`/`missing`；任一项为 `missing` 时退出码非零，不输出连接串、密钥、上游响应或数据库
+   错误正文。
+2. 首次发布成功后，仅当 `users` 表为空时，在管理员自己的交互式 TTY 中用 tools profile 创建首个
+   owner。`RELEASE_SHA` 必须替换为刚发布的 40 位小写 SHA，不得使用 `latest`：
 
    ```bash
-   pnpm --filter @im-hub/server bootstrap-owner
+   release_sha=0123456789abcdef0123456789abcdef01234567
+   cd /opt/im-hub/current
+   sudo IMHUB_APP_IMAGE="im-hub-server:$release_sha" \
+     docker compose -f deploy/compose.prod.yml --profile tools run --rm bootstrap-owner
    ```
 
-   email、显示名称和临时密码都不能作为命令行参数。密码输入两次且终端不回显；创建后 24 小时
-   到期，并强制 owner 首次登录先修改密码。命令在事务与 advisory lock 内重新检查空库，并发或
-   重复执行只允许一个成功。已有任何用户时必须停下核对，不能改跑 `seed`。
-4. 启动 production 服务。入口会自动再次执行同一预检，未通过时在创建平台适配器前退出。
-5. Caddy/容器就绪检查使用 `GET /health/live` 和 `GET /health/ready`。前者只证明进程存活；后者仅在
+   `bootstrap-owner` 仅加入 data 网络，不发布端口、不挂载 TDLib/Signal 会话卷，并使用只读根文件系统。
+   email、显示名称和临时密码都不能作为命令行参数；密码输入两次且终端不回显。命令在事务与 advisory
+   lock 内重新检查空库，并发或重复执行只允许一个成功。已有任何用户时必须停下核对，不能改跑
+   `seed`。
+3. owner 创建后可在当前 app 容器内重新运行只读预检；不要通过 `docker inspect` 或打印环境变量排障：
+
+   ```bash
+   sudo IMHUB_APP_IMAGE="im-hub-server:$release_sha" \
+     docker compose -f deploy/compose.prod.yml exec -T app \
+     pnpm --filter @im-hub/server preflight:production
+   ```
+4. Caddy/容器就绪检查使用 `GET /health/live` 和 `GET /health/ready`。前者只证明进程存活；后者仅在
    PostgreSQL、Redis 和应用初始化全部完成后返回 200。响应不包含版本、账号数、连接信息或错误正文。
 
 登录、首次改密和常规改密都受 15 分钟 Redis 限流保护；登录同时按可信客户端 IP 与
@@ -616,10 +617,12 @@ node deploy/scripts/validate-runtime.mjs --examples
 pnpm exec vitest run deploy/scripts/validate-runtime.test.ts
 ```
 
-首次部署时，管理员必须在自己的交互式 SSH 终端运行：
+首次部署时，管理员必须在准备发布的精确 SHA 目录中、自己的交互式 SSH 终端运行；首次成功发布前
+`/opt/im-hub/current` 尚不存在：
 
 ```bash
-cd /opt/im-hub/current
+release_sha=0123456789abcdef0123456789abcdef01234567
+cd "/opt/im-hub/releases/$release_sha"
 sudo bash deploy/scripts/init-production-config.sh
 ```
 
@@ -639,11 +642,15 @@ sudo bash deploy/scripts/rotate-production-secret.sh OPENAI_API_KEY
 60 秒内等待 `/health/ready`；失败时恢复旧配置并再次启动旧配置。命令只输出变量名和结果，不能用
 shell tracing、`env`、`printenv` 或容器 inspect 输出环境值来排障。
 
+Caddy 访问日志删除完整 `request.uri`，只把不含 query 的 path 写入 `request_path`；Authorization、
+Cookie 等敏感 header 继续使用 Caddy 默认脱敏。不能为了排障改回完整 URI、请求/响应正文或凭据日志。
+
 ### 5.9 PostgreSQL 日/周备份与恢复演练
 
 `deploy/scripts/backup-postgres.sh` 只允许 root 使用固定目录 `/var/backups/im-hub`。它通过 Compose
 容器本地连接执行 custom-format `pg_dump`，先写 mode-600 临时文件，再用 `pg_restore --list`
-验证并原子改名。日备份精确保留 7 份；每周日同时复制一份周备份并精确保留 4 份。清理只匹配
+验证并原子改名。日备份精确保留 7 份；每周日把已验证日备份复制到周目录临时文件、再次验证后原子
+改名，并精确保留 4 份。清理只匹配
 `imhub-YYYYMMDDTHHMMSSZ.dump`，不会删除手工文件或其他目录：
 
 ```bash
@@ -663,6 +670,27 @@ users 和 accounts 的非敏感计数后，无论成功或失败都删除该临�
 内容；演练通过后才能安装并启用 `deploy/systemd/im-hub-backup.service` 与 `.timer`。备份失败不能通过
 删除 PostgreSQL volume 或运行 migration down 重试。
 
+只有 `/opt/im-hub/current` 已由一次成功发布原子指向当前 release、手工备份和恢复演练均通过后，才
+安装和启用定时器：
+
+```bash
+cd /opt/im-hub/current
+sudo install -o root -g root -m 0644 deploy/systemd/im-hub-backup.service \
+  /etc/systemd/system/im-hub-backup.service
+sudo install -o root -g root -m 0644 deploy/systemd/im-hub-backup.timer \
+  /etc/systemd/system/im-hub-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl start im-hub-backup.service
+sudo systemctl enable --now im-hub-backup.timer
+sudo systemctl is-enabled im-hub-backup.timer
+sudo systemctl list-timers im-hub-backup.timer --no-pager
+sudo journalctl -u im-hub-backup.service -n 20 --no-pager
+```
+
+首次 oneshot 必须成功且日志只出现受管备份路径，timer 必须显示下一次执行时间。若 unit 因
+`ConditionPathExists` 被跳过、timer 未启用或备份失败，停止部署并修复 `current` 链接/权限；不要把
+条件删除或把脚本复制到未受版本控制的位置。
+
 ### 5.10 精确 SHA 发布与应用回滚
 
 服务器上的每个 release checkout 必须位于 SHA 命名目录，HEAD 与准备发布的 40 位小写 Git SHA
@@ -674,9 +702,10 @@ cd /opt/im-hub/releases/0123456789abcdef0123456789abcdef01234567
 sudo bash deploy/scripts/deploy-release.sh 0123456789abcdef0123456789abcdef01234567
 ```
 
-镜像固定标记为 `im-hub-server:<SHA>`，状态只写入 root 受限的 `/var/lib/im-hub/releases/current` 和
-`previous`。脚本拒绝分支名、缩写 SHA、非当前 checkout、脏工作树和缺失备份程序；不得用 `latest`
-代替精确 SHA。
+镜像固定标记为 `im-hub-server:<SHA>`。脚本持有共享非阻塞发布锁，先核对状态中记录的镜像与实际运行
+app 镜像一致；成功后原子更新 `/opt/im-hub/current` 符号链接，并以单一 mode-600 manifest 原子写入
+`/var/lib/im-hub/releases/state` 的 `current`/`previous`。脚本拒绝分支名、缩写 SHA、非当前 checkout、
+脏工作树、并发发布和缺失备份程序；不得用 `latest` 代替精确 SHA。
 
 只有明确记录在 `previous` 的镜像可以回滚：
 
@@ -687,6 +716,42 @@ sudo bash deploy/scripts/rollback-release.sh fedcba0987654321fedcba0987654321fed
 回滚只重建 app 容器并要求 readiness，不运行 migration down，也不删除或重建任何 volume。目标镜像
 不能就绪时脚本会尝试恢复当前镜像并保持 release 状态不变。数据库 schema 不随镜像回退；如果旧代码
 不能读取新 schema，应停止回滚，根据 migration 兼容性和发布前备份做显式恢复决策。
+
+发布过程中从第一次替换 app 起，readiness、preflight、状态或链接更新任一步失败都会尝试强制重建并
+验证 recorded current 镜像，状态 manifest 保持不变；首次发布没有 recorded current 时则停止 app 和
+Caddy，保持失败关闭。若自动恢复也失败，停止一切新发布并从宿主本机检查容器，不得手工把 manifest
+改成未验证镜像。
+
+### 5.11 Cloudflare、TLS 与源站防火墙切换
+
+本节在 production-server-rollout 阶段执行，顺序不可交换：
+
+1. 先用非 root 部署管理员的新 SSH 会话验证公钥登录；SSH 规则单独保留，不能和 Web 规则在一次变更
+   中收紧。确认 `imhub.jojo2333.net` 的 A 记录指向生产 IP，Cloudflare 暂设 DNS-only，让 Caddy 首次
+   签发公开证书；此时宿主防火墙只开放 SSH、80、443，应用/数据库/Redis 端口不能开放。
+2. 用源站直连解析验证证书链和健康，再用真实桌面客户端验证 WSS；JWT 仍通过 WebSocket 鉴权首帧，
+   不能放在 URL/query：
+
+   ```bash
+   curl --fail --silent --show-error \
+     --resolve imhub.jojo2333.net:443:139.180.218.42 \
+     https://imhub.jojo2333.net/health/ready
+   ```
+3. 在 Cloudflare 把 SSL/TLS 模式设为 `Full (strict)`，再开启代理（orange cloud）。从外网重新验证 HTTPS、
+   WSS 和 `/health/ready`，确认响应经过 Cloudflare 且源站证书仍有效；失败时先关闭代理恢复 DNS-only，
+   不要关闭 Caddy TLS。
+4. 代理稳定后，必须先运行 rollout 阶段提供并审查过的
+   `deploy/scripts/sync-cloudflare-ips.sh --audit` 与
+   `deploy/scripts/enforce-cloudflare-origin.sh --audit`，确认当前官方 IPv4/IPv6 清单、Caddy trusted
+   proxies 与未来防火墙规则一致，再运行 `--apply`。这些脚本尚未随当前 container-runtime 阶段提供时，
+   禁止手工复制零散 CIDR 或提前收紧源站，这是部署硬阻塞。
+5. 收紧后直接访问源站 80/443 必须被拒绝，Cloudflare 路径必须保持正常；需要临时切回 DNS-only 前，
+   先恢复经过审查的通用 80/443 规则，否则会造成停机。SSH allowlist 不由 Cloudflare Web 规则管理。
+
+Cloudflare 地址维护只从官方 `https://www.cloudflare.com/ips-v4` 和 `/ips-v6` 获取。更新时先在隔离分支
+比较并校验 CIDR，把 Caddy 清单与防火墙生成输入放在同一 PR 中审查，通过 runtime 验证后再在主机上
+audit/apply；禁止把网络下载结果直接 pipe 到防火墙。每次发布前和每月至少审计一次，差异未审查时不
+删除旧的已允许 CIDR。
 
 ---
 

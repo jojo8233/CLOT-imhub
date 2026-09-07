@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 type JsonObject = Record<string, unknown>
@@ -24,6 +26,27 @@ function loadComposeWithExampleEnv(): JsonObject {
     'json',
   ], { encoding: 'utf8' })
   return object(JSON.parse(rendered) as unknown)
+}
+
+function loadAdaptedCaddyConfig(): JsonObject {
+  const adapted = execFileSync('docker', [
+    'run',
+    '--rm',
+    '--platform',
+    'linux/amd64',
+    '--volume',
+    `${resolve('deploy/Caddyfile')}:/etc/caddy/Caddyfile:ro`,
+    '--volume',
+    `${resolve('deploy/caddy/cloudflare-trusted-proxies.caddy')}:/etc/caddy/cloudflare-trusted-proxies.caddy:ro`,
+    'caddy:2',
+    'caddy',
+    'adapt',
+    '--config',
+    '/etc/caddy/Caddyfile',
+    '--adapter',
+    'caddyfile',
+  ], { encoding: 'utf8' })
+  return object(JSON.parse(adapted) as unknown)
 }
 
 describe('production container runtime', () => {
@@ -62,7 +85,24 @@ describe('production container runtime', () => {
     expect(Object.keys(object(object(services.caddy).networks))).toEqual(['edge'])
     expect(Object.keys(object(object(services.postgres).networks))).toEqual(['data'])
     expect(Object.keys(object(object(services.redis).networks))).toEqual(['data'])
+    expect(Object.keys(object(object(services.migrate).networks))).toEqual(['data'])
+    expect(Object.keys(object(object(services['bootstrap-owner']).networks))).toEqual(['data'])
     expect(object(app.environment).TRUSTED_PROXY_CIDRS).toBe('172.30.0.2/32')
+  })
+
+  it('provides an interactive owner bootstrap without publishing a service', () => {
+    const runtime = loadComposeWithExampleEnv()
+    const bootstrapOwner = object(object(runtime.services)['bootstrap-owner'])
+
+    expect(bootstrapOwner.command).toEqual([
+      'pnpm',
+      '--filter',
+      '@im-hub/server',
+      'bootstrap-owner',
+    ])
+    expect(bootstrapOwner.stdin_open).toBe(true)
+    expect(bootstrapOwner.tty).toBe(true)
+    expect(bootstrapOwner.ports).toBeUndefined()
   })
 
   it('enables authenticated Redis AOF and keeps WhatsApp Cloud disabled', () => {
@@ -84,8 +124,22 @@ describe('production container runtime', () => {
     const runtime = loadComposeWithExampleEnv()
     const services = object(runtime.services)
 
-    for (const service of ['app', 'migrate', 'caddy', 'postgres', 'redis']) {
+    for (const service of ['app', 'migrate', 'bootstrap-owner', 'caddy', 'postgres', 'redis']) {
       expect(object(services[service]).platform).toBe('linux/amd64')
     }
+  })
+
+  it('compiles query-free Caddy logging and rejects ignored local artifacts', () => {
+    const caddyfile = readFileSync('deploy/Caddyfile', 'utf8')
+    const dockerignore = readFileSync('.dockerignore', 'utf8')
+    const adapted = JSON.stringify(loadAdaptedCaddyConfig())
+
+    expect(caddyfile).toContain('request>uri delete')
+    expect(caddyfile).toContain('request_path {http.request.uri.path}')
+    expect(adapted).toContain('"request>uri":{"filter":"delete"}')
+    expect(adapted).toContain('"key":"request_path"')
+    expect(adapted).toContain('"value":"{http.request.uri.path}"')
+    expect(dockerignore).toContain('**/*.log')
+    expect(dockerignore).toContain('**/.DS_Store')
   })
 })

@@ -54,6 +54,8 @@ const rendered = run('docker', [
 const runtime = object(JSON.parse(rendered), 'runtime')
 const services = object(runtime.services, 'services')
 const app = object(services.app, 'app')
+const migrate = object(services.migrate, 'migrate')
+const bootstrapOwner = object(services['bootstrap-owner'], 'bootstrap-owner')
 const caddy = object(services.caddy, 'caddy')
 const postgres = object(services.postgres, 'postgres')
 const redis = object(services.redis, 'redis')
@@ -61,6 +63,19 @@ const redis = object(services.redis, 'redis')
 assert(Array.isArray(caddy.ports) && caddy.ports.length === 2, 'only Caddy ports are allowed')
 assert(app.ports === undefined && postgres.ports === undefined && redis.ports === undefined,
   'application and data ports must remain private')
+assert(bootstrapOwner.ports === undefined, 'owner bootstrap must remain private')
+
+for (const [name, service] of Object.entries({ app, migrate, bootstrapOwner, caddy, postgres, redis })) {
+  assert(service.platform === 'linux/amd64', `${name} platform is not pinned`)
+}
+assert(JSON.stringify(bootstrapOwner.command).includes('bootstrap-owner'),
+  'owner bootstrap command is missing')
+assert(bootstrapOwner.stdin_open === true && bootstrapOwner.tty === true,
+  'owner bootstrap must require an interactive terminal')
+assert(JSON.stringify(Object.keys(object(migrate.networks, 'migrate networks'))) === '["data"]',
+  'migration service must remain on the data network')
+assert(JSON.stringify(Object.keys(object(bootstrapOwner.networks, 'bootstrap-owner networks'))) === '["data"]',
+  'owner bootstrap must remain on the data network')
 
 const volumes = Object.keys(object(runtime.volumes, 'volumes'))
 for (const volume of [

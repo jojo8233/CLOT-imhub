@@ -37,9 +37,13 @@ execFileSync(docker, [
   image,
   '-e',
   [
-    "const { existsSync } = require('node:fs')",
+    "const { existsSync, readdirSync } = require('node:fs')",
     "if (typeof process.getuid !== 'function' || process.getuid() === 0) process.exit(20)",
     "if (existsSync('/app/.env') || existsSync('/app/data')) process.exit(21)",
+    "const forbidden = /(^|\\/)(?:\\.env(?:\\..*)?|\\.DS_Store|data|sessions?)(?:\\/|$)|\\.(?:log|dump)$/",
+    "const walk = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => { const path = directory + '/' + entry.name; return entry.isDirectory() ? [path, ...walk(path)] : [path] })",
+    "const sourcePaths = ['/app/packages/shared/src', '/app/packages/server/src'].flatMap(walk)",
+    "if (sourcePaths.some(path => forbidden.test(path))) process.exit(22)",
   ].join(';'),
 ], { stdio: 'inherit' })
 
