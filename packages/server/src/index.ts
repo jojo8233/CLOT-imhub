@@ -37,6 +37,36 @@ import { WhatsAppGraphClient } from './whatsapp-cloud/graph-client.js'
 import { KyselyWhatsAppCloudRepo } from './whatsapp-cloud/repo.js'
 import { decodeSecretMasterKey, SecretCipher } from './whatsapp-cloud/secret-cipher.js'
 import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
+import {
+  createProductionPreflightDependencies,
+  formatProductionPreflight,
+  isProductionPreflightReady,
+  runProductionPreflight,
+} from './production/preflight.js'
+
+async function passesProductionPreflight(): Promise<boolean> {
+  if (config.APP_ENV !== 'production') return true
+  const preflightRedis = new Redis(config.REDIS_URL, {
+    connectTimeout: 3000,
+    maxRetriesPerRequest: 1,
+    lazyConnect: true,
+  })
+  try {
+    const result = await runProductionPreflight(
+      config,
+      createProductionPreflightDependencies(db, preflightRedis),
+    )
+    process.stdout.write(formatProductionPreflight(result))
+    return isProductionPreflightReady(result)
+  } finally {
+    preflightRedis.disconnect()
+  }
+}
+
+if (!await passesProductionPreflight()) {
+  await db.destroy()
+  process.exit(1)
+}
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
 const healthRedis = new Redis(config.REDIS_URL, {
