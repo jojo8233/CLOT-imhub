@@ -116,4 +116,3 @@ printf 'created %s\n' "$final_file"
 if test -n "$weekly_file"; then
   printf 'created %s\n' "$weekly_file"
 fi
-

@@ -3,4 +3,3 @@ servers {
   trusted_proxies_strict
   client_ip_headers CF-Connecting-IP X-Forwarded-For
 }
-

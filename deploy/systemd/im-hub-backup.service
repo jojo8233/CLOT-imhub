@@ -15,4 +15,3 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/backups/im-hub
-

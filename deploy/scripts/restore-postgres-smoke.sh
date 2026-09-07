@@ -81,4 +81,3 @@ done <<< "$verification"
 test "$verified_lines" -eq 3 || fail 'restore verification returned incomplete counts'
 
 printf 'restore smoke passed; schema and table counts verified\n'
-

@@ -154,4 +154,3 @@ printf 'created %s\n' "$config_root/app.env"
 printf 'created %s\n' "$config_root/postgres.env"
 printf 'created %s\n' "$config_root/redis.env"
 printf 'configured DEEPL_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY TELEGRAM_API_ID TELEGRAM_API_HASH\n'
-

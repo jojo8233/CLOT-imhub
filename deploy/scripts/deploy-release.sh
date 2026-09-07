@@ -106,4 +106,3 @@ write_state() {
 write_state "$state_root/previous" "$current_sha"
 write_state "$state_root/current" "$release_sha"
 printf 'deployed release %s; readiness and production preflight passed\n' "$release_sha"
-
