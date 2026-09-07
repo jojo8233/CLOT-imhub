@@ -3,6 +3,7 @@ import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import {
   nativeCommandCanContinue,
   nativeConnectionUnavailableReason,
+  nativeDraftProviderChangePatch,
   sendCurrentNativeDraft,
   shouldTranslateOnKeyDown,
 } from './TranslationDock.js'
@@ -41,6 +42,24 @@ describe('TranslationDock native bridge gate', () => {
 })
 
 describe('TranslationDock keyboard handling', () => {
+  it('切换本次 provider 会废弃旧译文和旧发送 attempt', () => {
+    expect(nativeDraftProviderChangePatch('openai')).toEqual({
+      selectedProvider: 'openai',
+      requestedProvider: null,
+      actualProvider: null,
+      downgraded: false,
+      translatedText: '',
+      backTranslated: null,
+      status: 'idle',
+      error: null,
+      sendAttemptId: null,
+      sendAttemptDraft: null,
+      sendAttemptFingerprint: null,
+      sendAttemptContextRevision: null,
+      sendAttemptConfirmed: false,
+    })
+  })
+
   it('只在非 IME 组合输入的 Enter 触发翻译', () => {
     expect(shouldTranslateOnKeyDown({
       key: 'Enter', shiftKey: false, isComposing: false,

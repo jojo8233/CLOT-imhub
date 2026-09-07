@@ -1,5 +1,9 @@
 import { create } from 'zustand'
-import type { AuthChallengeKind, TranslationPreference } from '@im-hub/shared'
+import type {
+  AuthChallengeKind,
+  TranslationPreference,
+  TranslationProviderName,
+} from '@im-hub/shared'
 import type { AccountRow, ConversationRow, MessageRow } from './api/client.js'
 import type { NativeComposerStateEvent, NativeConversationContext } from '@im-hub/shared'
 import {
@@ -57,6 +61,12 @@ export interface NativeDraftState {
   translatedText: string
   backTranslated: string | null
   targetLang: string | null
+  /** 只影响当前会话的本次翻译，不回写员工默认偏好。 */
+  selectedProvider: TranslationProviderName | null
+  /** 最后一次翻译结果的请求/实际 provider 元数据。 */
+  requestedProvider: TranslationProviderName | null
+  actualProvider: TranslationProviderName | null
+  downgraded: boolean
   status: NativeDraftStatus
   error: string | null
   /** 结果未知时与最终原生草稿绑定，重试必须沿用同一个逻辑发送标识。 */
@@ -71,7 +81,9 @@ export interface NativeDraftState {
 
 const EMPTY_DRAFT: NativeDraftState = {
   sourceText: '', translatedText: '', backTranslated: null,
-  targetLang: null, status: 'idle', error: null,
+  targetLang: null, selectedProvider: null,
+  requestedProvider: null, actualProvider: null, downgraded: false,
+  status: 'idle', error: null,
   sendAttemptId: null, sendAttemptDraft: null,
   sendAttemptFingerprint: null,
   sendAttemptContextRevision: null,
@@ -360,6 +372,9 @@ export const useStore = create<State>((set) => ({
           ...existing,
           translatedText: '',
           backTranslated: null,
+          requestedProvider: null,
+          actualProvider: null,
+          downgraded: false,
           status: 'idle',
           error: null,
           sendAttemptId: null,
@@ -375,6 +390,9 @@ export const useStore = create<State>((set) => ({
           ...existing,
           translatedText: '',
           backTranslated: null,
+          requestedProvider: null,
+          actualProvider: null,
+          downgraded: false,
           status: 'idle',
           error: null,
           sendAttemptId: null,

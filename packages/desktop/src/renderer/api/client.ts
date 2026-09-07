@@ -35,6 +35,7 @@ import type {
   Role,
   TranslationPreference,
   TranslationProviderName,
+  TranslationResultMeta,
   WsServerEvent,
 } from '@im-hub/shared'
 import {
@@ -570,10 +571,25 @@ export const api = {
    * 只翻译，不发送。用来在发送前生成可编辑的预览 + 回译对照。
    * backTranslated 为 null 表示回译服务当次失败，translated/targetLang/provider 仍然可用。
    */
-  translatePreview: (conversationId: string, text: string) =>
-    request<{ translated: string; backTranslated: string | null; targetLang: string; provider: string }>(
+  translatePreview: (
+    conversationId: string,
+    text: string,
+    provider?: TranslationProviderName,
+  ) =>
+    request<{
+      translated: string
+      backTranslated: string | null
+      targetLang: string
+    } & TranslationResultMeta>(
       '/api/messages/translate-preview',
-      { method: 'POST', body: JSON.stringify({ conversationId, text }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          conversationId,
+          text,
+          ...(provider ? { provider } : {}),
+        }),
+      },
     ),
   /**
    * preTranslated: true 时 body 必须是员工在预览框里最终确认过的文本，服务端原样发出、

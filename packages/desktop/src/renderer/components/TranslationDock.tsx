@@ -1,4 +1,5 @@
-import { useState, type KeyboardEvent } from 'react'
+import type { TranslationProviderName } from '@im-hub/shared'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { api, getCurrentUser } from '../api/client.js'
 import {
   nativeComposerBridge,
@@ -6,11 +7,21 @@ import {
   nativeOutboxBridge,
   type NativeCommandContext,
 } from '../native-bridge.js'
-import { useStore, type NativeBridgeConnection, type NativeDraftStatus } from '../store.js'
+import {
+  useStore,
+  type NativeBridgeConnection,
+  type NativeDraftState,
+  type NativeDraftStatus,
+} from '../store.js'
 import { nativeDraftFingerprint } from '../../native-draft-fingerprint.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { Chip } from './ui.js'
 import { nativeAccountControllable } from './NativeClient.js'
+import { TranslationProviderSelect } from './TranslationProviderSelect.js'
+import {
+  translationProviderLabel,
+  translationProviderNotice,
+} from './translation-provider-ui.js'
 
 const TARGET_LANGS = [
   ['en', 'English'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'],
@@ -37,6 +48,40 @@ export function nativeConnectionUnavailableReason(
     return `等待 ${PLATFORM_LABEL[platform] ?? platform} 原生输入桥接`
   }
   return null
+}
+
+export function nativeDraftProviderChangePatch(
+  provider: TranslationProviderName,
+): Pick<NativeDraftState,
+  | 'selectedProvider'
+  | 'requestedProvider'
+  | 'actualProvider'
+  | 'downgraded'
+  | 'translatedText'
+  | 'backTranslated'
+  | 'status'
+  | 'error'
+  | 'sendAttemptId'
+  | 'sendAttemptDraft'
+  | 'sendAttemptFingerprint'
+  | 'sendAttemptContextRevision'
+  | 'sendAttemptConfirmed'
+> {
+  return {
+    selectedProvider: provider,
+    requestedProvider: null,
+    actualProvider: null,
+    downgraded: false,
+    translatedText: '',
+    backTranslated: null,
+    status: 'idle',
+    error: null,
+    sendAttemptId: null,
+    sendAttemptDraft: null,
+    sendAttemptFingerprint: null,
+    sendAttemptContextRevision: null,
+    sendAttemptConfirmed: false,
+  }
 }
 
 interface NativeCommandContinuationState {
@@ -120,6 +165,7 @@ export async function sendCurrentNativeDraft(
 export function TranslationDock() {
   const [outboxBusy, setOutboxBusy] = useState(false)
   const [outboxActionError, setOutboxActionError] = useState<string | null>(null)
+  const translationRevisionRef = useRef(0)
   const accounts = useStore(s => s.accounts)
   const conversations = useStore(s => s.conversations)
   const activeAccountId = useStore(s => s.activeAccountId)
@@ -133,6 +179,7 @@ export function TranslationDock() {
   const updateDraft = useStore(s => s.updateNativeDraft)
   const clearDraft = useStore(s => s.clearNativeDraft)
   const updateConversationTargetLang = useStore(s => s.updateConversationTargetLang)
+  const translationPreference = useStore(s => s.translationPreference)
   const conversation = conversations.find(item => item.id === context?.conversationId) ?? null
   const currentUser = getCurrentUser()
   const readOnly = currentUser?.role === 'auditor'
@@ -165,13 +212,21 @@ export function TranslationDock() {
     && ((Boolean(draft?.translatedText) && Boolean(native?.composerCanSend))
       || canResolveUnknownAttempt)
   const targetLang = conversation?.target_lang ?? null
+  const selectedProvider = draft?.selectedProvider
+    ?? translationPreference?.userDefault
+    ?? 'deepl'
   const outboxNotice = native?.outbox?.deadLetterCount
     ? `消息回传有 ${native.outbox.deadLetterCount} 条永久失败事件`
     : native?.outbox?.pendingCount
       ? `消息回传队列待处理 ${native.outbox.pendingCount} 条`
       : native?.outbox?.lastErrorCode
         ? '消息回传持久队列暂时不可用'
-        : null
+      : null
+
+  useEffect(() => {
+    if (!key || !translationPreference || draft?.selectedProvider) return
+    updateDraft(key, { selectedProvider: translationPreference.userDefault })
+  }, [draft?.selectedProvider, key, translationPreference?.userDefault, updateDraft])
 
   async function retryDeadLetters(): Promise<void> {
     if (!activeAccountId || outboxBusy) return
@@ -229,16 +284,40 @@ export function TranslationDock() {
   async function translate(): Promise<void> {
     const command = commandContext()
     if (!command || !context?.conversationId || !key || !draft?.sourceText.trim()) return
-    updateDraft(key, { status: 'translating', error: null })
+    const requestRevision = ++translationRevisionRef.current
+    const provider = selectedProvider
+    updateDraft(key, {
+      status: 'translating',
+      error: null,
+      translatedText: '',
+      backTranslated: null,
+      requestedProvider: null,
+      actualProvider: null,
+      downgraded: false,
+      sendAttemptId: null,
+      sendAttemptDraft: null,
+      sendAttemptFingerprint: null,
+      sendAttemptContextRevision: null,
+      sendAttemptConfirmed: false,
+    })
     try {
-      const result = await api.translatePreview(context.conversationId, draft.sourceText)
+      const result = await api.translatePreview(
+        context.conversationId,
+        draft.sourceText,
+        provider,
+      )
+      if (translationRevisionRef.current !== requestRevision) return
       if (!continueOrReset(command, key)) return
       await nativeComposerBridge.setDraft(command, result.translated)
+      if (translationRevisionRef.current !== requestRevision) return
       if (!continueOrReset(command, key)) return
       updateDraft(key, {
         translatedText: result.translated,
         backTranslated: result.backTranslated,
         targetLang: result.targetLang,
+        requestedProvider: result.requestedProvider,
+        actualProvider: result.provider,
+        downgraded: result.downgraded,
         status: 'ready',
         error: null,
         sendAttemptId: null,
@@ -247,11 +326,12 @@ export function TranslationDock() {
         sendAttemptContextRevision: null,
         sendAttemptConfirmed: false,
       })
-    } catch (error) {
+    } catch {
+      if (translationRevisionRef.current !== requestRevision) return
       if (!continueOrReset(command, key)) return
       updateDraft(key, {
         status: 'failed',
-        error: error instanceof Error ? error.message : '翻译或写入原生输入框失败',
+        error: '翻译或写入原生输入框失败，请重试',
       })
     }
   }
@@ -355,6 +435,7 @@ export function TranslationDock() {
     const command = commandContext()
     if (!command || !context?.conversationId || !key) return
     const next = value || null
+    translationRevisionRef.current++
     updateDraft(key, { status: 'configuring', error: null })
     try {
       await api.updateTargetLang(context.conversationId, next)
@@ -364,6 +445,10 @@ export function TranslationDock() {
         targetLang: next,
         status: 'idle',
         translatedText: '',
+        backTranslated: null,
+        requestedProvider: null,
+        actualProvider: null,
+        downgraded: false,
         error: null,
         sendAttemptId: null,
         sendAttemptDraft: null,
@@ -378,6 +463,12 @@ export function TranslationDock() {
         error: error instanceof Error ? error.message : '更新回复语言失败',
       })
     }
+  }
+
+  function changeProvider(provider: TranslationProviderName): void {
+    if (!key || provider === selectedProvider) return
+    translationRevisionRef.current++
+    updateDraft(key, nativeDraftProviderChangePatch(provider))
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -458,9 +549,11 @@ export function TranslationDock() {
           value={draft?.sourceText ?? ''}
           onChange={(event) => {
             if (!key) return
+            translationRevisionRef.current++
             updateDraft(key, {
               sourceText: event.target.value,
               translatedText: '', backTranslated: null, status: 'idle', error: null,
+              requestedProvider: null, actualProvider: null, downgraded: false,
               sendAttemptId: null, sendAttemptDraft: null, sendAttemptFingerprint: null,
               sendAttemptContextRevision: null, sendAttemptConfirmed: false,
             })
@@ -489,6 +582,22 @@ export function TranslationDock() {
           </div>
         )}
 
+        {draft?.actualProvider && (
+          <div style={{
+            marginTop: 7,
+            fontSize: theme.font.size.xs,
+            color: draft.downgraded ? theme.color.status.reconnecting : theme.color.textFaint,
+          }}>
+            {draft.requestedProvider
+              ? translationProviderNotice({
+                  requestedProvider: draft.requestedProvider,
+                  provider: draft.actualProvider,
+                  downgraded: draft.downgraded,
+                }) ?? `由 ${translationProviderLabel(draft.actualProvider)} 翻译`
+              : `由 ${translationProviderLabel(draft.actualProvider)} 翻译`}
+          </div>
+        )}
+
         <div style={{
           display: 'flex', alignItems: 'center', gap: theme.space.sm,
           marginTop: theme.space.md, paddingTop: theme.space.md,
@@ -511,6 +620,13 @@ export function TranslationDock() {
             {TARGET_LANGS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
           </select>
           <Chip tone="muted">{targetLang ? `🔒 ${targetLang}` : '🔓 自动'}</Chip>
+
+          <TranslationProviderSelect
+            value={selectedProvider}
+            providers={translationPreference?.providers ?? []}
+            disabled={!canUse || draft?.status === 'configuring' || draft?.status === 'sending'}
+            onChange={changeProvider}
+          />
 
           <div style={{ flex: 1 }} />
           <button

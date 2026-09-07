@@ -303,6 +303,29 @@ describe('desktop API request headers', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ provider: 'deepl' })
   })
 
+  it('翻译预览只在本次请求传送 provider', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        kind: 'authenticated', token: 'test-token',
+        user: { id: 'user-1', role: 'agent', displayName: 'Test' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        translated: 'hello', backTranslated: '你好', targetLang: 'en',
+        requestedProvider: 'openai', provider: 'openai', downgraded: false,
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.login('agent@example.test', 'synthetic-password')
+    await api.translatePreview('conversation-1', '你好', 'openai')
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://localhost:4000/api/messages/translate-preview')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      conversationId: 'conversation-1',
+      text: '你好',
+      provider: 'openai',
+    })
+  })
+
   it('客户档案 GET 可取消，PUT 发送完整六字段和 expectedRevision', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
