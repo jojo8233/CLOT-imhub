@@ -566,6 +566,9 @@ macOS/Windows 独立安装包不会用 `file://` 页面直接请求生产 API，
 `Origin: null`。打包入口会在 `127.0.0.1` 随机端口启动仅提供内置静态文件的临时页面服务，按
 `IM_HUB_SERVER_URL` 生成精确 `connect-src` CSP，并保持 Electron `webSecurity` 开启；窗口关闭时
 同步关闭该临时服务。Signal 同窗宿主复用同一静态页面服务边界。
+随机端口会让 Chromium Web Storage 的 origin 随启动变化，因此当前未持久化的面板布局可能恢复为
+默认值；登录态仍只经 `safeStorage` bridge 持久化，不依赖 `localStorage`。布局跨启动持久化后续应
+复用受控主进程存储 bridge，不能为保留 Web Storage 而重新允许 `Origin: null`。
 
 首次部署按以下顺序执行：
 

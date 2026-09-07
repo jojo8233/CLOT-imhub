@@ -19,6 +19,16 @@ const actorRepo = {
   findMemberships: async () => [],
 }
 
+function testRedisUrl(): string {
+  const value = process.env.TEST_REDIS_URL ?? 'redis://127.0.0.1:6379'
+  const url = new URL(value)
+  if (!['redis:', 'rediss:'].includes(url.protocol)
+    || !['127.0.0.1', '::1', 'localhost'].includes(url.hostname)) {
+    throw new Error('TEST_REDIS_URL 必须指向 loopback 测试实例')
+  }
+  return value
+}
+
 beforeAll(async () => {
   ;({ buildServer } = await import('./server.js'))
   ;({ WsHub } = await import('./ws.js'))
@@ -32,8 +42,9 @@ afterAll(async () => {
 
 describe('Redis-backed authentication rate limits', () => {
   it('shares the login account bucket and TTL across two server instances', async () => {
-    const redisA = new Redis(process.env.REDIS_URL!, { maxRetriesPerRequest: 1 })
-    const redisB = new Redis(process.env.REDIS_URL!, { maxRetriesPerRequest: 1 })
+    const redisUrl = testRedisUrl()
+    const redisA = new Redis(redisUrl, { maxRetriesPerRequest: 1 })
+    const redisB = new Redis(redisUrl, { maxRetriesPerRequest: 1 })
     const appA = await buildServer(
       {} as MessageRouteDeps,
       new WsHub(),
@@ -47,10 +58,9 @@ describe('Redis-backed authentication rate limits', () => {
     const ip = `198.18.${Math.floor(process.pid / 256) % 256}.${(process.pid % 254) + 1}`
     const email = `redis-shared-${process.pid}@example.test`
     const prefix = 'im-hub-auth-rate-limit-undefinedundefined-'
-    const keys = [
-      `${prefix}${loginIpKey(ip)}`,
-      `${prefix}${loginAccountKey(ip, email)}`,
-    ]
+    const ipKey = `${prefix}${loginIpKey(ip)}`
+    const accountKey = `${prefix}${loginAccountKey(ip, email)}`
+    const keys = [ipKey, accountKey]
     const login = (app: FastifyInstance) => app.inject({
       method: 'POST',
       url: '/api/auth/login',
@@ -70,7 +80,7 @@ describe('Redis-backed authentication rate limits', () => {
       const blocked = await login(appB)
       expect(blocked.statusCode).toBe(429)
       expect(blocked.headers['retry-after']).toBeDefined()
-      const ttl = await redisB.pttl(keys[1]!)
+      const ttl = await redisB.pttl(accountKey)
       expect(ttl).toBeGreaterThan(0)
       expect(ttl).toBeLessThanOrEqual(15 * 60 * 1000)
     } finally {

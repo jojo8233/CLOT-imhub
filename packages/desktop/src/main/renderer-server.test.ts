@@ -11,7 +11,8 @@ describe('loopback renderer server', () => {
   let rendererRoot: string | null = null
 
   afterEach(async () => {
-    if (server) await new Promise<void>(resolve => server!.close(() => resolve()))
+    const currentServer = server
+    if (currentServer) await new Promise<void>(resolve => currentServer.close(() => resolve()))
     if (rendererRoot) await rm(rendererRoot, { recursive: true, force: true })
     server = null
     rendererRoot = null

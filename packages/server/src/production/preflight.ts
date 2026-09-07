@@ -1,10 +1,11 @@
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import Redis from 'ioredis'
+import type Redis from 'ioredis'
 import { Kysely, Migrator, PostgresDialect, sql } from 'kysely'
 import pg from 'pg'
 import { createMigrationProvider } from '../db/migration-provider.js'
 import type { Database } from '../db/types.js'
+import { createSecurityCriticalRedis } from './redis-client.js'
 
 export type ProductionPreflightStatus = 'ok' | 'missing'
 
@@ -131,16 +132,9 @@ export function createBoundedProbeDb(connectionString: string): Kysely<Database>
 }
 
 export function createProductionPreflightRedis(redisUrl: string): Redis {
-  const redis = new Redis(redisUrl, {
-    connectTimeout: 3000,
-    maxRetriesPerRequest: 1,
+  return createSecurityCriticalRedis(redisUrl, {
     lazyConnect: true,
   })
-  redis.on('error', () => {
-    // runProductionPreflight 将连接失败收敛为固定 missing 状态；不能让 ioredis
-    // 的默认 silentEmit 另行输出可能包含地址或内部网络细节的错误堆栈。
-  })
-  return redis
 }
 
 export function migrationStateIsCurrent(

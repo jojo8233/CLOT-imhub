@@ -45,6 +45,7 @@ import {
   isProductionPreflightReady,
   runProductionPreflight,
 } from './production/preflight.js'
+import { createSecurityCriticalRedis } from './production/redis-client.js'
 
 const probeDb = createBoundedProbeDb(config.DATABASE_URL)
 
@@ -69,14 +70,8 @@ if (!await passesProductionPreflight()) {
 }
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null })
-const healthRedis = new Redis(config.REDIS_URL, {
-  connectTimeout: 3000,
-  maxRetriesPerRequest: 1,
-})
-const rateLimitRedis = new Redis(config.REDIS_URL, {
-  connectTimeout: 3000,
-  maxRetriesPerRequest: 1,
-})
+const healthRedis = createSecurityCriticalRedis(config.REDIS_URL)
+const rateLimitRedis = createSecurityCriticalRedis(config.REDIS_URL)
 let applicationInitialized = false
 
 const gateway = new TranslationGateway(
