@@ -562,6 +562,11 @@ production container/runtime 计划执行。生产环境不能运行开发 `seed
 Caddy 容器的精确 `/32` CIDR；不能改成 `trustProxy: true`、数字 hop count 或任意网段。桌面包的
 `IM_HUB_SERVER_URL` 与 `PUBLIC_ORIGIN` 使用同一个精确 origin。
 
+macOS/Windows 独立安装包不会用 `file://` 页面直接请求生产 API，也不要求服务端信任字面量
+`Origin: null`。打包入口会在 `127.0.0.1` 随机端口启动仅提供内置静态文件的临时页面服务，按
+`IM_HUB_SERVER_URL` 生成精确 `connect-src` CSP，并保持 Electron `webSecurity` 开启；窗口关闭时
+同步关闭该临时服务。Signal 同窗宿主复用同一静态页面服务边界。
+
 首次部署按以下顺序执行：
 
 1. 加载生产环境文件后运行 migration：

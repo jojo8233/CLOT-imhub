@@ -5,6 +5,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 const AUTH_TIME_WINDOW_MS = 15 * 60 * 1000
 const LOGIN_IP_MAX = 30
 const LOGIN_ACCOUNT_MAX = 10
+const INITIAL_PASSWORD_IP_MAX = 30
+const INITIAL_PASSWORD_TOKEN_MAX = 10
 const PASSWORD_CHANGE_MAX = 10
 
 type RateLimitCheck = ReturnType<FastifyInstance['createRateLimit']>
@@ -27,8 +29,12 @@ export function loginAccountKey(ip: string, email: string): string {
   return `login-account:${normalizeIP(ip, 64)}:${digest(email.trim().toLowerCase())}`
 }
 
-function initialPasswordKey(ip: string): string {
-  return `initial-password:${normalizeIP(ip, 64)}`
+function initialPasswordIpKey(ip: string): string {
+  return `initial-password-ip:${normalizeIP(ip, 64)}`
+}
+
+function initialPasswordTokenKey(ip: string, token: string): string {
+  return `initial-password-token:${normalizeIP(ip, 64)}:${digest(token)}`
 }
 
 function passwordChangeKey(ip: string, userId: string): string {
@@ -39,6 +45,13 @@ function loginEmail(request: FastifyRequest): string | null {
   if (typeof request.body !== 'object' || request.body === null) return null
   const email = Reflect.get(request.body, 'email')
   return typeof email === 'string' ? email : null
+}
+
+function initialPasswordToken(request: FastifyRequest): string | null {
+  const authorization = request.headers.authorization
+  if (!authorization?.startsWith('InitialPassword ')) return null
+  const token = authorization.slice('InitialPassword '.length)
+  return token === '' ? null : token
 }
 
 async function enforce(
@@ -75,11 +88,20 @@ export function createAuthRateLimits(app: FastifyInstance): AuthRateLimits {
     ipv6Subnet: 64,
     keyGenerator: request => loginAccountKey(request.ip, loginEmail(request) ?? ''),
   })
-  const initialPasswordLimit = app.createRateLimit({
-    max: PASSWORD_CHANGE_MAX,
+  const initialPasswordIpLimit = app.createRateLimit({
+    max: INITIAL_PASSWORD_IP_MAX,
     timeWindow: AUTH_TIME_WINDOW_MS,
     ipv6Subnet: 64,
-    keyGenerator: request => initialPasswordKey(request.ip),
+    keyGenerator: request => initialPasswordIpKey(request.ip),
+  })
+  const initialPasswordTokenLimit = app.createRateLimit({
+    max: INITIAL_PASSWORD_TOKEN_MAX,
+    timeWindow: AUTH_TIME_WINDOW_MS,
+    ipv6Subnet: 64,
+    keyGenerator: request => initialPasswordTokenKey(
+      request.ip,
+      initialPasswordToken(request) ?? '',
+    ),
   })
   const passwordChangeLimit = app.createRateLimit({
     max: PASSWORD_CHANGE_MAX,
@@ -94,7 +116,9 @@ export function createAuthRateLimits(app: FastifyInstance): AuthRateLimits {
       await enforce(loginAccountLimit, request, reply)
     },
     guardInitialPassword: async (request, reply) => {
-      await enforce(initialPasswordLimit, request, reply)
+      if (!await enforce(initialPasswordIpLimit, request, reply)) return
+      if (initialPasswordToken(request) === null) return
+      await enforce(initialPasswordTokenLimit, request, reply)
     },
     guardPasswordChange: async (request, reply) => {
       await enforce(passwordChangeLimit, request, reply)

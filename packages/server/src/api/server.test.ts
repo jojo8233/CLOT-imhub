@@ -176,4 +176,20 @@ describe('buildServer CORS 预检', () => {
     })
     expect(res.headers['access-control-allow-origin']).toBeUndefined()
   })
+
+  it('放行打包桌面端的随机 loopback origin，但不信任 opaque null origin', async () => {
+    const loopback = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/auth/login',
+      headers: { origin: 'http://127.0.0.1:49152', 'access-control-request-method': 'POST' },
+    })
+    const opaque = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/auth/login',
+      headers: { origin: 'null', 'access-control-request-method': 'POST' },
+    })
+
+    expect(loopback.headers['access-control-allow-origin']).toBe('http://127.0.0.1:49152')
+    expect(opaque.headers['access-control-allow-origin']).toBeUndefined()
+  })
 })

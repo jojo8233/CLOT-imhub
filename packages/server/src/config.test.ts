@@ -66,6 +66,36 @@ describe('parseConfig production boundary', () => {
     })).toThrow('DATABASE_URL')
   })
 
+  it.each([
+    'https://imhub:synthetic-production-password@postgres:5432/imhub',
+    'postgres://:synthetic-production-password@postgres:5432/imhub',
+    'postgres://imhub@postgres:5432/imhub',
+    'postgres://imhub:imhub%5Fdev@postgres:5432/imhub',
+    'postgres://imhub:synthetic-production-password@postgres:5432/imhub%5Ftest',
+  ])('rejects unsafe production database URL %j', (databaseUrl) => {
+    expect(() => parseConfig({
+      ...minimumProductionEnv,
+      DATABASE_URL: databaseUrl,
+    })).toThrow('DATABASE_URL')
+  })
+
+  it.each([
+    'https://:synthetic-production-password@redis:6379',
+    'redis://redis:6379',
+  ])('rejects unsafe production Redis URL %j', (redisUrl) => {
+    expect(() => parseConfig({
+      ...minimumProductionEnv,
+      REDIS_URL: redisUrl,
+    })).toThrow('REDIS_URL')
+  })
+
+  it('rejects plaintext DeepL endpoints in production', () => {
+    expect(() => parseConfig({
+      ...minimumProductionEnv,
+      DEEPL_ENDPOINT: 'http://api-free.deepl.com/v2/translate',
+    })).toThrow('DEEPL_ENDPOINT')
+  })
+
   it('rejects the documented JWT placeholder', () => {
     expect(() => parseConfig({
       ...minimumProductionEnv,

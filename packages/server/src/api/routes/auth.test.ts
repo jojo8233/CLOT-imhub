@@ -378,7 +378,7 @@ describe('organization authentication routes', () => {
     }
   })
 
-  it('第十一次首次改密尝试在 token 校验前被限速', async () => {
+  it('第十一次同 setup token 首次改密尝试在 token 校验前被限速', async () => {
     const limitedApp = await buildServer({} as MessageRouteDeps, new (await import('../ws.js')).WsHub())
 
     try {
@@ -386,7 +386,7 @@ describe('organization authentication routes', () => {
         const response = await limitedApp.inject({
           method: 'POST',
           url: '/api/auth/initial-password/complete',
-          headers: { authorization: `InitialPassword synthetic-invalid-setup-token-${attempt}` },
+          headers: { authorization: 'InitialPassword synthetic-invalid-setup-token' },
           payload: { newPassword: 'synthetic-replacement-password' },
         })
         expect(response.statusCode).toBe(401)
@@ -395,7 +395,7 @@ describe('organization authentication routes', () => {
       const blocked = await limitedApp.inject({
         method: 'POST',
         url: '/api/auth/initial-password/complete',
-        headers: { authorization: 'InitialPassword synthetic-invalid-setup-token-10' },
+        headers: { authorization: 'InitialPassword synthetic-invalid-setup-token' },
         payload: { newPassword: 'synthetic-replacement-password' },
       })
       expect(blocked.statusCode).toBe(429)
@@ -403,6 +403,32 @@ describe('organization authentication routes', () => {
         error: 'too many requests',
         retryAfterSeconds: expect.any(Number),
       })
+    } finally {
+      await limitedApp.close()
+    }
+  })
+
+  it('轮换无效 setup token 时使用较宽的 IP 粗桶限制', async () => {
+    const limitedApp = await buildServer({} as MessageRouteDeps, new (await import('../ws.js')).WsHub())
+
+    try {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const response = await limitedApp.inject({
+          method: 'POST',
+          url: '/api/auth/initial-password/complete',
+          headers: { authorization: `InitialPassword synthetic-rotating-setup-token-${attempt}` },
+          payload: { newPassword: 'synthetic-replacement-password' },
+        })
+        expect(response.statusCode).toBe(401)
+      }
+
+      const blocked = await limitedApp.inject({
+        method: 'POST',
+        url: '/api/auth/initial-password/complete',
+        headers: { authorization: 'InitialPassword synthetic-rotating-setup-token-30' },
+        payload: { newPassword: 'synthetic-replacement-password' },
+      })
+      expect(blocked.statusCode).toBe(429)
     } finally {
       await limitedApp.close()
     }

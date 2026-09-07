@@ -13,12 +13,15 @@ let dbModule: typeof import('../../db/client.js')
 
 const healthState: {
   initialized: boolean
+  databaseHangs?: boolean
   databaseError?: Error
   redisError?: Error
 } = { initialized: true }
 
 const healthChecks = {
+  timeoutMs: 20,
   database: async (): Promise<void> => {
+    if (healthState.databaseHangs) await new Promise<void>(() => undefined)
     if (healthState.databaseError) throw healthState.databaseError
   },
   redis: async (): Promise<void> => {
@@ -50,6 +53,7 @@ describe('health routes', () => {
 
   beforeEach(() => {
     healthState.initialized = true
+    delete healthState.databaseHangs
     delete healthState.databaseError
     delete healthState.redisError
   })
@@ -75,6 +79,17 @@ describe('health routes', () => {
     expect(response.json()).toEqual({ status: 'not_ready' })
     expect(response.body).not.toContain('sensitive')
     expect(response.body).not.toContain('database')
+  })
+
+  it('在依赖永不返回时仍于 deadline 后响应 503', async () => {
+    healthState.databaseHangs = true
+    const startedAt = Date.now()
+
+    const response = await app.inject({ method: 'GET', url: '/health/ready' })
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toEqual({ status: 'not_ready' })
+    expect(Date.now() - startedAt).toBeLessThan(500)
   })
 
   it('stays not ready until application initialization completes', async () => {

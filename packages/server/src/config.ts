@@ -29,6 +29,14 @@ function isSingleHostCidr(value: string): boolean {
   return (version === 4 && prefix === '32') || (version === 6 && prefix === '128')
 }
 
+function decodeUrlComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
 const schema = z.object({
   APP_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PUBLIC_ORIGIN: z.string().default(''),
@@ -110,11 +118,42 @@ const schema = z.object({
     }
 
     const databaseUrl = new URL(value.DATABASE_URL)
-    if (databaseUrl.password === 'imhub_dev' || databaseUrl.pathname.endsWith('_test')) {
+    const databaseUsername = decodeUrlComponent(databaseUrl.username)
+    const databasePassword = decodeUrlComponent(databaseUrl.password)
+    const databaseName = decodeUrlComponent(databaseUrl.pathname.slice(1))
+    if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)
+      || !databaseUsername
+      || !databasePassword
+      || !databaseName
+      || databasePassword === 'imhub_dev'
+      || databaseName.endsWith('_test')) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['DATABASE_URL'],
-        message: 'DATABASE_URL 在生产环境不能使用开发口令或测试数据库',
+        message: 'DATABASE_URL 在生产环境必须使用 PostgreSQL 协议、非空账号/口令和非测试数据库',
+      })
+    }
+
+    const redisUrl = new URL(value.REDIS_URL)
+    if (!['redis:', 'rediss:'].includes(redisUrl.protocol)
+      || !decodeUrlComponent(redisUrl.password)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['REDIS_URL'],
+        message: 'REDIS_URL 在生产环境必须使用 Redis 协议和非空口令',
+      })
+    }
+
+    const deeplEndpoint = new URL(value.DEEPL_ENDPOINT)
+    if (deeplEndpoint.protocol !== 'https:'
+      || deeplEndpoint.username
+      || deeplEndpoint.password
+      || deeplEndpoint.search
+      || deeplEndpoint.hash) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DEEPL_ENDPOINT'],
+        message: 'DEEPL_ENDPOINT 在生产环境必须是无凭据、查询或 fragment 的 HTTPS URL',
       })
     }
 

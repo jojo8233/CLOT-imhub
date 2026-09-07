@@ -151,12 +151,13 @@ export async function buildServer(
     },
   })
 
-  // Electron 渲染进程在开发模式下从 http://localhost:<vite端口> 加载，
-  // 打包后从 file:// 加载（origin 为 null）——两种情况都是跨源，
-  // 不开 CORS 的话客户端连登录接口都调不通，且浏览器只报 CORS 不报业务错误。
+  // Electron 渲染进程在开发模式下从 http://localhost:<vite端口> 加载；
+  // 打包后由主进程在 http://127.0.0.1:<随机端口> 提供内置静态页。两种情况
+  // 都是跨源，但都有可核对的 loopback origin；绝不能把 opaque `null` origin
+  // 当成桌面身份放行。
   await app.register(cors, {
     origin: (origin, cb) => {
-      // 无 origin：打包后的 file:// 页面、curl、以及同源请求
+      // 无 origin：curl、服务间调用和同源请求。打包桌面页会显式携带 loopback origin。
       if (!origin) return cb(null, true)
       const ok = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
       cb(null, ok)

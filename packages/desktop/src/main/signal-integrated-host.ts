@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { createServer, type Server } from 'node:http'
-import { extname, join, normalize, sep } from 'node:path'
+import type { Server } from 'node:http'
+import { join } from 'node:path'
 
 import {
   BrowserWindow,
@@ -27,55 +26,8 @@ import {
   signalIntegratedBounds,
   signalIntegratedServerOrigins,
 } from './signal-integrated-policy.js'
-
-const RENDERER_CONTENT_TYPE: Record<string, string> = {
-  '.css': 'text/css; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml',
-}
+import { startRendererServer } from './renderer-server.js'
 const SIGNAL_BRIDGE_BOOTSTRAP_CHANNEL = 'imhub:signal-bridge-bootstrap'
-
-async function startRendererServer(connectSources: string): Promise<{ server: Server; url: string }> {
-  const rendererRoot = normalize(join(import.meta.dirname, '../renderer'))
-  const server = createServer((request, response) => {
-    void (async () => {
-      try {
-        const parsed = new URL(request.url ?? '/', 'http://127.0.0.1')
-        const pathname = parsed.pathname === '/' ? '/index.html' : parsed.pathname
-        const relative = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, '')
-        const file = normalize(join(rendererRoot, relative))
-        if (file !== rendererRoot && !file.startsWith(`${rendererRoot}${sep}`)) {
-          response.writeHead(404).end()
-          return
-        }
-        const body = await readFile(file)
-        response.writeHead(200, {
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': `default-src 'self'; connect-src ${connectSources}; frame-src http://localhost:1234 https://web.whatsapp.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
-          'Content-Type': RENDERER_CONTENT_TYPE[extname(file)] ?? 'application/octet-stream',
-          'X-Content-Type-Options': 'nosniff',
-        })
-        response.end(body)
-      } catch {
-        response.writeHead(404).end()
-      }
-    })()
-  })
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject)
-      resolve()
-    })
-  })
-  const address = server.address()
-  if (!address || typeof address === 'string') {
-    server.close()
-    throw new Error('im-hub 本机页面服务启动失败')
-  }
-  return { server, url: `http://127.0.0.1:${address.port}/` }
-}
 
 interface AccountPayload {
   accountId: string
@@ -311,7 +263,9 @@ export function createHost(signalOptions: BrowserWindowConstructorOptions): Brow
     await signalView.webContents.loadURL(url)
     if (shellLoaded) return
     shellLoaded = true
-    const renderer = await startRendererServer(`${serverOrigins.httpOrigin} ${serverOrigins.wsOrigin}`)
+    const renderer = await startRendererServer({
+      connectSources: [serverOrigins.httpOrigin, serverOrigins.wsOrigin],
+    })
     rendererServer = renderer.server
     await hostWindow.loadURL(renderer.url)
   }

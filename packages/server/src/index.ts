@@ -38,23 +38,23 @@ import { KyselyWhatsAppCloudRepo } from './whatsapp-cloud/repo.js'
 import { decodeSecretMasterKey, SecretCipher } from './whatsapp-cloud/secret-cipher.js'
 import { WhatsAppCloudService } from './whatsapp-cloud/service.js'
 import {
+  createBoundedProbeDb,
   createProductionPreflightDependencies,
+  createProductionPreflightRedis,
   formatProductionPreflight,
   isProductionPreflightReady,
   runProductionPreflight,
 } from './production/preflight.js'
 
+const probeDb = createBoundedProbeDb(config.DATABASE_URL)
+
 async function passesProductionPreflight(): Promise<boolean> {
   if (config.APP_ENV !== 'production') return true
-  const preflightRedis = new Redis(config.REDIS_URL, {
-    connectTimeout: 3000,
-    maxRetriesPerRequest: 1,
-    lazyConnect: true,
-  })
+  const preflightRedis = createProductionPreflightRedis(config.REDIS_URL)
   try {
     const result = await runProductionPreflight(
       config,
-      createProductionPreflightDependencies(db, preflightRedis),
+      createProductionPreflightDependencies(probeDb, preflightRedis),
     )
     process.stdout.write(formatProductionPreflight(result))
     return isProductionPreflightReady(result)
@@ -64,7 +64,7 @@ async function passesProductionPreflight(): Promise<boolean> {
 }
 
 if (!await passesProductionPreflight()) {
-  await db.destroy()
+  await Promise.all([db.destroy(), probeDb.destroy()])
   process.exit(1)
 }
 
@@ -446,7 +446,7 @@ const app = await buildServer({
   rateLimitRedis,
   healthChecks: {
     database: async () => {
-      await sql`select 1`.execute(db)
+      await sql`select 1`.execute(probeDb)
     },
     redis: async () => {
       const response = await healthRedis.ping()
@@ -479,7 +479,9 @@ const keywordAlertServer = await startKeywordAlertServerLifecycle({
   quitRedis: async () => {
     await Promise.all([redis.quit(), healthRedis.quit(), rateLimitRedis.quit()])
   },
-  destroyDb: () => db.destroy(),
+  destroyDb: async () => {
+    await Promise.all([db.destroy(), probeDb.destroy()])
+  },
   onError: (code, count) => {
     console.error(`[server-lifecycle] code=${code} count=${count}`)
   },

@@ -1,7 +1,8 @@
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Redis from 'ioredis'
-import { Migrator, sql, type Kysely } from 'kysely'
+import { Kysely, Migrator, PostgresDialect, sql } from 'kysely'
+import pg from 'pg'
 import { createMigrationProvider } from '../db/migration-provider.js'
 import type { Database } from '../db/types.js'
 
@@ -115,6 +116,46 @@ export interface RedisPingClient {
   ping(): Promise<string>
 }
 
+export function createBoundedProbeDb(connectionString: string): Kysely<Database> {
+  return new Kysely<Database>({
+    dialect: new PostgresDialect({
+      pool: new pg.Pool({
+        connectionString,
+        max: 1,
+        connectionTimeoutMillis: 3000,
+        query_timeout: 3000,
+        statement_timeout: 3000,
+      }),
+    }),
+  })
+}
+
+export function createProductionPreflightRedis(redisUrl: string): Redis {
+  const redis = new Redis(redisUrl, {
+    connectTimeout: 3000,
+    maxRetriesPerRequest: 1,
+    lazyConnect: true,
+  })
+  redis.on('error', () => {
+    // runProductionPreflight 将连接失败收敛为固定 missing 状态；不能让 ioredis
+    // 的默认 silentEmit 另行输出可能包含地址或内部网络细节的错误堆栈。
+  })
+  return redis
+}
+
+export function migrationStateIsCurrent(
+  sourceMigrations: ReadonlyArray<{ name: string; executedAt?: Date }>,
+  executedMigrationNames: readonly string[],
+): boolean {
+  if (sourceMigrations.length === 0
+    || sourceMigrations.some(migration => migration.executedAt === undefined)) {
+    return false
+  }
+  const sourceNames = new Set(sourceMigrations.map(migration => migration.name))
+  return executedMigrationNames.length === sourceNames.size
+    && executedMigrationNames.every(name => sourceNames.has(name))
+}
+
 export function createProductionPreflightDependencies(
   db: Kysely<Database>,
   redis: RedisPingClient,
@@ -133,8 +174,8 @@ export function createProductionPreflightDependencies(
     },
     migrations: async () => {
       const migrations = await migrator.getMigrations()
-      return migrations.length > 0
-        && migrations.every(migration => migration.executedAt !== undefined)
+      const executed = await sql<{ name: string }>`select name from kysely_migration`.execute(db)
+      return migrationStateIsCurrent(migrations, executed.rows.map(row => row.name))
     },
   }
 }
@@ -146,15 +187,9 @@ async function main(): Promise<void> {
     return
   }
 
-  const [{ config }, { db }] = await Promise.all([
-    import('../config.js'),
-    import('../db/client.js'),
-  ])
-  const redis = new Redis(config.REDIS_URL, {
-    connectTimeout: 3000,
-    maxRetriesPerRequest: 1,
-    lazyConnect: true,
-  })
+  const { config } = await import('../config.js')
+  const db = createBoundedProbeDb(config.DATABASE_URL)
+  const redis = createProductionPreflightRedis(config.REDIS_URL)
   try {
     const result = await runProductionPreflight(
       config,

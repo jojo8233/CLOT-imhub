@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  createProductionPreflightRedis,
   formatProductionPreflight,
   isProductionPreflightReady,
+  migrationStateIsCurrent,
   runProductionPreflight,
   type ProductionPreflightConfig,
   type ProductionPreflightDependencies,
@@ -97,5 +99,34 @@ describe('runProductionPreflight', () => {
     })
 
     expect(result.migrations).toBe('missing')
+  })
+
+  it('数据库包含当前代码未知的未来 migration 时拒绝旧镜像启动', () => {
+    const current = new Date('2026-09-07T00:00:00.000Z')
+
+    expect(migrationStateIsCurrent([
+      { name: '001_current', executedAt: current },
+    ], ['001_current'])).toBe(true)
+    expect(migrationStateIsCurrent([
+      { name: '001_current', executedAt: current },
+    ], ['001_current', '002_future'])).toBe(false)
+    expect(migrationStateIsCurrent([
+      { name: '001_current' },
+    ], ['001_current'])).toBe(false)
+  })
+
+  it('Redis error 事件不向控制台输出依赖错误正文', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const redis = createProductionPreflightRedis('redis://localhost:6379')
+    const sentinel = 'synthetic-preflight-redis-error-must-not-leak'
+    try {
+      redis.emit('error', new Error(sentinel))
+
+      expect(redis.listenerCount('error')).toBeGreaterThan(0)
+      expect(consoleError).not.toHaveBeenCalled()
+    } finally {
+      redis.disconnect()
+      consoleError.mockRestore()
+    }
   })
 })
