@@ -108,6 +108,9 @@ importers:
       tdl:
         specifier: ^8.0.2
         version: 8.1.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -118,9 +121,6 @@ importers:
       '@types/ws':
         specifier: ^8.5.13
         version: 8.18.1
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.12
 
   packages/shared: {}
 
