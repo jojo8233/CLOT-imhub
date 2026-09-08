@@ -67,6 +67,26 @@ function argument(name) {
   return index === -1 ? undefined : process.argv[index + 1]
 }
 
+async function readinessBody(healthUrl) {
+  try {
+    const response = await fetch(healthUrl, { signal: AbortSignal.timeout(5_000) })
+    if (!response.ok) {
+      throw new Error(`runtime readiness probe returned HTTP ${response.status}`)
+    }
+    return await response.json()
+  } catch (error) {
+    if (process.platform !== 'win32') throw error
+    try {
+      const body = execFileSync('curl.exe', [
+        '--fail', '--silent', '--max-time', '5', healthUrl,
+      ], { encoding: 'utf8' })
+      return JSON.parse(body)
+    } catch {
+      throw error
+    }
+  }
+}
+
 async function smoke() {
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
   const serverOrigin = exactHttpsOrigin(
@@ -90,11 +110,7 @@ async function smoke() {
   let lastError = null
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(5_000) })
-      if (!response.ok) {
-        throw new Error(`runtime readiness probe returned HTTP ${response.status}`)
-      }
-      const body = await response.json()
+      const body = await readinessBody(healthUrl)
       if (body?.status !== 'ready') {
         throw new Error('runtime readiness probe did not return ready')
       }
