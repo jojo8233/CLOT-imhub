@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process'
+import { setDefaultResultOrder } from 'node:dns'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+setDefaultResultOrder('ipv4first')
 
 export const REQUIRED_DESKTOP_ARTIFACT_FILES = [
   'out/main/index.js',
