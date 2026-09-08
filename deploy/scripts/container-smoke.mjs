@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { expectedHealthStatus } from './container-smoke-logic.mjs'
 
 function option(name) {
   const index = process.argv.indexOf(name)
@@ -10,6 +11,7 @@ function option(name) {
 
 const image = option('--image')
 const healthUrl = option('--health-url')
+const expectedStatus = expectedHealthStatus(healthUrl)
 const docker = process.env.DOCKER_COMMAND ?? 'docker'
 
 const configuredUser = execFileSync(
@@ -65,7 +67,7 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
     const response = await fetch(healthUrl)
     if (response.status !== 200) throw new Error(`health status ${response.status}`)
     const body = await response.json()
-    if (body.status !== 'live') throw new Error('unexpected health body')
+    if (body.status !== expectedStatus) throw new Error('unexpected health body')
     process.stdout.write('container smoke passed\n')
     process.exit(0)
   } catch (error) {
