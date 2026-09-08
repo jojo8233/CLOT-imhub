@@ -75,7 +75,9 @@ async function smoke() {
   environment.IM_HUB_INTERNAL_RELEASE = '1'
   environment.IM_HUB_SERVER_URL = serverOrigin
 
-  execFileSync(process.env.PNPM_COMMAND ?? 'pnpm', [
+  const pnpmCommand = process.env.PNPM_COMMAND
+    ?? (process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
+  execFileSync(pnpmCommand, [
     '--filter', '@im-hub/desktop', 'build',
   ], { cwd: repositoryRoot, env: environment, stdio: 'inherit' })
 
