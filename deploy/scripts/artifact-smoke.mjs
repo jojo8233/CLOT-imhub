@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { setDefaultResultOrder } from 'node:dns'
 import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 setDefaultResultOrder('ipv4first')
@@ -56,8 +56,8 @@ function collectFiles(root, relativeRoot = root) {
       Object.assign(files, collectFiles(absolute, relativeRoot))
       continue
     }
-    const relative = absolute.slice(relativeRoot.length + 1).split('\\').join('/')
-    files[`out/${relative}`] = readFileSync(absolute, 'utf8')
+    const relativePath = relative(relativeRoot, absolute).split(sep).join('/')
+    files[`out/${relativePath}`] = readFileSync(absolute, 'utf8')
   }
   return files
 }
