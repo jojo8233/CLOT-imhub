@@ -31,8 +31,8 @@ describe('trusted preload desktop installation bridge', () => {
       release: { channel: string }
     }
 
-    expect(bridge.serverUrl).toBe('http://localhost:4000')
-    expect(bridge.wsUrl).toBe('ws://localhost:4000')
+    expect(bridge.serverUrl).toBe('http://127.0.0.1:4000')
+    expect(bridge.wsUrl).toBe('ws://127.0.0.1:4000')
     expect(bridge.release).toEqual({ channel: 'development' })
   })
 

@@ -63,6 +63,7 @@ jobs:
       - shell: pwsh
         run: if (-not $env:IM_HUB_SERVER_URL) { throw 'internal-test IM_HUB_SERVER_URL is missing' }
       - run: pnpm exec vitest run packages/desktop/src/renderer/whatsapp-product-policy.test.ts packages/desktop/src/renderer/components/AddAccountDialog.product.test.tsx packages/desktop/src/renderer/components/NativeClient.test.ts packages/desktop/src/renderer/components/TranslationDock.test.ts packages/desktop/src/internal-release-config.test.ts packages/desktop/src/preload/index.test.ts packages/desktop/src/preload/whatsapp-web-health.test.ts packages/desktop/src/preload/whatsapp-web-send-action.test.ts packages/desktop/src/preload/whatsapp-web-send.test.ts packages/desktop/scripts/package-internal.test.mjs packages/desktop/scripts/windows-workflow.test.mjs
+      - run: pnpm smoke:artifact
       - run: pnpm --filter @im-hub/desktop package:internal:win
       - uses: actions/upload-artifact@v4
         with:

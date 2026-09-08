@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   nativeAccountIdFromPartition,
   nativeClientBridgeAllowed,
@@ -9,9 +9,17 @@ import {
 } from './native-host-policy.js'
 
 describe('native host policy', () => {
+  beforeEach(() => {
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:1234')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('只允许补丁客户端与官方 WhatsApp Web origin', () => {
-    expect(nativeClientUrlAllowed('http://localhost:1234/')).toBe(true)
-    expect(nativeClientUrlAllowed('http://localhost:1234/chat')).toBe(true)
+    expect(nativeClientUrlAllowed('http://127.0.0.1:1234/')).toBe(true)
+    expect(nativeClientUrlAllowed('http://127.0.0.1:1234/chat')).toBe(true)
     expect(nativeClientUrlAllowed('https://web.whatsapp.com/')).toBe(true)
     expect(nativeClientUrlAllowed('https://web.whatsapp.com/inbox')).toBe(true)
     expect(nativeClientUrlAllowed('http://localhost.evil.example:1234/')).toBe(false)
@@ -20,7 +28,7 @@ describe('native host policy', () => {
   })
 
   it('只给明确登记的 Telegram 与 WhatsApp 补丁客户端注入 bridge', () => {
-    expect(nativeClientBridgeAllowed('http://localhost:1234/')).toBe(true)
+    expect(nativeClientBridgeAllowed('http://127.0.0.1:1234/')).toBe(true)
     expect(nativeClientBridgeAllowed('https://web.whatsapp.com/')).toBe(true)
     expect(nativeClientBridgeAllowed('https://example.com/')).toBe(false)
   })
@@ -28,7 +36,7 @@ describe('native host policy', () => {
   it('只有 WhatsApp composer 命令需要主进程交还 guest 原生焦点', () => {
     expect(nativeClientComposerFocusRequired('https://web.whatsapp.com/')).toBe(true)
     expect(nativeClientComposerFocusRequired('https://web.whatsapp.com/inbox')).toBe(true)
-    expect(nativeClientComposerFocusRequired('http://localhost:1234/')).toBe(false)
+    expect(nativeClientComposerFocusRequired('http://127.0.0.1:1234/')).toBe(false)
     expect(nativeClientComposerFocusRequired('https://web.whatsapp.com.evil.example/')).toBe(false)
   })
 

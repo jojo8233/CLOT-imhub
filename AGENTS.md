@@ -41,6 +41,8 @@ pnpm --filter @im-hub/server seed
 pnpm --filter @im-hub/server preflight
 pnpm --filter @im-hub/server reset-account "账号名"
 pnpm --filter @im-hub/desktop build
+IM_HUB_SERVER_URL=https://<production-origin> pnpm smoke:artifact
+pnpm smoke:container -- --image <image> --health-url https://<production-origin>/health/ready
 ```
 
 - 本机开发默认使用 Homebrew 的 PostgreSQL 16 和 Redis；`docker-compose.yml` 主要用于部署/CI。
@@ -68,6 +70,15 @@ pnpm --filter @im-hub/desktop build
 - `@fastify/cors` 必须显式允许 PATCH/PUT/DELETE/OPTIONS；只用 curl 验证会漏掉浏览器预检问题。
 - WebSocket token 走鉴权首帧，不放 query string。JWT 只保存在渲染进程内存，持久化必须经 `safeStorage`。2FA 密码只能短暂存在内存，不能落库或进入日志/错误文本。
 - 未登记账号、配置注入失败、webview 加载失败和适配器崩溃都必须产生明确日志或 UI 提示；禁止静默丢弃。
+
+## 生产硬约束与 Definition of Done
+
+- 生产代码和可分发产物不得出现 `localhost`。开发专用地址必须由开发运行时注入或派生，不能以生产构建常量留下；`127.0.0.1` 只可用于本机内部监听和健康探针，不得作为对外服务地址。
+- 不得引入仅测试环境设置的环境变量作为生产功能开关。`*_TEST`、`*_CI`、`*_SMOKE` 等变量只能控制测试/验证工具；产品能力必须由真实构建配置、运行时注入或明确的依赖替身决定。
+- 任何“可用”“已连接”“就绪”判断必须来自运行时探活、握手或健康响应；编译常量和静态能力表只能限制入口，不能单独宣称平台或服务已经可用。
+- Definition of Done 是“产物冒烟通过”，不是“`pnpm test` 通过”。桌面或其它分发产物改动必须由 agent 自己运行 `IM_HUB_SERVER_URL=https://<production-origin> pnpm smoke:artifact`；服务端容器改动必须运行 `pnpm smoke:container -- --image <image> --health-url https://<production-origin>/health/ready`。测试、类型检查和全量测试是辅助证据，不能替代产物冒烟。
+- 每次交付必须附“打包产物生效说明”：指出改动进入哪个包/文件、运行时如何被加载或探活，以及冒烟命令实际检查到的产物路径、来源提交和结果。只说测试通过不算交付。
+- 大改动拆成小 PR，每个 PR 只跨一个独立边界，并在各自 PR 中通过对应的产物冒烟；不得用一次全量测试全绿掩盖打包结构漂移。
 
 ## 提交前检查
 

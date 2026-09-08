@@ -174,21 +174,21 @@ describe('native webview load recovery', () => {
     webContentsId: number
     loading: boolean
   }> = {}) => ({
-    getURL: () => overrides.url ?? 'http://localhost:1234/#123',
+    getURL: () => overrides.url ?? 'http://127.0.0.1:1234/#123',
     getWebContentsId: () => overrides.webContentsId ?? 42,
     isLoading: () => overrides.loading ?? false,
   })
 
   it('effect 挂载晚于 dom-ready 时识别已完成加载的受信页面', () => {
-    expect(nativeWebviewAlreadyLoaded(probe(), 'http://localhost:1234/')).toBe(true)
+    expect(nativeWebviewAlreadyLoaded(probe(), 'http://127.0.0.1:1234/')).toBe(true)
   })
 
   it('加载中、未附着或来源不匹配时继续等待正式事件', () => {
-    expect(nativeWebviewAlreadyLoaded(probe({ loading: true }), 'http://localhost:1234/')).toBe(false)
-    expect(nativeWebviewAlreadyLoaded(probe({ webContentsId: 0 }), 'http://localhost:1234/')).toBe(false)
+    expect(nativeWebviewAlreadyLoaded(probe({ loading: true }), 'http://127.0.0.1:1234/')).toBe(false)
+    expect(nativeWebviewAlreadyLoaded(probe({ webContentsId: 0 }), 'http://127.0.0.1:1234/')).toBe(false)
     expect(nativeWebviewAlreadyLoaded(
       probe({ url: 'https://web.telegram.org/' }),
-      'http://localhost:1234/',
+      'http://127.0.0.1:1234/',
     )).toBe(false)
   })
 

@@ -71,7 +71,7 @@ export function resolveInternalReleaseBuild(
 /**
  * internal renderer 同时核对编译常量和 preload 注入值。任一缺失或不一致都
  * 返回不可联网状态，绝不能退回开发服务。开发 URL 由调用方显式传入，以便
- * Vite 在生产构建中完整消除 localhost 字符串。
+ * Vite 在生产构建中完整消除开发地址。
  */
 export function resolveRendererTransportOrigins(
   input: RendererTransportInput,
@@ -96,7 +96,7 @@ export function desktopServerUrl(
   compiledServerUrl: string | null,
   runtimeServerUrl: string | undefined,
 ): string {
-  return compiledServerUrl ?? runtimeServerUrl ?? 'http://localhost:4000'
+  return compiledServerUrl ?? runtimeServerUrl ?? 'http://127.0.0.1:4000'
 }
 
 export function desktopWebSocketUrl(

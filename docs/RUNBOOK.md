@@ -14,6 +14,20 @@
   开发包，不能原地修改日常使用的 Signal）。`signal-cli 0.14.7 + Java 25` 只在验证后台
   回退适配器时需要，不再负责桌面扫码、会话、图片或贴纸。
 
+### 1.1 产物冒烟门禁
+
+打包产物交付前，必须让冒烟脚本实际构建桌面包、扫描产物并探测部署服务的就绪响应：
+
+```bash
+IM_HUB_SERVER_URL=https://imhub.jojo2333.net pnpm smoke:artifact
+```
+
+该命令会检查 `packages/desktop/out/` 的必需文件、禁止生产 bundle 出现 `localhost` 或测试专用功能开关、核对编译服务 origin，并请求 `/health/ready`。它通过后才算产物交付；`pnpm test` 和 `pnpm typecheck` 只能作为辅助证据。服务端容器改动另需运行：
+
+```bash
+pnpm smoke:container -- --image <image> --health-url https://imhub.jojo2333.net/health/ready
+```
+
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
 ```bash

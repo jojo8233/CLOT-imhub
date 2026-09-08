@@ -8,6 +8,7 @@
     "dev:server": "pnpm --filter @im-hub/server dev",
     "dev:desktop": "pnpm --filter @im-hub/desktop dev",
     "smoke:container": "node deploy/scripts/container-smoke.mjs",
+    "smoke:artifact": "node deploy/scripts/artifact-smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "pnpm -r exec tsc --noEmit",

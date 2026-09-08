@@ -61,10 +61,12 @@ interface WebClientDefinition {
   bridgeEnabled: boolean
 }
 
-const WEB_CLIENT: Record<string, WebClientDefinition> = {
+const WEB_CLIENT: Partial<Record<string, WebClientDefinition>> = {
   // 开发期指向 telegram-tt 的 Vite 服务器（代码/telegram-tt，npm run dev）。
-  // 打包时这里要换成随应用分发的静态产物地址，见 native-client-pivot 设计文档。
-  telegram: { src: 'http://localhost:1234/', bridgeEnabled: true },
+  // 该分支由 Vite 在生产构建时消除，内部包只加载随应用分发的静态产物。
+  ...(import.meta.env.DEV
+    ? { telegram: { src: 'http://127.0.0.1:1234/', bridgeEnabled: true } }
+    : {}),
   // 用户明确选择 TranGPT 式补丁模式：仍使用 owner-only 独立 partition，但给
   // 精确 WhatsApp origin 注入窄 bridge，用于气泡双语、草稿与最终 DOM 消息 ID 确认。
   whatsapp: { src: 'https://web.whatsapp.com/', bridgeEnabled: true },
@@ -417,7 +419,8 @@ export function NativeClient() {
         if (!acc
           || !nativeClientSupported(acc.platform)
           || !nativeAccountControllable(acc, currentUser)) return null
-        const client = WEB_CLIENT[acc.platform]!
+        const client = WEB_CLIENT[acc.platform]
+        if (!client) return null
         return (
           <WebviewPane
             key={id}

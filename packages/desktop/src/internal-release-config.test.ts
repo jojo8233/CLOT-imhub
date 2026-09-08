@@ -40,7 +40,7 @@ describe('internal desktop release config', () => {
     expect(resolveInternalReleaseBuild({})).toEqual({
       channel: 'development', serverUrl: null, wsUrl: null,
     })
-    expect(desktopServerUrl(null, undefined)).toBe('http://localhost:4000')
+    expect(desktopServerUrl(null, undefined)).toBe('http://127.0.0.1:4000')
     expect(desktopServerUrl(null, 'http://127.0.0.1:4000')).toBe('http://127.0.0.1:4000')
     expect(desktopWebSocketUrl(null, 'http://127.0.0.1:4000')).toBe('ws://127.0.0.1:4000')
   })

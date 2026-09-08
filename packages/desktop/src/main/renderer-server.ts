@@ -26,6 +26,19 @@ function canonicalConnectSources(sources: readonly string[]): string {
   }).join(' ')
 }
 
+function rendererFrameSources(): string {
+  const sources = ['https://web.whatsapp.com']
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL
+  if (developmentUrl) {
+    try {
+      sources.unshift(new URL(developmentUrl).origin)
+    } catch {
+      // 无效的开发 URL 不得进入 CSP。
+    }
+  }
+  return sources.join(' ')
+}
+
 export async function startRendererServer(
   options: RendererServerOptions,
 ): Promise<{ server: Server; url: string }> {
@@ -49,7 +62,7 @@ export async function startRendererServer(
         const body = await readFile(file)
         response.writeHead(200, {
           'Cache-Control': 'no-store',
-          'Content-Security-Policy': `default-src 'self'; connect-src ${connectSources}; frame-src http://localhost:1234 https://web.whatsapp.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
+          'Content-Security-Policy': `default-src 'self'; connect-src ${connectSources}; frame-src ${rendererFrameSources()}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
           'Content-Type': RENDERER_CONTENT_TYPE[extname(file)] ?? 'application/octet-stream',
           'X-Content-Type-Options': 'nosniff',
         })

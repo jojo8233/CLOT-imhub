@@ -30,6 +30,7 @@ describe('Windows internal package workflow', () => {
   it('uses the protected environment and seven-day unsigned artifact', () => {
     expect(workflow).toContain('environment: internal-test')
     expect(workflow).toContain('vars.IM_HUB_SERVER_URL')
+    expect(workflow).toContain('pnpm smoke:artifact')
     expect(workflow).toContain('package:internal:win')
     expect(workflow).toContain('retention-days: 7')
     expect(workflow).toContain('internal-unsigned')
@@ -62,5 +63,12 @@ describe('Windows internal package workflow', () => {
     expect(createDatabase).toBeGreaterThan(-1)
     expect(migrateDatabase).toBeGreaterThan(createDatabase)
     expect(runTests).toBeGreaterThan(migrateDatabase)
+  })
+
+  it('runs artifact smoke before producing the unsigned installer', () => {
+    const smoke = workflow.indexOf('- run: pnpm smoke:artifact')
+    const packageBuild = workflow.indexOf('- run: pnpm --filter @im-hub/desktop package:internal:win')
+    expect(smoke).toBeGreaterThan(-1)
+    expect(packageBuild).toBeGreaterThan(smoke)
   })
 })
