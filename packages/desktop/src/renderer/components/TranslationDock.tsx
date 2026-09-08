@@ -34,6 +34,12 @@ const STATUS_LABEL: Record<NativeDraftStatus, string> = {
   sending: '发送中', failed: '操作失败',
 }
 
+export function translationDockErrorMessage(stage: 'translation' | 'native-write'): string {
+  return stage === 'translation'
+    ? '翻译服务不可用，请检查翻译引擎配置后重试'
+    : '译文已生成，但写入原生输入框失败，请重试'
+}
+
 export function nativeDraftKey(accountId: string, conversationId: string): string {
   return `${accountId}:${conversationId}`
 }
@@ -300,40 +306,52 @@ export function TranslationDock() {
       sendAttemptContextRevision: null,
       sendAttemptConfirmed: false,
     })
+    let result: Awaited<ReturnType<typeof api.translatePreview>>
     try {
-      const result = await api.translatePreview(
+      result = await api.translatePreview(
         context.conversationId,
         draft.sourceText,
         provider,
       )
-      if (translationRevisionRef.current !== requestRevision) return
-      if (!continueOrReset(command, key)) return
-      await nativeComposerBridge.setDraft(command, result.translated)
-      if (translationRevisionRef.current !== requestRevision) return
-      if (!continueOrReset(command, key)) return
-      updateDraft(key, {
-        translatedText: result.translated,
-        backTranslated: result.backTranslated,
-        targetLang: result.targetLang,
-        requestedProvider: result.requestedProvider,
-        actualProvider: result.provider,
-        downgraded: result.downgraded,
-        status: 'ready',
-        error: null,
-        sendAttemptId: null,
-        sendAttemptDraft: null,
-        sendAttemptFingerprint: null,
-        sendAttemptContextRevision: null,
-        sendAttemptConfirmed: false,
-      })
     } catch {
       if (translationRevisionRef.current !== requestRevision) return
       if (!continueOrReset(command, key)) return
       updateDraft(key, {
         status: 'failed',
-        error: '翻译或写入原生输入框失败，请重试',
+        error: translationDockErrorMessage('translation'),
       })
+      return
     }
+    if (translationRevisionRef.current !== requestRevision) return
+    if (!continueOrReset(command, key)) return
+    try {
+      await nativeComposerBridge.setDraft(command, result.translated)
+    } catch {
+      if (translationRevisionRef.current !== requestRevision) return
+      if (!continueOrReset(command, key)) return
+      updateDraft(key, {
+        status: 'failed',
+        error: translationDockErrorMessage('native-write'),
+      })
+      return
+    }
+    if (translationRevisionRef.current !== requestRevision) return
+    if (!continueOrReset(command, key)) return
+    updateDraft(key, {
+      translatedText: result.translated,
+      backTranslated: result.backTranslated,
+      targetLang: result.targetLang,
+      requestedProvider: result.requestedProvider,
+      actualProvider: result.provider,
+      downgraded: result.downgraded,
+      status: 'ready',
+      error: null,
+      sendAttemptId: null,
+      sendAttemptDraft: null,
+      sendAttemptFingerprint: null,
+      sendAttemptContextRevision: null,
+      sendAttemptConfirmed: false,
+    })
   }
 
   async function send(): Promise<void> {

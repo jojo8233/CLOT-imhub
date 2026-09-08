@@ -9,16 +9,31 @@ import {
 } from '../api/client.js'
 import type { ChatPlatform } from '../navigation.js'
 import { useStore } from '../store.js'
+import {
+  DEVELOPMENT_PLATFORM_CAPABILITIES,
+  NO_PRELOAD_PLATFORM_CAPABILITIES,
+  type DesktopPlatformCapabilities,
+} from '../../desktop-capabilities.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { WHATSAPP_CREATION_MODE, WHATSAPP_PRODUCT_BLURB } from '../whatsapp-product-policy.js'
 import { Chip, PlatformIcon } from './ui.js'
 
 /** 各平台目前的接入程度。写在这里而不是散在文案里，将来接完一个改一行。 */
-const PLATFORMS: { key: ChatPlatform; blurb: string; ready: boolean }[] = [
-  { key: 'telegram', blurb: '扫码登录、消息收发、发送前译文校对', ready: true },
-  { key: 'signal', blurb: '使用 Signal Desktop 关联，图片和贴纸保持原生能力', ready: true },
-  { key: 'whatsapp', blurb: WHATSAPP_PRODUCT_BLURB, ready: true },
-]
+const PLATFORM_BLURBS: Record<ChatPlatform, string> = {
+  telegram: '扫码登录、消息收发、发送前译文校对',
+  signal: '使用 Signal Desktop 关联，图片和贴纸保持原生能力',
+  whatsapp: WHATSAPP_PRODUCT_BLURB,
+}
+
+export function platformsForCapabilities(
+  capabilities: DesktopPlatformCapabilities,
+): { key: ChatPlatform; blurb: string; ready: boolean }[] {
+  return (Object.keys(PLATFORM_BLURBS) as ChatPlatform[]).map(key => ({
+    key,
+    blurb: PLATFORM_BLURBS[key],
+    ready: capabilities[key],
+  }))
+}
 
 type Step = 'pick' | 'linking'
 
@@ -35,12 +50,18 @@ interface RelinkAccount {
  * TDLib 的二维码 token 过期后会自动下发新的链接，所以这里不用计时刷新，
  * 跟着事件走就行。
  */
-export function AddAccountDialog({ initialPlatform, role, onClose, onAccountsChanged }: {
+export function AddAccountDialog({ initialPlatform, role, onClose, onAccountsChanged, capabilities: injectedCapabilities }: {
   initialPlatform: ChatPlatform
   role: Role
   onClose(): void
   onAccountsChanged(accounts: AccountRow[]): Promise<void>
+  capabilities?: DesktopPlatformCapabilities
 }) {
+  const capabilities = injectedCapabilities
+    ?? (typeof window === 'undefined'
+      ? DEVELOPMENT_PLATFORM_CAPABILITIES
+      : window.imHub?.capabilities ?? NO_PRELOAD_PLATFORM_CAPABILITIES)
+  const platforms = platformsForCapabilities(capabilities)
   const [platform, setPlatform] = useState<ChatPlatform>(initialPlatform)
   const [name, setName] = useState('')
   const [step, setStep] = useState<Step>('pick')
@@ -109,7 +130,7 @@ export function AddAccountDialog({ initialPlatform, role, onClose, onAccountsCha
   }
 
   const suggested = `${PLATFORM_LABEL[platform] ?? platform} ${new Date().getMonth() + 1}`
-  const canCreate = PLATFORMS.find(p => p.key === platform)?.ready === true
+  const canCreate = platforms.find(p => p.key === platform)?.ready === true
     && name.trim() !== ''
     && role !== 'auditor'
     && creationContext !== null
@@ -167,7 +188,7 @@ export function AddAccountDialog({ initialPlatform, role, onClose, onAccountsCha
               padding: theme.space.xl, display: 'grid',
               gridTemplateColumns: 'repeat(3, 1fr)', gap: theme.space.md,
             }}>
-              {PLATFORMS.map(p => {
+              {platforms.map(p => {
                 const on = platform === p.key
                 return (
                   <button

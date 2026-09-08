@@ -8,6 +8,7 @@ tmp_app=''
 tmp_postgres=''
 tmp_redis=''
 deepl_key=''
+deepl_endpoint="${DEEPL_ENDPOINT:-https://api-free.deepl.com/v2/translate}"
 anthropic_key=''
 openai_key=''
 telegram_api_id=''
@@ -26,7 +27,7 @@ cleanup() {
   test -z "$tmp_postgres" || rm -f "$tmp_postgres"
   test -z "$tmp_redis" || rm -f "$tmp_redis"
   test -z "$lock_dir" || rmdir "$lock_dir" 2>/dev/null || true
-  unset deepl_key anthropic_key openai_key telegram_api_id telegram_api_hash
+  unset deepl_key deepl_endpoint anthropic_key openai_key telegram_api_id telegram_api_hash
   unset db_password redis_password jwt_secret
 }
 trap cleanup EXIT
@@ -93,6 +94,7 @@ valid_secret_token() {
 }
 
 valid_secret_token "$deepl_key" || fail 'DEEPL_API_KEY is invalid'
+[[ "$deepl_endpoint" =~ ^https://[^/?#]+(/[^?#]*)?$ ]] || fail 'DEEPL_ENDPOINT is invalid'
 valid_secret_token "$anthropic_key" || fail 'ANTHROPIC_API_KEY is invalid'
 valid_secret_token "$openai_key" || fail 'OPENAI_API_KEY is invalid'
 [[ "$telegram_api_id" =~ ^[1-9][0-9]{0,9}$ ]] || fail 'TELEGRAM_API_ID is invalid'
@@ -115,7 +117,7 @@ tmp_redis="$(mktemp "$config_root/.redis.env.XXXXXX")"
   printf 'REDIS_URL=redis://:%s@redis:6379\n' "$redis_password"
   printf 'JWT_SECRET=%s\n' "$jwt_secret"
   printf 'DEEPL_API_KEY=%s\n' "$deepl_key"
-  printf 'DEEPL_ENDPOINT=https://api-free.deepl.com/v2/translate\n'
+  printf 'DEEPL_ENDPOINT=%s\n' "$deepl_endpoint"
   printf 'ANTHROPIC_API_KEY=%s\n' "$anthropic_key"
   printf 'OPENAI_API_KEY=%s\n' "$openai_key"
   printf 'DEFAULT_TRANSLATION_PROVIDER=deepl\n'

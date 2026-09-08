@@ -36,6 +36,7 @@ import {
   desktopServerUrl,
   desktopWebSocketUrl,
 } from '../internal-release-config.js'
+import { resolveDesktopPlatformCapabilities } from '../desktop-capabilities.js'
 
 interface SessionPayload {
   token: string
@@ -63,6 +64,11 @@ const serverUrl = desktopServerUrl(
   process.env.IM_HUB_SERVER_URL,
 )
 const wsUrl = desktopWebSocketUrl(compiledInternalWsUrl(), serverUrl)
+const capabilities = resolveDesktopPlatformCapabilities({
+  releaseChannel: compiledReleaseChannel(),
+  signalIntegrated: process.env.IM_HUB_SIGNAL_INTEGRATED === '1',
+  telegramStatic: process.env.IM_HUB_TELEGRAM_STATIC === '1',
+})
 
 /**
  * 可信渲染进程的普通业务仍直接跟服务端 HTTP/WS 通信；平台 guest 的控制与翻译
@@ -76,6 +82,7 @@ contextBridge.exposeInMainWorld('imHub', {
   serverUrl,
   wsUrl,
   release: { channel: compiledReleaseChannel() },
+  capabilities,
   // 只给可信的外壳渲染进程。主进程在 will-attach-webview 里会再次覆盖并校验
   // preload，不能把页面传来的 preload 属性当成安全边界。
   nativeBridgePreload: pathToFileURL(join(import.meta.dirname, 'native-bridge.mjs')).toString(),

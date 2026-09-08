@@ -5,6 +5,7 @@ import {
   isProductionPreflightReady,
   migrationStateIsCurrent,
   runProductionPreflight,
+  probeDeepL,
   type ProductionPreflightConfig,
   type ProductionPreflightDependencies,
 } from './preflight.js'
@@ -19,6 +20,7 @@ const secretSentinels = {
 const readyConfig: ProductionPreflightConfig & { JWT_SECRET: string } = {
   APP_ENV: 'production',
   DEEPL_API_KEY: 'synthetic-deepl-key',
+  DEEPL_ENDPOINT: 'https://api-free.deepl.com/v2/translate',
   ANTHROPIC_API_KEY: 'synthetic-claude-key',
   OPENAI_API_KEY: 'synthetic-openai-key',
   TELEGRAM_API_ID: 12345,
@@ -32,9 +34,44 @@ const readyDependencies: ProductionPreflightDependencies = {
   database: async () => undefined,
   redis: async () => undefined,
   migrations: async () => true,
+  deepl: async () => true,
 }
 
 describe('runProductionPreflight', () => {
+  it('实际探测 DeepL 端点，并把非成功响应标成 missing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 403 })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const result = await runProductionPreflight(readyConfig, {
+        ...readyDependencies,
+        deepl: () => probeDeepL(readyConfig.DEEPL_API_KEY, readyConfig.DEEPL_ENDPOINT),
+      })
+
+      expect(result.deepl).toBe('missing')
+      expect(fetchMock).toHaveBeenCalledWith(
+        readyConfig.DEEPL_ENDPOINT,
+        expect.objectContaining({ method: 'POST' }),
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('DeepL 成功响应只返回状态，不读取或输出响应正文', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: vi.fn() })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await expect(probeDeepL(readyConfig.DEEPL_API_KEY, readyConfig.DEEPL_ENDPOINT)).resolves.toBe(true)
+      expect(fetchMock).toHaveBeenCalledWith(
+        readyConfig.DEEPL_ENDPOINT,
+        expect.objectContaining({ method: 'POST' }),
+      )
+      expect(fetchMock.mock.calls[0]?.[1]?.body).toBeInstanceOf(URLSearchParams)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('只返回固定检查名和 ok 状态，不携带配置值', async () => {
     const result = await runProductionPreflight(readyConfig, readyDependencies)
 
@@ -75,6 +112,7 @@ describe('runProductionPreflight', () => {
       database: async () => { throw new Error(secretSentinels.database) },
       redis: async () => { throw new Error(secretSentinels.redis) },
       migrations: async () => { throw new Error(secretSentinels.migration) },
+      deepl: async () => true,
     })
     const output = `${JSON.stringify(result)}${formatProductionPreflight(result)}`
 

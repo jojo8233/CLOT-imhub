@@ -15,6 +15,7 @@ import type {
   SignalDesktopRect,
   SignalDesktopStateUpdate,
 } from '../signal-desktop-ipc.js'
+import type { DesktopPlatformCapabilities } from '../desktop-capabilities.js'
 
 interface NativeControlTarget {
   accountId: string
@@ -53,6 +54,7 @@ declare global {
       serverUrl?: string
       wsUrl?: string
       release?: { channel: 'development' | 'internal-unsigned' }
+      capabilities?: DesktopPlatformCapabilities
       session?: {
         save(payload: { token: string; user: AuthenticatedUser }): Promise<boolean>
         load(): Promise<{ token: string; user: AuthenticatedUser } | null>

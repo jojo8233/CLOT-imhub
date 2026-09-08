@@ -18,7 +18,9 @@ import {
   signalDesktopAccountIdsToMount,
   signalInboundErrorIsNonfatal,
   signalOutboxStatusError,
+  nativeClientSupported,
 } from './NativeClient.js'
+import { resolveDesktopPlatformCapabilities } from '../../desktop-capabilities.js'
 
 describe('WhatsApp bridge failure presentation', () => {
   it('redacts structural and unknown diagnostics from the user prompt', () => {
@@ -88,6 +90,27 @@ describe('native account ownership gate', () => {
       .toEqual([])
     expect(nativeAccountIdsToMount(accounts, { id: 'user-1', role: 'agent' }, false))
       .toEqual([])
+  })
+
+  it('独立安装包不会把未打包的 Telegram 或未集成的 Signal 当成可用', () => {
+    const standalone = resolveDesktopPlatformCapabilities({
+      releaseChannel: 'internal-unsigned',
+      signalIntegrated: false,
+      telegramStatic: false,
+    })
+    expect(nativeClientSupported('telegram', standalone)).toBe(false)
+    expect(nativeClientSupported('whatsapp', standalone)).toBe(true)
+    expect(nativeClientSupported('signal', standalone)).toBe(false)
+    const accounts = [
+      { id: 'tg', platform: 'telegram', owner_user_id: 'user-1', connection_mode: 'adapter' },
+      { id: 'wa', platform: 'whatsapp', owner_user_id: 'user-1', connection_mode: 'web_shell' },
+    ] satisfies Array<Pick<AccountRow, 'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>
+    expect(nativeAccountIdsToMount(
+      accounts,
+      { id: 'user-1', role: 'agent' },
+      true,
+      standalone,
+    )).toEqual(['wa'])
   })
 
   it('Signal Desktop 只挂载显式登记的原生桌面账号', () => {

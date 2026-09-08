@@ -12,6 +12,7 @@ export type ProductionPreflightStatus = 'ok' | 'missing'
 export interface ProductionPreflightConfig {
   APP_ENV: 'development' | 'test' | 'production'
   DEEPL_API_KEY: string
+  DEEPL_ENDPOINT: string
   ANTHROPIC_API_KEY: string
   OPENAI_API_KEY: string
   TELEGRAM_API_ID: number
@@ -24,6 +25,7 @@ export interface ProductionPreflightDependencies {
   database(): Promise<unknown>
   redis(): Promise<unknown>
   migrations(): Promise<boolean>
+  deepl(): Promise<boolean>
 }
 
 export interface ProductionPreflightResult {
@@ -56,6 +58,10 @@ function configured(value: string): ProductionPreflightStatus {
   return value.trim() === '' ? 'missing' : 'ok'
 }
 
+function isConfigured(value: string): boolean {
+  return configured(value) === 'ok'
+}
+
 async function dependencyStatus(
   check: () => Promise<unknown>,
 ): Promise<ProductionPreflightStatus> {
@@ -77,14 +83,29 @@ async function migrationStatus(
   }
 }
 
+async function providerStatus(
+  apiKey: string,
+  check: () => Promise<boolean>,
+): Promise<ProductionPreflightStatus> {
+  if (isConfigured(apiKey)) {
+    try {
+      return await check() ? 'ok' : 'missing'
+    } catch {
+      return 'missing'
+    }
+  }
+  return 'missing'
+}
+
 export async function runProductionPreflight(
   config: ProductionPreflightConfig,
   dependencies: ProductionPreflightDependencies,
 ): Promise<ProductionPreflightResult> {
-  const [database, redis, migrations] = await Promise.all([
+  const [database, redis, migrations, deepl] = await Promise.all([
     dependencyStatus(dependencies.database),
     dependencyStatus(dependencies.redis),
     migrationStatus(dependencies.migrations),
+    providerStatus(config.DEEPL_API_KEY, dependencies.deepl),
   ])
 
   return {
@@ -92,7 +113,7 @@ export async function runProductionPreflight(
     database,
     redis,
     migrations,
-    deepl: configured(config.DEEPL_API_KEY),
+    deepl,
     claude: configured(config.ANTHROPIC_API_KEY),
     openai: configured(config.OPENAI_API_KEY),
     telegram: Number.isInteger(config.TELEGRAM_API_ID)
@@ -153,6 +174,7 @@ export function migrationStateIsCurrent(
 export function createProductionPreflightDependencies(
   db: Kysely<Database>,
   redis: RedisPingClient,
+  deeplConfig: { apiKey: string; endpoint: string },
 ): ProductionPreflightDependencies {
   const migrationFolder = fileURLToPath(new URL('../db/migrations/', import.meta.url))
   const migrator = new Migrator({
@@ -171,6 +193,25 @@ export function createProductionPreflightDependencies(
       const executed = await sql<{ name: string }>`select name from kysely_migration`.execute(db)
       return migrationStateIsCurrent(migrations, executed.rows.map(row => row.name))
     },
+    deepl: () => probeDeepL(deeplConfig.apiKey, deeplConfig.endpoint),
+  }
+}
+
+export async function probeDeepL(apiKey: string, endpoint: string): Promise<boolean> {
+  if (!isConfigured(apiKey)) return false
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `DeepL-Auth-Key ${apiKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ text: 'ping', target_lang: 'ZH' }),
+      signal: AbortSignal.timeout(5_000),
+    })
+    return response.ok
+  } catch {
+    return false
   }
 }
 
@@ -187,7 +228,10 @@ async function main(): Promise<void> {
   try {
     const result = await runProductionPreflight(
       config,
-      createProductionPreflightDependencies(db, redis),
+      createProductionPreflightDependencies(db, redis, {
+        apiKey: config.DEEPL_API_KEY,
+        endpoint: config.DEEPL_ENDPOINT,
+      }),
     )
     process.stdout.write(formatProductionPreflight(result))
     process.exitCode = isProductionPreflightReady(result) ? 0 : 1

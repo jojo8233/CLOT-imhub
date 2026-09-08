@@ -37,6 +37,7 @@ write_input "$valid_input" \
 config_root="$test_root/config"
 init_log="$test_root/init.log"
 IMHUB_CONFIG_ROOT="$config_root" IMHUB_TEST_INPUT_FILE="$valid_input" \
+  DEEPL_ENDPOINT='https://api.deepl.com/v2/translate' \
   bash "$initializer" --test-input > "$init_log" 2>&1
 
 for file in app.env postgres.env redis.env; do
@@ -51,6 +52,7 @@ grep -qx 'DEFAULT_TRANSLATION_PROVIDER=deepl' "$config_root/app.env"
 grep -qx 'WHATSAPP_CLOUD_ENABLED=false' "$config_root/app.env"
 grep -qx 'ORGANIZATION_ADMIN_WRITES_ENABLED=true' "$config_root/app.env"
 grep -qx 'DEEPL_API_KEY=synthetic-deepl-secret' "$config_root/app.env"
+grep -qx 'DEEPL_ENDPOINT=https://api.deepl.com/v2/translate' "$config_root/app.env"
 grep -qx 'ANTHROPIC_API_KEY=synthetic-anthropic-secret' "$config_root/app.env"
 grep -qx 'OPENAI_API_KEY=synthetic-openai-secret' "$config_root/app.env"
 grep -qx 'TELEGRAM_API_ID=123456' "$config_root/app.env"

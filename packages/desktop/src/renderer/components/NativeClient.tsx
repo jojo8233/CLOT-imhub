@@ -25,6 +25,11 @@ import { useStore, type NativeBridgeConnection } from '../store.js'
 import { PLATFORM_LABEL, theme } from '../theme.js'
 import { whatsAppProductSurface, whatsAppWebAccount } from '../whatsapp-product-policy.js'
 import { EmptyHint, IconButton } from './ui.js'
+import {
+  DEVELOPMENT_PLATFORM_CAPABILITIES,
+  NO_PRELOAD_PLATFORM_CAPABILITIES,
+  type DesktopPlatformCapabilities,
+} from '../../desktop-capabilities.js'
 
 /**
  * 套壳原生客户端。
@@ -71,8 +76,12 @@ const PLATFORM_PHASE: Record<string, string> = {
   zoom: 'M8',
 }
 
-export function nativeClientSupported(platform: string): boolean {
+export function nativeClientSupported(
+  platform: string,
+  capabilities: DesktopPlatformCapabilities = DEVELOPMENT_PLATFORM_CAPABILITIES,
+): boolean {
   return platform in WEB_CLIENT
+    && capabilities[platform as keyof DesktopPlatformCapabilities] === true
 }
 
 export function nativeWebviewNeedsComposerFocus(
@@ -154,10 +163,11 @@ export function nativeAccountIdsToMount(
     'id' | 'platform' | 'owner_user_id' | 'connection_mode' | 'desktop_mount_state'>>,
   user: Pick<SessionUser, 'id' | 'role'> | null,
   supportsWebview: boolean,
+  capabilities: DesktopPlatformCapabilities = DEVELOPMENT_PLATFORM_CAPABILITIES,
 ): string[] {
   if (!supportsWebview) return []
   return accounts
-    .filter(account => nativeClientSupported(account.platform)
+    .filter(account => nativeClientSupported(account.platform, capabilities)
       && (account.platform !== 'whatsapp' || whatsAppWebAccount(account))
       && nativeAccountControllable(account, user)
       && desktopMountAllowed(account))
@@ -183,11 +193,16 @@ export function ownedLocalAccountIds(
   accounts: ReadonlyArray<Pick<AccountRow,
     'id' | 'platform' | 'owner_user_id' | 'connection_mode'>>,
   user: Pick<SessionUser, 'id' | 'role'> | null,
-  capabilities: { webview: boolean; signalDesktop: boolean },
+  capabilities: {
+    webview: boolean
+    signalDesktop: boolean
+    platforms?: DesktopPlatformCapabilities
+  },
 ): string[] {
+  const platformCapabilities = capabilities.platforms ?? DEVELOPMENT_PLATFORM_CAPABILITIES
   return accounts.filter(account => nativeAccountControllable(account, user)
     && ((capabilities.webview
-      && nativeClientSupported(account.platform)
+      && nativeClientSupported(account.platform, platformCapabilities)
       && (account.platform !== 'whatsapp' || whatsAppWebAccount(account)))
       || (capabilities.signalDesktop
         && account.platform === 'signal'
@@ -311,10 +326,11 @@ export function NativeClient() {
   const currentUser = getCurrentUser()
   const activeOwnedByCurrentUser = nativeAccountControllable(active, currentUser)
   const supportsWebview = webviewSupported()
-  const supportsSignalDesktop = window.imHub?.signalDesktop !== undefined
+  const platformCapabilities = window.imHub?.capabilities ?? NO_PRELOAD_PLATFORM_CAPABILITIES
+  const supportsSignalDesktop = platformCapabilities.signal && window.imHub?.signalDesktop !== undefined
   // 不只挂载 active 账号：否则宿主刷新后从未点开的账号会错过
   // Telegram delete/edit update，之后打开只能看到最终状态，无法补出已丢的事件。
-  const mounted = nativeAccountIdsToMount(accounts, currentUser, supportsWebview)
+  const mounted = nativeAccountIdsToMount(accounts, currentUser, supportsWebview, platformCapabilities)
   const mountedSignalDesktop = signalDesktopAccountIdsToMount(
     accounts,
     currentUser,
@@ -359,7 +375,7 @@ export function NativeClient() {
         该账号不会加载 WhatsApp Web，也不会打开 Cloud 会话工作区。
       </EmptyHint>
     )
-  } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform)) {
+  } else if (active.platform !== 'signal' && !nativeClientSupported(active.platform, platformCapabilities)) {
     overlay = (
       <EmptyHint>
         {PLATFORM_LABEL[active.platform] ?? active.platform} 原生客户端尚未接入。

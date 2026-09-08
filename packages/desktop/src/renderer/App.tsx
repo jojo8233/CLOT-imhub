@@ -240,6 +240,7 @@ export function App() {
     const accountIds = ownedLocalAccountIds(accounts, sessionUser, {
       webview: window.imHub?.nativeBridgePreload !== undefined,
       signalDesktop: window.imHub?.signalDesktop !== undefined,
+      platforms: window.imHub?.capabilities,
     })
     const localIds = new Set(accountIds)
     const pendingAccounts = accounts.map(account => localIds.has(account.id)
