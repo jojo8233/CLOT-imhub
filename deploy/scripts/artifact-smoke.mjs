@@ -98,11 +98,19 @@ async function smoke() {
   environment.IM_HUB_INTERNAL_RELEASE = '1'
   environment.IM_HUB_SERVER_URL = serverOrigin
 
+  const pnpmArgs = ['--filter', '@im-hub/desktop', 'build']
   const pnpmCommand = process.env.PNPM_COMMAND
-    ?? (process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
-  execFileSync(pnpmCommand, [
-    '--filter', '@im-hub/desktop', 'build',
-  ], { cwd: repositoryRoot, env: environment, stdio: 'inherit' })
+  const invocation = pnpmCommand
+    ? { command: pnpmCommand, args: pnpmArgs }
+    : process.platform === 'win32'
+      ? {
+          command: process.env.ComSpec ?? 'cmd.exe',
+          args: ['/d', '/s', '/c', 'pnpm.cmd', ...pnpmArgs],
+        }
+      : { command: 'pnpm', args: pnpmArgs }
+  execFileSync(invocation.command, invocation.args, {
+    cwd: repositoryRoot, env: environment, stdio: 'inherit',
+  })
 
   const files = collectFiles(join(repositoryRoot, 'packages/desktop/out'))
   validateDesktopArtifact(files, serverOrigin)
