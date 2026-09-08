@@ -84,11 +84,26 @@ async function smoke() {
   const files = collectFiles(join(repositoryRoot, 'packages/desktop/out'))
   validateDesktopArtifact(files, serverOrigin)
 
-  const response = await fetch(healthUrl, { signal: AbortSignal.timeout(5_000) })
-  if (!response.ok) throw new Error(`runtime readiness probe returned HTTP ${response.status}`)
-  const body = await response.json()
-  if (body?.status !== 'ready') throw new Error('runtime readiness probe did not return ready')
-  process.stdout.write('desktop artifact smoke passed\n')
+  let lastError = null
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(5_000) })
+      if (!response.ok) {
+        throw new Error(`runtime readiness probe returned HTTP ${response.status}`)
+      }
+      const body = await response.json()
+      if (body?.status !== 'ready') {
+        throw new Error('runtime readiness probe did not return ready')
+      }
+      process.stdout.write('desktop artifact smoke passed\n')
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 1_000))
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : 'unknown probe error'
+  throw new Error(`runtime readiness probe failed after 3 attempts: ${message}`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
