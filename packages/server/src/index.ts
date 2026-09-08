@@ -55,7 +55,10 @@ async function passesProductionPreflight(): Promise<boolean> {
   try {
     const result = await runProductionPreflight(
       config,
-      createProductionPreflightDependencies(probeDb, preflightRedis),
+      createProductionPreflightDependencies(probeDb, preflightRedis, {
+        apiKey: config.DEEPL_API_KEY,
+        endpoint: config.DEEPL_ENDPOINT,
+      }),
     )
     process.stdout.write(formatProductionPreflight(result))
     return isProductionPreflightReady(result)

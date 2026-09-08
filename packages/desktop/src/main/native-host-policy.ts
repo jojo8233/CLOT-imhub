@@ -1,12 +1,24 @@
-const NATIVE_WEB_CLIENTS = new Map([
-  ['http://localhost:1234', { bridgeEnabled: true }],
-  ['https://web.whatsapp.com', { bridgeEnabled: true }],
-])
 const NATIVE_PARTITION = /^persist:native-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function nativeWebClients(): Map<string, { bridgeEnabled: boolean }> {
+  const clients = new Map([
+    ['https://web.whatsapp.com', { bridgeEnabled: true }],
+  ])
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL
+  if (developmentUrl) {
+    try {
+      const origin = new URL(developmentUrl).origin
+      clients.set(origin, { bridgeEnabled: true })
+    } catch {
+      // 无效的开发 URL 不得扩大 guest 白名单。
+    }
+  }
+  return clients
+}
 
 export function nativeClientUrlAllowed(raw: string): boolean {
   try {
-    return NATIVE_WEB_CLIENTS.has(new URL(raw).origin)
+    return nativeWebClients().has(new URL(raw).origin)
   } catch {
     return false
   }
@@ -14,7 +26,7 @@ export function nativeClientUrlAllowed(raw: string): boolean {
 
 export function nativeClientBridgeAllowed(raw: string): boolean {
   try {
-    return NATIVE_WEB_CLIENTS.get(new URL(raw).origin)?.bridgeEnabled === true
+    return nativeWebClients().get(new URL(raw).origin)?.bridgeEnabled === true
   } catch {
     return false
   }

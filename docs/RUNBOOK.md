@@ -14,6 +14,20 @@
   开发包，不能原地修改日常使用的 Signal）。`signal-cli 0.14.7 + Java 25` 只在验证后台
   回退适配器时需要，不再负责桌面扫码、会话、图片或贴纸。
 
+### 1.1 产物冒烟门禁
+
+打包产物交付前，必须让冒烟脚本实际构建桌面包、扫描产物并探测部署服务的就绪响应：
+
+```bash
+IM_HUB_SERVER_URL=https://imhub.jojo2333.net pnpm smoke:artifact
+```
+
+该命令会检查 `packages/desktop/out/` 的必需文件、禁止生产 bundle 出现 `localhost` 或测试专用功能开关、核对编译服务 origin，并请求 `/health/ready`。它通过后才算产物交付；`pnpm test` 和 `pnpm typecheck` 只能作为辅助证据。服务端容器改动另需运行：
+
+```bash
+pnpm smoke:container -- --image <image> --health-url https://imhub.jojo2333.net/health/ready
+```
+
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
 ```bash
@@ -368,7 +382,7 @@ P0 代码已经全部就绪并测试通过，但**真实的 Telegram 收发消�
 三选一就能运行；多配几个可在首选引擎临时失败时自动降级。服务端会先尝试
 本次请求的引擎，然后按 `deepl -> claude -> openai` 的固定后备顺序尝试其余已配置引擎。
 
-- **DeepL**（有免费额度，最省事）：注册 https://www.deepl.com/pro-api ，选 Free 计划，拿到 key 填 `DEEPL_API_KEY`。免费版走 `DEEPL_ENDPOINT=https://api-free.deepl.com/v2/translate`（`.env.example` 默认已经是这个）；如果升级成付费账号，要把 endpoint 换成 `https://api.deepl.com/v2/translate`。
+- **DeepL**（有免费额度，最省事）：注册 https://www.deepl.com/pro-api ，选 Free 计划，拿到 key 填 `DEEPL_API_KEY`。免费版走 `DEEPL_ENDPOINT=https://api-free.deepl.com/v2/translate`（`.env.example` 默认已经是这个）；如果升级成付费账号，要把 endpoint 换成 `https://api.deepl.com/v2/translate`。生产初始化脚本会保留已显式设置的 `DEEPL_ENDPOINT`，不会再无条件覆盖成 Free endpoint。
 - **OpenAI**：https://platform.openai.com/api-keys 建一个 key，填 `OPENAI_API_KEY`。
 - **Anthropic (Claude)**：https://console.anthropic.com/settings/keys 建一个 key，填 `ANTHROPIC_API_KEY`。
 
@@ -387,6 +401,8 @@ DEFAULT_TRANSLATION_PROVIDER=claude
 - `DEEPL_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 只能存在服务端 `.env`；不得注入 renderer、Telegram/Signal/WhatsApp 客户端或 webview。
 
 ### 5.3 拿到凭据之后怎么验证真实链路
+
+生产容器启动前会对已配置的 DeepL endpoint 发起一次不输出响应正文的状态探测；`deepl=missing` 表示端点、权限或额度不可用，不代表 key 字符串为空。先按上面的 Free/paid endpoint 对照修正，再重新运行生产预检。
 
 Telegram：
 

@@ -6,6 +6,7 @@ import {
   nativeDraftProviderChangePatch,
   sendCurrentNativeDraft,
   shouldTranslateOnKeyDown,
+  translationDockErrorMessage,
 } from './TranslationDock.js'
 
 describe('TranslationDock native bridge gate', () => {
@@ -42,6 +43,11 @@ describe('TranslationDock native bridge gate', () => {
 })
 
 describe('TranslationDock keyboard handling', () => {
+  it('区分翻译服务失败和原生输入框写入失败', () => {
+    expect(translationDockErrorMessage('translation')).toBe('翻译服务不可用，请检查翻译引擎配置后重试')
+    expect(translationDockErrorMessage('native-write')).toBe('译文已生成，但写入原生输入框失败，请重试')
+  })
+
   it('切换本次 provider 会废弃旧译文和旧发送 attempt', () => {
     expect(nativeDraftProviderChangePatch('openai')).toEqual({
       selectedProvider: 'openai',
