@@ -28,6 +28,23 @@ IM_HUB_SERVER_URL=https://imhub.jojo2333.net pnpm smoke:artifact
 pnpm smoke:container -- --image <image> --health-url https://imhub.jojo2333.net/health/ready
 ```
 
+### 1.2 Telegram 桌面启动配置接口
+
+`POST /api/accounts/:id/telegram-bootstrap` 是独立的后端准备步骤，不表示桌面已能登录 Telegram。
+服务端启动时从既有运行时配置取得 `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`；不需要新增变量、
+数据库迁移或员工手工注入。部署必须使用 HTTPS，不能把响应写入日志、安装包或客户端持久化存储。
+
+接口仅接受有效 im-hub 用户会话，并通过 `req.scoped` 和本人所有权双重限制查找账号。
+当前仅支持 `telegram` + `adapter` 账号；管理者可见他人账号不等于可以获取其启动配置，
+auditor、失效会话和 NativeGrant 均不允许获取。接口不登录平台、不修改账号、不授予原生控制权。
+所有响应禁止缓存；错误文本固定，不回显配置或解析器详情。配置无效时返回 503，而不是宣称就绪。
+
+打包产物生效方式：`deploy/Dockerfile.server` 将 `packages/server/src` 和 `packages/shared/src`
+复制到镜像 `/app/packages/`；既有启动入口调用 `buildServer` 注册该接口，从服务器运行时配置
+提供值。此 PR 不包含客户端消费逻辑，也不自动部署；只有合并后重建、部署对应镜像才在生产生效。
+验收需运行上述 `smoke:container`，并在隔离测试库中使用合成配置验证实际镜像的 HTTP 200、
+无会话 401、他人账号 404、会话撤销 401 和禁止缓存；公开 readiness 不能替代这些接口验证。
+
 本机（macOS）用 **Homebrew** 把 PostgreSQL 和 Redis 起成后台服务，**不走 Docker**：
 
 ```bash
