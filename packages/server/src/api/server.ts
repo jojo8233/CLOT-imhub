@@ -50,6 +50,10 @@ import {
 } from './routes/translation-preferences.js'
 import { healthRoutes, type HealthChecks } from './routes/health.js'
 import { createAuthRateLimits } from './rate-limit.js'
+import {
+  telegramBootstrapRoutes,
+  type TelegramBootstrapConfig,
+} from './routes/telegram-bootstrap.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -85,6 +89,8 @@ export interface BuildServerOptions {
   healthChecks?: HealthChecks
   rateLimitRedis?: Redis
   trustedProxyCidrs?: string[]
+  readonly telegramBootstrap?: Readonly<TelegramBootstrapConfig>
+  readonly loggerStream?: { write(message: string): void }
 }
 
 export interface BuildServerDeps extends MessageRouteDeps {
@@ -113,6 +119,10 @@ export async function buildServer(
     initialized: (): boolean => false,
   }
   const trustedProxyCidrs = options.trustedProxyCidrs ?? config.TRUSTED_PROXY_CIDRS
+  const telegramBootstrap = options.telegramBootstrap ?? {
+    apiId: config.TELEGRAM_API_ID,
+    apiHash: config.TELEGRAM_API_HASH,
+  }
   const deviceService = options.deviceService ?? new DeviceService(new DeviceRepo(db))
   const readRepo = deps.organizationAdmin?.readRepo ?? new OrganizationReadRepo(db)
   const operationTokens = new AdminOperationTokenService(config.JWT_SECRET)
@@ -148,6 +158,7 @@ export async function buildServer(
         paths: ['req.headers.authorization', 'req.headers.x-im-hub-device-credential'],
         censor: '[REDACTED]',
       },
+      ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
   })
 
@@ -211,6 +222,7 @@ export async function buildServer(
     user: { id: req.actor.userId, role: req.actor.role },
   }))
   await app.register(async (instance) => { await accountRoutes(instance, deps) })
+  await app.register(async instance => telegramBootstrapRoutes(instance, telegramBootstrap))
   const whatsappCloud = deps.whatsappCloudRoutes
   if (whatsappCloud) {
     await app.register(async instance => whatsappWebhookRoutes(instance, whatsappCloud))
