@@ -21,6 +21,7 @@ import { messageRoutes, type MessageRouteDeps } from './routes/messages.js'
 import { translateRoutes } from './routes/translate.js'
 import { nativeRoutes, type NativeRouteDeps } from './routes/native.js'
 import { nativeControlRoutes } from './routes/native-control.js'
+import { signalNativeOwnerRoutes } from './routes/signal-native-owner.js'
 import { isNativeControlAuthorization } from './native-control.js'
 import {
   telegramShadowRefreshRoutes,
@@ -222,6 +223,7 @@ export async function buildServer(
     user: { id: req.actor.userId, role: req.actor.role },
   }))
   await app.register(async (instance) => { await accountRoutes(instance, deps) })
+  await app.register(signalNativeOwnerRoutes)
   await app.register(async instance => telegramBootstrapRoutes(instance, telegramBootstrap))
   const whatsappCloud = deps.whatsappCloudRoutes
   if (whatsappCloud) {
