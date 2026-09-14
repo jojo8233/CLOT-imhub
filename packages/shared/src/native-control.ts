@@ -7,6 +7,11 @@ import type {
 export const NATIVE_CONTROL_AUTH_SCHEME = 'NativeGrant' as const
 export const NATIVE_CONTROL_GRANT_TTL_SECONDS = 5 * 60
 
+/** Read-only resolution of an already-bound, uniquely owned Signal identity. */
+export interface SignalNativeExistingAccountResponse {
+  accountId: string
+}
+
 export interface NativeControlGrantResponse {
   grant: string
   expiresAt: string
